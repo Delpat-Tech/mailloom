@@ -1,0 +1,425 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sidebar } from './components/Sidebar.js';
+import { MessageList } from './components/MessageList.js';
+import { MessageViewer } from './components/MessageViewer.js';
+import { ComposerModal } from './components/ComposerModal.js';
+import { ConnectModal } from './components/ConnectModal.js';
+import { api, getStoredToken } from './services/api.js';
+import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount } from './types.js';
+
+export const App: React.FC = () => {
+  // Authentication & Account
+  const [account, setAccount] = useState<UserAccount | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // Mailboxes & Navigation
+  const [folders, setFolders] = useState<MailboxFolder[]>([]);
+  const [selectedFolder, setSelectedFolder] = useState<string>('INBOX');
+
+  // Messages in Current Folder
+  const [messages, setMessages] = useState<MessageHeader[]>([]);
+  const [totalMessages, setTotalMessages] = useState(0);
+  const [page, setPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+
+  // Selected Message
+  const [selectedUid, setSelectedUid] = useState<number | null>(null);
+  const [selectedMessage, setSelectedMessage] = useState<ParsedEmailMessage | null>(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+
+  // Selection & Batch Operations
+  const [selectedUids, setSelectedUids] = useState<Set<number>>(new Set());
+
+  // Composer
+  const [isComposerOpen, setIsComposerOpen] = useState(false);
+  const [composerInitial, setComposerInitial] = useState<{
+    to?: string[];
+    cc?: string[];
+    subject?: string;
+    body?: string;
+  }>({});
+
+  // Toast feedback
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  // 1. Initial Authentication Check
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      setIsAuthChecking(false);
+      return;
+    }
+
+    api
+      .getCurrentUser()
+      .then((res) => {
+        setAccount(res.account);
+      })
+      .catch(() => {
+        setAccount(null);
+      })
+      .finally(() => {
+        setIsAuthChecking(false);
+      });
+  }, []);
+
+  // 2. Fetch Folders
+  const loadFolders = useCallback(async () => {
+    if (!account) return;
+    try {
+      const res = await api.getMailboxes();
+      setFolders(res.folders);
+
+      // If selectedFolder doesn't exist in folder list, default to first or INBOX
+      if (res.folders.length > 0) {
+        const hasCurrent = res.folders.some(
+          (f) => f.path.toLowerCase() === selectedFolder.toLowerCase()
+        );
+        if (!hasCurrent) {
+          const inbox = res.folders.find((f) => f.specialUse === 'Inbox') || res.folders[0];
+          setSelectedFolder(inbox.path);
+        }
+      }
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to load folders', 'error');
+    }
+  }, [account, selectedFolder]);
+
+  useEffect(() => {
+    if (account) {
+      loadFolders();
+    }
+  }, [account, loadFolders]);
+
+  // 3. Fetch Messages for Selected Folder
+  const loadMessages = useCallback(async () => {
+    if (!account || !selectedFolder) return;
+    setIsMessagesLoading(true);
+    try {
+      const res = await api.getMessages(selectedFolder, page, 50, searchTerm);
+      setMessages(res.messages);
+      setTotalMessages(res.total);
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to load messages', 'error');
+    } finally {
+      setIsMessagesLoading(false);
+    }
+  }, [account, selectedFolder, page, searchTerm]);
+
+  useEffect(() => {
+    loadMessages();
+  }, [loadMessages]);
+
+  // Reset pagination & message detail when switching folders
+  const handleSelectFolder = (folderPath: string) => {
+    if (folderPath.toLowerCase() === selectedFolder.toLowerCase()) return;
+    setSelectedFolder(folderPath);
+    setPage(1);
+    setSearchTerm('');
+    setSelectedUid(null);
+    setSelectedMessage(null);
+    setSelectedUids(new Set());
+  };
+
+  // 4. Select and View Message Detail
+  const handleSelectMessage = async (uid: number) => {
+    setSelectedUid(uid);
+    setIsDetailLoading(true);
+
+    // Optimistically mark as seen in message list
+    setMessages((prev) =>
+      prev.map((m) => (m.uid === uid ? { ...m, isSeen: true } : m))
+    );
+
+    try {
+      const detail = await api.getMessageDetail(selectedFolder, uid);
+      setSelectedMessage(detail);
+      // Refresh folder counts
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to load email content', 'error');
+    } finally {
+      setIsDetailLoading(false);
+    }
+  };
+
+  // 5. Toggle Flag (Star or Read/Unread)
+  const handleToggleFlag = async (
+    uid: number,
+    flag: 'isSeen' | 'isFlagged',
+    e?: React.MouseEvent
+  ) => {
+    if (e) e.stopPropagation();
+
+    const targetMsg = messages.find((m) => m.uid === uid);
+    const currentValue = flag === 'isSeen' ? targetMsg?.isSeen : targetMsg?.isFlagged;
+    const newValue = !currentValue;
+
+    // Optimistic UI updates
+    setMessages((prev) =>
+      prev.map((m) => (m.uid === uid ? { ...m, [flag]: newValue } : m))
+    );
+    if (selectedMessage && selectedMessage.uid === uid) {
+      setSelectedMessage({ ...selectedMessage, [flag]: newValue });
+    }
+
+    try {
+      await api.toggleFlag(selectedFolder, uid, flag, newValue);
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to update flag', 'error');
+      // Revert on failure
+      loadMessages();
+    }
+  };
+
+  // 6. Delete Message
+  const handleDeleteMessage = async (uid: number) => {
+    try {
+      await api.deleteMessage(selectedFolder, uid);
+      showToast('Message deleted');
+      setMessages((prev) => prev.filter((m) => m.uid !== uid));
+      if (selectedUid === uid) {
+        setSelectedUid(null);
+        setSelectedMessage(null);
+      }
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete message', 'error');
+    }
+  };
+
+  // 7. Move Message
+  const handleMoveMessage = async (uid: number, targetFolder: string) => {
+    try {
+      await api.moveMessage(selectedFolder, uid, targetFolder);
+      showToast(`Moved to ${targetFolder}`);
+      setMessages((prev) => prev.filter((m) => m.uid !== uid));
+      if (selectedUid === uid) {
+        setSelectedUid(null);
+        setSelectedMessage(null);
+      }
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to move message', 'error');
+    }
+  };
+
+  // 8. Batch Operations
+  const handleToggleSelectUid = (uid: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedUids((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    const allSelected = messages.length > 0 && messages.every((m) => selectedUids.has(m.uid));
+    if (allSelected) {
+      setSelectedUids(new Set());
+    } else {
+      setSelectedUids(new Set(messages.map((m) => m.uid)));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    const uidsToDelete = Array.from(selectedUids);
+    for (const uid of uidsToDelete) {
+      try {
+        await api.deleteMessage(selectedFolder, uid);
+      } catch {
+        // Continue deleting rest
+      }
+    }
+    showToast(`Deleted ${uidsToDelete.length} messages`);
+    setSelectedUids(new Set());
+    loadMessages();
+    loadFolders();
+    if (selectedUid && uidsToDelete.includes(selectedUid)) {
+      setSelectedUid(null);
+      setSelectedMessage(null);
+    }
+  };
+
+  const handleBatchMarkRead = async (isSeen: boolean) => {
+    const uids = Array.from(selectedUids);
+    for (const uid of uids) {
+      try {
+        await api.toggleFlag(selectedFolder, uid, 'isSeen', isSeen);
+      } catch {
+        // Continue
+      }
+    }
+    showToast(`Marked ${uids.length} messages as ${isSeen ? 'read' : 'unread'}`);
+    setSelectedUids(new Set());
+    loadMessages();
+    loadFolders();
+  };
+
+  // 9. Reply & Forward Composer Hooks
+  const handleReply = (message: ParsedEmailMessage, replyAll = false) => {
+    const sender = message.from.address;
+    const recipients = replyAll
+      ? [sender, ...message.to.map((t) => t.address).filter((a) => a !== account?.email)]
+      : [sender];
+    const cc = replyAll && message.cc ? message.cc.map((c) => c.address) : [];
+
+    const dateStr = new Date(message.date).toLocaleString();
+    const quote = `\n\n--- On ${dateStr}, ${message.from.name || sender} wrote: ---\n> ${
+      message.text ? message.text.replace(/\n/g, '\n> ') : ''
+    }`;
+
+    setComposerInitial({
+      to: recipients,
+      cc,
+      subject: message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`,
+      body: quote
+    });
+    setIsComposerOpen(true);
+  };
+
+  const handleForward = (message: ParsedEmailMessage) => {
+    const dateStr = new Date(message.date).toLocaleString();
+    const forwardHeader = `\n\n---------- Forwarded message ---------\nFrom: ${message.from.name || ''} <${
+      message.from.address
+    }>\nDate: ${dateStr}\nSubject: ${message.subject}\nTo: ${message.to
+      .map((t) => t.address)
+      .join(', ')}\n\n${message.text || ''}`;
+
+    setComposerInitial({
+      to: [],
+      subject: message.subject.startsWith('Fwd:') ? message.subject : `Fwd: ${message.subject}`,
+      body: forwardHeader
+    });
+    setIsComposerOpen(true);
+  };
+
+  // 10. Logout
+  const handleLogout = async () => {
+    await api.logout();
+    setAccount(null);
+    setFolders([]);
+    setMessages([]);
+    setSelectedUid(null);
+    setSelectedMessage(null);
+  };
+
+  if (isAuthChecking) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-slate-900 text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-semibold text-slate-300">Initializing Roundcube...</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans">
+      {!account ? (
+        <ConnectModal
+          onConnected={(acc) => {
+            setAccount(acc);
+            showToast('Connected successfully');
+          }}
+        />
+      ) : (
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left Pane: Mailbox Navigation */}
+          <Sidebar
+            account={account}
+            folders={folders}
+            selectedFolder={selectedFolder}
+            onSelectFolder={handleSelectFolder}
+            onOpenComposer={() => {
+              setComposerInitial({});
+              setIsComposerOpen(true);
+            }}
+            onLogout={handleLogout}
+          />
+
+          {/* Middle Pane: Message List */}
+          <MessageList
+            folderName={
+              folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.name ||
+              selectedFolder
+            }
+            messages={messages}
+            totalMessages={totalMessages}
+            selectedUid={selectedUid}
+            onSelectMessage={handleSelectMessage}
+            selectedUids={selectedUids}
+            onToggleSelectUid={handleToggleSelectUid}
+            onSelectAll={handleSelectAll}
+            onToggleFlag={handleToggleFlag}
+            onRefresh={() => {
+              loadMessages();
+              loadFolders();
+            }}
+            isLoading={isMessagesLoading}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            onBatchDelete={handleBatchDelete}
+            onBatchMarkRead={handleBatchMarkRead}
+            page={page}
+            limit={50}
+            onPageChange={setPage}
+          />
+
+          {/* Right Pane: Message Viewer */}
+          <MessageViewer
+            folderPath={selectedFolder}
+            message={selectedMessage}
+            isLoading={isDetailLoading}
+            onToggleFlag={(uid, flag) => handleToggleFlag(uid, flag)}
+            onDelete={handleDeleteMessage}
+            onMove={handleMoveMessage}
+            onReply={handleReply}
+            onForward={handleForward}
+            folders={folders}
+          />
+        </div>
+      )}
+
+      {/* Floating Composer Modal */}
+      <ComposerModal
+        isOpen={isComposerOpen}
+        onClose={() => setIsComposerOpen(false)}
+        onSentSuccess={() => {
+          showToast('Email sent successfully');
+          loadFolders();
+          if (selectedFolder.toLowerCase().includes('sent')) {
+            loadMessages();
+          }
+        }}
+        initialTo={composerInitial.to}
+        initialCc={composerInitial.cc}
+        initialSubject={composerInitial.subject}
+        initialBody={composerInitial.body}
+      />
+
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold z-50 flex items-center gap-2 border transition-all animate-bounce ${
+            toast.type === 'error'
+              ? 'bg-red-950 text-red-200 border-red-800'
+              : 'bg-slate-900 text-white border-slate-700'
+          }`}
+        >
+          <span>{toast.message}</span>
+        </div>
+      )}
+    </div>
+  );
+};

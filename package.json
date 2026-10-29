@@ -1,0 +1,17 @@
+{
+  "name": "mailloom",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lightweight modern webmail client for Delpat iRedMail infrastructure, replacing Roundcube",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter mailloom-server dev\" \"pnpm --filter mailloom-client dev\"",
+    "build": "pnpm --filter mailloom-server build && pnpm --filter mailloom-client build",
+    "start": "pnpm --filter mailloom-server start",
+    "test": "node server/dist/test-server.js",
+    "dev:server": "pnpm --filter mailloom-server dev",
+    "dev:client": "pnpm --filter mailloom-client dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
