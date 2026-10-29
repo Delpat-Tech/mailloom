@@ -64,6 +64,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
     }
 
     // Real IMAP/SMTP connection validation
+    const incomingPass = body.imapPass || (body as { password?: string }).password || '';
     const config: AccountConfig = {
       email: body.email || '',
       name: body.name || body.email?.split('@')[0],
@@ -71,12 +72,12 @@ export async function mailRoutes(fastify: FastifyInstance) {
       imapPort: Number(body.imapPort || 993),
       imapSecure: body.imapSecure !== false,
       imapUser: body.imapUser || body.email || '',
-      imapPass: body.imapPass || '',
+      imapPass: incomingPass,
       smtpHost: body.smtpHost || '',
       smtpPort: Number(body.smtpPort || 587),
       smtpSecure: Boolean(body.smtpSecure),
       smtpUser: body.smtpUser || body.imapUser || body.email || '',
-      smtpPass: body.smtpPass || body.imapPass || '',
+      smtpPass: body.smtpPass || incomingPass,
       isDemo: false
     };
 

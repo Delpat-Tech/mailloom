@@ -95,6 +95,15 @@ export async function getPooledImapClient(config: AccountConfig): Promise<ImapFl
   const timer = setTimeout(() => closePooledClient(key), IDLE_TIMEOUT_MS);
   connectionPool.set(key, { client, timer, lastUsed: Date.now() });
 
+  client.on('error', (err) => {
+    // Prevent unhandled error event crash on socket timeouts or disconnects
+    const entry = connectionPool.get(key);
+    if (entry) {
+      clearTimeout(entry.timer);
+      connectionPool.delete(key);
+    }
+  });
+
   client.on('close', () => {
     const entry = connectionPool.get(key);
     if (entry) {
