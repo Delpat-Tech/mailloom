@@ -36,12 +36,10 @@ await fastify.register(multipart, {
 
 // Rewrite /mail/api/... to /api/... if Nginx passes the subpath through
 fastify.addHook('onRequest', async (req) => {
-  if (req.url.startsWith('/mail/api/')) {
-    req.raw.url = req.raw.url?.replace('/mail/api/', '/api/') || req.url;
-    req.url = req.url.replace('/mail/api/', '/api/');
-  } else if (req.url === '/mail/api') {
+  if (req.raw.url?.startsWith('/mail/api/')) {
+    req.raw.url = req.raw.url.replace('/mail/api/', '/api/');
+  } else if (req.raw.url === '/mail/api') {
     req.raw.url = '/api';
-    req.url = '/api';
   }
 });
 
