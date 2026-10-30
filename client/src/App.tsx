@@ -4,13 +4,30 @@ import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
 import { ComposerModal } from './components/ComposerModal.js';
 import { ConnectModal } from './components/ConnectModal.js';
-import { api, getStoredToken } from './services/api.js';
-import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount } from './types.js';
+import {
+  api,
+  getStoredToken,
+  getStoredAccounts,
+  saveAccountProfile,
+  removeStoredAccount,
+  switchStoredAccount,
+  updateStoredAccountUnread,
+  clearStoredToken
+} from './services/api.js';
+import type {
+  MailboxFolder,
+  MessageHeader,
+  ParsedEmailMessage,
+  UserAccount,
+  StoredAccountProfile
+} from './types.js';
 
 export const App: React.FC = () => {
-  // Authentication & Account
+  // Authentication & Multi-Account State
   const [account, setAccount] = useState<UserAccount | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [savedAccounts, setSavedAccounts] = useState<StoredAccountProfile[]>([]);
+  const [isAddingAccount, setIsAddingAccount] = useState(false);
 
   // Mailboxes & Navigation
   const [folders, setFolders] = useState<MailboxFolder[]>([]);
@@ -48,8 +65,11 @@ export const App: React.FC = () => {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // 1. Initial Authentication Check
+  // 1. Initial Authentication Check (< 300ms Silent Auto-Login)
   useEffect(() => {
+    const existingAccounts = getStoredAccounts();
+    setSavedAccounts(existingAccounts);
+
     const token = getStoredToken();
     if (!token) {
       setIsAuthChecking(false);
@@ -60,8 +80,21 @@ export const App: React.FC = () => {
       .getCurrentUser()
       .then((res) => {
         setAccount(res.account);
+        // Refresh saved profile timestamp
+        saveAccountProfile({
+          email: res.account.email,
+          name: res.account.name,
+          token,
+          imapHost: res.account.imapHost,
+          smtpHost: res.account.smtpHost,
+          isDemo: res.account.isDemo,
+          lastActive: Date.now()
+        });
+        setSavedAccounts(getStoredAccounts());
       })
       .catch(() => {
+        // Token invalid or expired, clear and prompt login
+        clearStoredToken();
         setAccount(null);
       })
       .finally(() => {
@@ -75,6 +108,11 @@ export const App: React.FC = () => {
     try {
       const res = await api.getMailboxes();
       setFolders(res.folders);
+
+      // Compute total unread for account badge
+      const totalUnread = res.folders.reduce((acc, f) => acc + (f.unreadCount || 0), 0);
+      updateStoredAccountUnread(account.email, totalUnread);
+      setSavedAccounts(getStoredAccounts());
 
       // If selectedFolder doesn't exist in folder list, default to first or INBOX
       if (res.folders.length > 0) {
@@ -303,14 +341,80 @@ export const App: React.FC = () => {
     setIsComposerOpen(true);
   };
 
-  // 10. Logout
-  const handleLogout = async () => {
-    await api.logout();
-    setAccount(null);
-    setFolders([]);
+  // 10. Multi-Account Management
+  const handleConnected = (acc: UserAccount, token: string, rememberMe: boolean) => {
+    saveAccountProfile({
+      email: acc.email,
+      name: acc.name,
+      token,
+      imapHost: acc.imapHost,
+      smtpHost: acc.smtpHost,
+      isDemo: acc.isDemo,
+      rememberMe,
+      lastActive: Date.now()
+    });
+    setAccount(acc);
+    setSavedAccounts(getStoredAccounts());
+    setIsAddingAccount(false);
+    showToast(isAddingAccount ? `Added mailbox ${acc.email}` : 'Connected successfully');
+  };
+
+  const handleSwitchAccount = async (targetEmail: string) => {
+    const switched = switchStoredAccount(targetEmail);
+    if (!switched) return;
+
+    setIsMessagesLoading(true);
     setMessages([]);
     setSelectedUid(null);
     setSelectedMessage(null);
+    setSelectedFolder('INBOX');
+
+    try {
+      const res = await api.getCurrentUser();
+      setAccount(res.account);
+      setSavedAccounts(getStoredAccounts());
+      showToast(`Switched to ${targetEmail}`);
+    } catch {
+      showToast(`Could not reconnect to ${targetEmail}`, 'error');
+    } finally {
+      setIsMessagesLoading(false);
+    }
+  };
+
+  const handleRemoveAccount = (targetEmail: string) => {
+    removeStoredAccount(targetEmail);
+    const updated = getStoredAccounts();
+    setSavedAccounts(updated);
+    showToast(`Removed account ${targetEmail}`);
+
+    // If active account was removed, switch to next or logout
+    if (account?.email.toLowerCase() === targetEmail.toLowerCase()) {
+      if (updated.length > 0) {
+        handleSwitchAccount(updated[0].email);
+      } else {
+        handleLogout();
+      }
+    }
+  };
+
+  // 11. Logout Active Account
+  const handleLogout = async () => {
+    if (account) {
+      removeStoredAccount(account.email);
+    }
+    await api.logout();
+    const remaining = getStoredAccounts();
+    setSavedAccounts(remaining);
+
+    if (remaining.length > 0) {
+      handleSwitchAccount(remaining[0].email);
+    } else {
+      setAccount(null);
+      setFolders([]);
+      setMessages([]);
+      setSelectedUid(null);
+      setSelectedMessage(null);
+    }
   };
 
   if (isAuthChecking) {
@@ -318,7 +422,7 @@ export const App: React.FC = () => {
       <div className="h-screen w-screen flex items-center justify-center bg-slate-900 text-white">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-semibold text-slate-300">Initializing Roundcube...</span>
+          <span className="text-xs font-semibold text-slate-300">Launching Mailloom...</span>
         </div>
       </div>
     );
@@ -327,15 +431,10 @@ export const App: React.FC = () => {
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans">
       {!account ? (
-        <ConnectModal
-          onConnected={(acc) => {
-            setAccount(acc);
-            showToast('Connected successfully');
-          }}
-        />
+        <ConnectModal onConnected={handleConnected} />
       ) : (
         <div className="flex-1 flex overflow-hidden">
-          {/* Left Pane: Mailbox Navigation */}
+          {/* Left Pane: Mailbox Navigation & Multi-Account Switcher */}
           <Sidebar
             account={account}
             folders={folders}
@@ -346,6 +445,10 @@ export const App: React.FC = () => {
               setIsComposerOpen(true);
             }}
             onLogout={handleLogout}
+            savedAccounts={savedAccounts}
+            onSwitchAccount={handleSwitchAccount}
+            onAddAccount={() => setIsAddingAccount(true)}
+            onRemoveAccount={handleRemoveAccount}
           />
 
           {/* Middle Pane: Message List */}
@@ -389,6 +492,15 @@ export const App: React.FC = () => {
             folders={folders}
           />
         </div>
+      )}
+
+      {/* Add Account Modal (Overlay on active session) */}
+      {isAddingAccount && (
+        <ConnectModal
+          isAddingAccount={true}
+          onConnected={handleConnected}
+          onCancel={() => setIsAddingAccount(false)}
+        />
       )}
 
       {/* Floating Composer Modal */}

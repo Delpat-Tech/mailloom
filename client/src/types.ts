@@ -66,6 +66,18 @@ export interface UserAccount {
   isDemo?: boolean;
 }
 
+export interface StoredAccountProfile {
+  email: string;
+  name?: string;
+  token: string;
+  imapHost?: string;
+  smtpHost?: string;
+  isDemo?: boolean;
+  rememberMe?: boolean;
+  unreadCount?: number;
+  lastActive: number;
+}
+
 export interface ComposerDraft {
   to: string[];
   cc: string[];

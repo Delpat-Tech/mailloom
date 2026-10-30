@@ -1,21 +1,103 @@
-import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount } from '../types.js';
+import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount, StoredAccountProfile } from '../types.js';
+
+const ACTIVE_TOKEN_KEY = 'mailloom_active_token';
+const ACCOUNTS_KEY = 'mailloom_saved_accounts';
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function getStoredAccounts(): StoredAccountProfile[] {
+  try {
+    const raw = localStorage.getItem(ACCOUNTS_KEY);
+    if (!raw) return [];
+    const parsed: StoredAccountProfile[] = JSON.parse(raw);
+    const now = Date.now();
+    // Filter out expired accounts
+    const valid = parsed.filter((acc) => !acc.rememberMe || (acc.lastActive + THIRTY_DAYS_MS > now));
+    if (valid.length !== parsed.length) {
+      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(valid));
+    }
+    return valid;
+  } catch {
+    return [];
+  }
+}
+
+export function saveAccountProfile(profile: StoredAccountProfile): void {
+  try {
+    const accounts = getStoredAccounts();
+    const existingIdx = accounts.findIndex((a) => a.email.toLowerCase() === profile.email.toLowerCase());
+    if (existingIdx >= 0) {
+      accounts[existingIdx] = { ...accounts[existingIdx], ...profile, lastActive: Date.now() };
+    } else {
+      // Max 3 saved accounts
+      if (accounts.length >= 3) {
+        accounts.pop(); // remove oldest
+      }
+      accounts.unshift({ ...profile, lastActive: Date.now() });
+    }
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+    localStorage.setItem(ACTIVE_TOKEN_KEY, profile.token);
+  } catch {
+    // Ignore localStorage quota errors
+  }
+}
+
+export function removeStoredAccount(email: string): void {
+  try {
+    const accounts = getStoredAccounts().filter((a) => a.email.toLowerCase() !== email.toLowerCase());
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+    // If active account was removed, switch to next available or clear
+    if (accounts.length > 0) {
+      localStorage.setItem(ACTIVE_TOKEN_KEY, accounts[0].token);
+    } else {
+      localStorage.removeItem(ACTIVE_TOKEN_KEY);
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+export function switchStoredAccount(email: string): StoredAccountProfile | null {
+  const accounts = getStoredAccounts();
+  const target = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+  if (target) {
+    target.lastActive = Date.now();
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+    localStorage.setItem(ACTIVE_TOKEN_KEY, target.token);
+    return target;
+  }
+  return null;
+}
+
+export function updateStoredAccountUnread(email: string, unreadCount: number): void {
+  try {
+    const accounts = getStoredAccounts();
+    const target = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+    if (target) {
+      target.unreadCount = unreadCount;
+      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+export function getStoredToken(): string | null {
+  return localStorage.getItem(ACTIVE_TOKEN_KEY) || localStorage.getItem('roundcube_session_token');
+}
+
+export function setStoredToken(token: string) {
+  localStorage.setItem(ACTIVE_TOKEN_KEY, token);
+}
+
+export function clearStoredToken() {
+  localStorage.removeItem(ACTIVE_TOKEN_KEY);
+  localStorage.removeItem('roundcube_session_token');
+}
 
 const API_BASE =
   typeof window !== 'undefined' && window.location.pathname.startsWith('/mail')
     ? '/mail/api'
     : '/api';
-
-export function getStoredToken(): string | null {
-  return localStorage.getItem('roundcube_session_token');
-}
-
-export function setStoredToken(token: string) {
-  localStorage.setItem('roundcube_session_token', token);
-}
-
-export function clearStoredToken() {
-  localStorage.removeItem('roundcube_session_token');
-}
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = getStoredToken();

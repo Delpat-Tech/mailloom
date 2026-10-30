@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Inbox,
   Send,
@@ -11,9 +11,13 @@ import {
   PenSquare,
   LogOut,
   Mail,
-  Sparkles
+  Sparkles,
+  ChevronUp,
+  UserPlus,
+  Check,
+  X
 } from 'lucide-react';
-import type { MailboxFolder, UserAccount } from '../types.js';
+import type { MailboxFolder, UserAccount, StoredAccountProfile } from '../types.js';
 
 interface SidebarProps {
   account: UserAccount;
@@ -22,6 +26,10 @@ interface SidebarProps {
   onSelectFolder: (path: string) => void;
   onOpenComposer: () => void;
   onLogout: () => void;
+  savedAccounts?: StoredAccountProfile[];
+  onSwitchAccount?: (email: string) => void;
+  onAddAccount?: () => void;
+  onRemoveAccount?: (email: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -30,8 +38,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedFolder,
   onSelectFolder,
   onOpenComposer,
-  onLogout
+  onLogout,
+  savedAccounts = [],
+  onSwitchAccount,
+  onAddAccount,
+  onRemoveAccount
 }) => {
+  const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
+        setShowAccountSwitcher(false);
+      }
+    };
+    if (showAccountSwitcher) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showAccountSwitcher]);
+
   const getFolderIcon = (f: MailboxFolder) => {
     switch (f.specialUse) {
       case 'Inbox':
@@ -120,9 +150,108 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
       </div>
 
-      {/* User Account / Footer */}
-      <div className="p-3 border-t border-slate-800 bg-slate-950/40">
-        <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800/80">
+      {/* User Account / Multi-Account Switcher Footer */}
+      <div className="p-3 border-t border-slate-800 bg-slate-950/40 relative" ref={accountMenuRef}>
+        {/* Account Switcher Popover */}
+        {showAccountSwitcher && (
+          <div className="absolute bottom-full left-3 right-3 mb-2 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1">
+            <div className="px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800/80 flex items-center justify-between">
+              <span>Connected Accounts</span>
+              <span className="text-[10px] text-slate-400">{savedAccounts.length} / 3</span>
+            </div>
+
+            <div className="max-h-48 overflow-y-auto space-y-0.5 py-1">
+              {savedAccounts.map((savedAcc) => {
+                const isActive = savedAcc.email.toLowerCase() === account.email.toLowerCase();
+                return (
+                  <div
+                    key={savedAcc.email}
+                    onClick={() => {
+                      if (!isActive && onSwitchAccount) {
+                        onSwitchAccount(savedAcc.email);
+                        setShowAccountSwitcher(false);
+                      }
+                    }}
+                    className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors ${
+                      isActive
+                        ? 'bg-sky-950/60 text-sky-300 border border-sky-800/50'
+                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <div className="w-6 h-6 rounded-full bg-slate-800 text-sky-400 text-xs font-bold flex items-center justify-center shrink-0 border border-slate-700">
+                        {(savedAcc.name || savedAcc.email).charAt(0).toUpperCase()}
+                      </div>
+                      <div className="truncate text-left">
+                        <div className="font-semibold truncate">{savedAcc.name || savedAcc.email}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{savedAcc.email}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                      {savedAcc.unreadCount && savedAcc.unreadCount > 0 ? (
+                        <span className="text-[10px] bg-sky-500 text-white font-bold px-1.5 py-0.2 rounded-full">
+                          {savedAcc.unreadCount}
+                        </span>
+                      ) : null}
+                      {isActive ? (
+                        <Check className="w-3.5 h-3.5 text-sky-400" />
+                      ) : (
+                        onRemoveAccount && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveAccount(savedAcc.email);
+                            }}
+                            className="p-1 hover:text-red-400 hover:bg-red-950/40 rounded transition-colors text-slate-400"
+                            title="Remove account"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Actions */}
+            <div className="border-t border-slate-800/80 pt-1 flex flex-col gap-0.5">
+              {onAddAccount && savedAccounts.length < 3 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAccountSwitcher(false);
+                    onAddAccount();
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-sky-400 hover:bg-sky-950/40 font-medium transition-colors"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Add Another Mailbox</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountSwitcher(false);
+                  onLogout();
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-red-400 hover:bg-red-950/40 font-medium transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Disconnect Active Account</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Trigger Button */}
+        <div
+          onClick={() => setShowAccountSwitcher(!showAccountSwitcher)}
+          className="flex items-center justify-between px-2.5 py-2 rounded-lg bg-slate-900/80 hover:bg-slate-800/80 border border-slate-800/80 cursor-pointer transition-all"
+        >
           <div className="flex items-center gap-2.5 truncate">
             <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-sky-600 to-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
               {(account.name || account.email).charAt(0).toUpperCase()}
@@ -132,13 +261,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="text-[11px] text-slate-400 truncate">{account.email}</div>
             </div>
           </div>
-          <button
-            onClick={onLogout}
-            title="Disconnect account"
-            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-950/30 rounded-md transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          <ChevronUp
+            className={`w-4 h-4 text-slate-400 transition-transform ${
+              showAccountSwitcher ? 'rotate-180 text-sky-400' : ''
+            }`}
+          />
         </div>
       </div>
     </div>

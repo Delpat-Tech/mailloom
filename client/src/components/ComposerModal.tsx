@@ -6,9 +6,11 @@ import {
   Paperclip,
   Send,
   Trash2,
-  AlertCircle
+  AlertCircle,
+  FileSpreadsheet
 } from 'lucide-react';
 import { api } from '../services/api.js';
+import { TemplateSelectorModal } from './TemplateSelectorModal.js';
 
 interface ComposerAttachment {
   filename: string;
@@ -51,6 +53,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -450,6 +453,16 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               >
                 <Paperclip className="w-4 h-4" />
               </button>
+
+              <button
+                type="button"
+                onClick={() => setShowTemplateModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors border border-sky-200/60 font-medium"
+                title="Insert pre-written email templates"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-sky-600" />
+                <span>Templates</span>
+              </button>
             </div>
 
             <button
@@ -462,6 +475,16 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           </div>
         </div>
       )}
+
+      {/* Templates Selector Modal */}
+      <TemplateSelectorModal
+        isOpen={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onApplyTemplate={({ subject: newSubject, body: newBody }) => {
+          setSubject(newSubject);
+          setBody(newBody);
+        }}
+      />
     </div>
   );
 };
