@@ -9,6 +9,7 @@ import {
   setLiveMessageFlags,
   moveLiveMessage,
   deleteLiveMessage,
+  markLiveMessageSpam,
   testImapConnection,
   streamLiveAttachment,
   closeUserSession
@@ -149,22 +150,45 @@ export async function mailRoutes(fastify: FastifyInstance) {
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path } = req.params as { path: string };
-      const { page = '1', limit = '50', search = '' } = req.query as {
+      const {
+        page = '1',
+        limit = '50',
+        search = '',
+        from = '',
+        to = '',
+        subject = '',
+        since = '',
+        before = ''
+      } = req.query as {
         page?: string;
         limit?: string;
         search?: string;
+        from?: string;
+        to?: string;
+        subject?: string;
+        since?: string;
+        before?: string;
       };
 
       const pageNum = Math.max(1, parseInt(page, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
       const folderPath = decodeURIComponent(path);
 
+      const filters = {
+        search: search.trim() || undefined,
+        from: from.trim() || undefined,
+        to: to.trim() || undefined,
+        subject: subject.trim() || undefined,
+        since: since.trim() || undefined,
+        before: before.trim() || undefined
+      };
+
       if (config.isDemo) {
-        return demoMailService.getMessages(folderPath, pageNum, limitNum, search);
+        return demoMailService.getMessages(folderPath, pageNum, limitNum, search, filters);
       }
 
       try {
-        return await getLiveMessages(config, folderPath, pageNum, limitNum);
+        return await getLiveMessages(config, folderPath, pageNum, limitNum, filters);
       } catch (err) {
         return reply.status(500).send({ error: `Failed to fetch messages: ${(err as Error).message}` });
       }
@@ -300,7 +324,32 @@ export async function mailRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // 11. Send Outgoing Message
+  // 11. Mark Message as Spam (Move to Junk & Mark Read)
+  fastify.post(
+    '/api/mailboxes/:path/messages/:uid/spam',
+    { preHandler: [requireAuth] },
+    async (req: AuthenticatedRequest, reply) => {
+      const config = req.accountConfig!;
+      const { path, uid } = req.params as { path: string; uid: string };
+      const { junkFolder } = (req.body as { junkFolder?: string }) || {};
+      const messageUid = parseInt(uid, 10);
+      const folderPath = decodeURIComponent(path);
+
+      if (config.isDemo) {
+        const success = demoMailService.markAsSpam(messageUid, junkFolder || 'Junk');
+        return { success };
+      }
+
+      try {
+        const success = await markLiveMessageSpam(config, folderPath, messageUid, junkFolder);
+        return { success };
+      } catch (err) {
+        return reply.status(500).send({ error: (err as Error).message });
+      }
+    }
+  );
+
+  // 12. Send Outgoing Message
   fastify.post(
     '/api/messages/send',
     { preHandler: [requireAuth] },

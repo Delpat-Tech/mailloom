@@ -145,16 +145,66 @@ async function runTestSuite() {
     if (downloadRes.statusCode !== 200) throw new Error('Attachment download failed');
   }
 
-  // Test 11: Auth Logout & Socket Pool Cleanup
+  // Test 11: Server-side Search (Free Text)
+  const searchRes = await app.inject({
+    method: 'GET',
+    url: '/api/mailboxes/INBOX/messages?search=logistics',
+    headers: authHeaders
+  });
+  console.log(`[TEST 11] GET /api/mailboxes/INBOX/messages?search=logistics -> status: ${searchRes.statusCode}`);
+  const searchData = JSON.parse(searchRes.body);
+  console.log(`  Search matched ${searchData.messages.length} messages`);
+  if (!searchData.messages.some((m: any) => m.subject.toLowerCase().includes('logistics') || m.from.name.toLowerCase().includes('logistics') || m.snippet.toLowerCase().includes('logistics'))) {
+    throw new Error('Search did not match expected message');
+  }
+
+  // Test 12: Server-side Filtered Search (From & Subject)
+  const filterRes = await app.inject({
+    method: 'GET',
+    url: '/api/mailboxes/INBOX/messages?from=Tata&subject=Price',
+    headers: authHeaders
+  });
+  console.log(`[TEST 12] GET /api/mailboxes/INBOX/messages?from=Tata&subject=Price -> status: ${filterRes.statusCode}`);
+  const filterData = JSON.parse(filterRes.body);
+  console.log(`  Filtered search matched ${filterData.messages.length} messages`);
+  if (filterData.messages.length === 0 || !filterData.messages[0].subject.includes('Price Revision')) {
+    throw new Error('Filtered search failed to return matching message');
+  }
+
+  // Test 13: Mark as Spam / Move to Junk & Mark Read
+  const spamTargetUid = firstMsgUid;
+  const spamRes = await app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/INBOX/messages/${spamTargetUid}/spam`,
+    headers: authHeaders,
+    payload: { junkFolder: 'Junk' }
+  });
+  console.log(`[TEST 13] POST /api/mailboxes/INBOX/messages/${spamTargetUid}/spam -> status: ${spamRes.statusCode}`);
+  if (spamRes.statusCode !== 200) throw new Error('Mark as spam failed');
+
+  // Verify message is now in Junk folder
+  const junkRes = await app.inject({
+    method: 'GET',
+    url: '/api/mailboxes/Junk/messages',
+    headers: authHeaders
+  });
+  const junkData = JSON.parse(junkRes.body);
+  console.log(`  Junk folder now contains ${junkData.messages.length} messages`);
+  const foundInJunk = junkData.messages.find((m: any) => m.uid === spamTargetUid);
+  if (!foundInJunk) throw new Error('Message not found in Junk folder after spam action');
+  if (!foundInJunk.isSeen) throw new Error('Message in Junk folder was not marked as read');
+  console.log(`  Verified message ${spamTargetUid} is in Junk folder and marked as read`);
+
+  // Test 14: Auth Logout & Socket Pool Cleanup
   const logoutRes = await app.inject({
     method: 'POST',
     url: '/api/auth/logout',
     headers: authHeaders
   });
-  console.log(`[TEST 11] POST /api/auth/logout -> status: ${logoutRes.statusCode}`);
+  console.log(`[TEST 14] POST /api/auth/logout -> status: ${logoutRes.statusCode}`);
   if (logoutRes.statusCode !== 200) throw new Error('Logout failed');
 
-  console.log('\n🎉 ALL 11 TESTS PASSED SUCCESSFULLY! Mailloom API & Dovecot Pool are completely solid.');
+  console.log('\n🎉 ALL 14 TESTS PASSED SUCCESSFULLY! Mailloom Search, Spam & Core features are 100% verified.');
   await app.close();
 }
 

@@ -123,6 +123,15 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return res.json();
 }
 
+export interface SearchFilterParams {
+  search?: string;
+  from?: string;
+  to?: string;
+  subject?: string;
+  since?: string;
+  before?: string;
+}
+
 export const api = {
   // Auth
   connect: async (data: Record<string, unknown>): Promise<{ token: string; account: UserAccount }> => {
@@ -153,12 +162,30 @@ export const api = {
     folderPath: string,
     page = 1,
     limit = 50,
-    search = ''
+    search = '',
+    filters?: SearchFilterParams
   ): Promise<{ messages: MessageHeader[]; total: number }> => {
     const encoded = encodeURIComponent(folderPath);
     const query = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (search.trim()) query.set('search', search.trim());
+    if (filters?.from?.trim()) query.set('from', filters.from.trim());
+    if (filters?.to?.trim()) query.set('to', filters.to.trim());
+    if (filters?.subject?.trim()) query.set('subject', filters.subject.trim());
+    if (filters?.since?.trim()) query.set('since', filters.since.trim());
+    if (filters?.before?.trim()) query.set('before', filters.before.trim());
     return request<{ messages: MessageHeader[]; total: number }>(`/mailboxes/${encoded}/messages?${query}`);
+  },
+
+  markSpam: async (
+    folderPath: string,
+    uid: number,
+    junkFolder?: string
+  ): Promise<{ success: boolean }> => {
+    const encoded = encodeURIComponent(folderPath);
+    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${uid}/spam`, {
+      method: 'POST',
+      body: JSON.stringify({ junkFolder })
+    });
   },
 
   getMessageDetail: async (folderPath: string, uid: number): Promise<ParsedEmailMessage> => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar.js';
 import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
@@ -12,8 +12,13 @@ import {
   removeStoredAccount,
   switchStoredAccount,
   updateStoredAccountUnread,
-  clearStoredToken
+  clearStoredToken,
+  type SearchFilterParams
 } from './services/api.js';
+import {
+  showDesktopNotification,
+  requestNotificationPermission
+} from './services/notifications.js';
 import type {
   MailboxFolder,
   MessageHeader,
@@ -38,7 +43,9 @@ export const App: React.FC = () => {
   const [totalMessages, setTotalMessages] = useState(0);
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchFilters, setSearchFilters] = useState<SearchFilterParams>({});
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+  const prevUnreadRef = useRef<number | null>(null);
 
   // Selected Message
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
@@ -114,6 +121,11 @@ export const App: React.FC = () => {
       updateStoredAccountUnread(account.email, totalUnread);
       setSavedAccounts(getStoredAccounts());
 
+      if (prevUnreadRef.current === null) {
+        const inbox = res.folders.find((f) => f.specialUse === 'Inbox' || f.name.toLowerCase() === 'inbox');
+        prevUnreadRef.current = inbox ? inbox.unreadCount || 0 : 0;
+      }
+
       // If selectedFolder doesn't exist in folder list, default to first or INBOX
       if (res.folders.length > 0) {
         const hasCurrent = res.folders.some(
@@ -140,7 +152,7 @@ export const App: React.FC = () => {
     if (!account || !selectedFolder) return;
     setIsMessagesLoading(true);
     try {
-      const res = await api.getMessages(selectedFolder, page, 50, searchTerm);
+      const res = await api.getMessages(selectedFolder, page, 50, searchTerm, searchFilters);
       setMessages(res.messages);
       setTotalMessages(res.total);
     } catch (err: unknown) {
@@ -148,7 +160,7 @@ export const App: React.FC = () => {
     } finally {
       setIsMessagesLoading(false);
     }
-  }, [account, selectedFolder, page, searchTerm]);
+  }, [account, selectedFolder, page, searchTerm, searchFilters]);
 
   useEffect(() => {
     loadMessages();
@@ -160,6 +172,7 @@ export const App: React.FC = () => {
     setSelectedFolder(folderPath);
     setPage(1);
     setSearchTerm('');
+    setSearchFilters({});
     setSelectedUid(null);
     setSelectedMessage(null);
     setSelectedUids(new Set());
@@ -303,6 +316,53 @@ export const App: React.FC = () => {
     loadFolders();
   };
 
+  const getJunkFolderPath = () => {
+    return (
+      folders.find(
+        (f) =>
+          f.specialUse === 'Junk' ||
+          f.name.toLowerCase() === 'junk' ||
+          f.name.toLowerCase() === 'spam'
+      )?.path || 'Junk'
+    );
+  };
+
+  const handleMarkSpam = async (uid: number) => {
+    try {
+      const junkFolder = getJunkFolderPath();
+      await api.markSpam(selectedFolder, uid, junkFolder);
+      showToast('Moved to Junk & marked as read');
+      setMessages((prev) => prev.filter((m) => m.uid !== uid));
+      if (selectedUid === uid) {
+        setSelectedUid(null);
+        setSelectedMessage(null);
+      }
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to mark as spam', 'error');
+    }
+  };
+
+  const handleBatchSpam = async () => {
+    const uidsToSpam = Array.from(selectedUids);
+    const junkFolder = getJunkFolderPath();
+    for (const uid of uidsToSpam) {
+      try {
+        await api.markSpam(selectedFolder, uid, junkFolder);
+      } catch {
+        // Continue
+      }
+    }
+    showToast(`Moved ${uidsToSpam.length} messages to Junk`);
+    setSelectedUids(new Set());
+    loadMessages();
+    loadFolders();
+    if (selectedUid && uidsToSpam.includes(selectedUid)) {
+      setSelectedUid(null);
+      setSelectedMessage(null);
+    }
+  };
+
   // 9. Reply & Forward Composer Hooks
   const handleReply = (message: ParsedEmailMessage, replyAll = false) => {
     const sender = message.from.address;
@@ -397,7 +457,51 @@ export const App: React.FC = () => {
     }
   };
 
-  // 11. Logout Active Account
+  // 11. Desktop Notifications & 60s Background Polling
+  useEffect(() => {
+    if (!account) return;
+
+    // Prompt for notification permission on active session
+    requestNotificationPermission();
+
+    const interval = setInterval(async () => {
+      try {
+        const folderRes = await api.getMailboxes();
+        const inbox = folderRes.folders.find(
+          (f) => f.specialUse === 'Inbox' || f.name.toLowerCase() === 'inbox'
+        );
+        const currentUnread = inbox ? inbox.unreadCount || 0 : 0;
+
+        // If unread count has increased compared to last poll
+        if (prevUnreadRef.current !== null && currentUnread > prevUnreadRef.current) {
+          const freshInbox = await api.getMessages('INBOX', 1, 1);
+          const newest = freshInbox.messages[0];
+          if (newest && !newest.isSeen) {
+            showDesktopNotification({
+              title: `New Email from ${newest.from.name || newest.from.address}`,
+              body: newest.subject || '(No subject)',
+              onClick: () => {
+                setSelectedFolder('INBOX');
+                handleSelectMessage(newest.uid);
+              }
+            });
+          }
+        }
+
+        prevUnreadRef.current = currentUnread;
+        setFolders(folderRes.folders);
+        const totalUnread = folderRes.folders.reduce((acc, f) => acc + (f.unreadCount || 0), 0);
+        updateStoredAccountUnread(account.email, totalUnread);
+        setSavedAccounts(getStoredAccounts());
+      } catch {
+        // Silently ignore background polling errors
+      }
+    }, 60000); // 60 seconds interval
+
+    return () => clearInterval(interval);
+  }, [account]);
+
+  // 12. Logout Active Account
   const handleLogout = async () => {
     if (account) {
       removeStoredAccount(account.email);
@@ -472,8 +576,11 @@ export const App: React.FC = () => {
             isLoading={isMessagesLoading}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
+            filters={searchFilters}
+            onFiltersChange={setSearchFilters}
             onBatchDelete={handleBatchDelete}
             onBatchMarkRead={handleBatchMarkRead}
+            onBatchSpam={handleBatchSpam}
             page={page}
             limit={50}
             onPageChange={setPage}
@@ -487,6 +594,7 @@ export const App: React.FC = () => {
             onToggleFlag={(uid, flag) => handleToggleFlag(uid, flag)}
             onDelete={handleDeleteMessage}
             onMove={handleMoveMessage}
+            onMarkSpam={handleMarkSpam}
             onReply={handleReply}
             onForward={handleForward}
             folders={folders}
@@ -518,6 +626,8 @@ export const App: React.FC = () => {
         initialCc={composerInitial.cc}
         initialSubject={composerInitial.subject}
         initialBody={composerInitial.body}
+        accountEmail={account?.email}
+        accountName={account?.name}
       />
 
       {/* Toast Notification */}

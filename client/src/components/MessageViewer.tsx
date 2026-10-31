@@ -13,7 +13,8 @@ import {
   File,
   Printer,
   ChevronDown,
-  FolderInput
+  FolderInput,
+  ShieldAlert
 } from 'lucide-react';
 import { format } from 'date-fns';
 import type { ParsedEmailMessage, MailboxFolder, EmailAttachment } from '../types.js';
@@ -26,6 +27,7 @@ interface MessageViewerProps {
   onToggleFlag: (uid: number, flag: 'isSeen' | 'isFlagged') => void;
   onDelete: (uid: number) => void;
   onMove: (uid: number, targetFolder: string) => void;
+  onMarkSpam?: (uid: number) => void;
   onReply: (message: ParsedEmailMessage, replyAll: boolean) => void;
   onForward: (message: ParsedEmailMessage) => void;
   folders: MailboxFolder[];
@@ -38,6 +40,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   onToggleFlag,
   onDelete,
   onMove,
+  onMarkSpam,
   onReply,
   onForward,
   folders
@@ -236,6 +239,16 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
+          {onMarkSpam && (
+            <button
+              onClick={() => onMarkSpam(message.uid)}
+              title="Mark as Spam / Move to Junk"
+              className="flex items-center gap-1 px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded-lg transition-colors border border-amber-200/50"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+              <span className="hidden md:inline font-medium">Spam</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">

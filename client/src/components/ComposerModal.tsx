@@ -7,10 +7,17 @@ import {
   Send,
   Trash2,
   AlertCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  PenTool
 } from 'lucide-react';
 import { api } from '../services/api.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
+import {
+  getSignatureForAccount,
+  saveSignatureForAccount,
+  formatSignatureText,
+  type AccountSignature
+} from '../services/signatures.js';
 
 interface ComposerAttachment {
   filename: string;
@@ -27,6 +34,8 @@ interface ComposerModalProps {
   initialCc?: string[];
   initialSubject?: string;
   initialBody?: string;
+  accountEmail?: string;
+  accountName?: string;
 }
 
 export const ComposerModal: React.FC<ComposerModalProps> = ({
@@ -36,7 +45,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   initialTo = [],
   initialCc = [],
   initialSubject = '',
-  initialBody = ''
+  initialBody = '',
+  accountEmail = '',
+  accountName = ''
 }) => {
   const [toInput, setToInput] = useState('');
   const [toList, setToList] = useState<string[]>(initialTo);
@@ -54,6 +65,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showSigModal, setShowSigModal] = useState(false);
+  const [signature, setSignature] = useState<AccountSignature>(() =>
+    getSignatureForAccount(accountEmail, accountName)
+  );
+  const [sigForm, setSigForm] = useState<AccountSignature>(signature);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -64,10 +80,24 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       setCcList(initialCc);
       setShowCc(initialCc.length > 0);
       setSubject(initialSubject);
-      setBody(initialBody);
+
+      const currentSig = getSignatureForAccount(accountEmail, accountName);
+      setSignature(currentSig);
+      setSigForm(currentSig);
+      const sigText = formatSignatureText(currentSig);
+
+      let fullBody = initialBody;
+      if (!initialBody && sigText) {
+        fullBody = `\n\n${sigText}`;
+      } else if (initialBody && sigText && !initialBody.includes(currentSig.name)) {
+        if (initialBody.startsWith('\n\n---') || initialBody.startsWith('\n\n----------')) {
+          fullBody = `\n\n${sigText}${initialBody}`;
+        }
+      }
+      setBody(fullBody);
       setErrorMsg(null);
     }
-  }, [isOpen, initialTo, initialCc, initialSubject, initialBody]);
+  }, [isOpen, initialTo, initialCc, initialSubject, initialBody, accountEmail, accountName]);
 
   if (!isOpen) return null;
 
@@ -173,6 +203,23 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     } catch (err: unknown) {
       setIsSending(false);
       setErrorMsg(err instanceof Error ? err.message : 'Failed to send message. Please check connection.');
+    }
+  };
+
+  const handleSaveSignature = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (accountEmail) {
+      saveSignatureForAccount(accountEmail, sigForm);
+    }
+    const prevSigText = formatSignatureText(signature);
+    const newSigText = formatSignatureText(sigForm);
+    setSignature(sigForm);
+    setShowSigModal(false);
+
+    if (prevSigText && body.includes(prevSigText)) {
+      setBody(body.replace(prevSigText, newSigText));
+    } else if (newSigText && !body.includes(newSigText)) {
+      setBody((prev) => `${prev}\n\n${newSigText}`);
     }
   };
 
@@ -463,6 +510,23 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                 <FileSpreadsheet className="w-3.5 h-3.5 text-sky-600" />
                 <span>Templates</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSigForm(signature);
+                  setShowSigModal(true);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors border font-medium ${
+                  signature.enabled
+                    ? 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200/60'
+                    : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
+                }`}
+                title="Configure Delpat corporate signature"
+              >
+                <PenTool className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Signature</span>
+              </button>
             </div>
 
             <button
@@ -485,6 +549,119 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           setBody(newBody);
         }}
       />
+
+      {/* Signature Settings Modal */}
+      {showSigModal && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <PenTool className="w-4 h-4 text-sky-400" />
+                <span className="text-xs font-semibold">Corporate Email Signature</span>
+              </div>
+              <button
+                onClick={() => setShowSigModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSignature} className="p-4 space-y-3 text-xs">
+              <label className="flex items-center gap-2 select-none cursor-pointer pb-2 border-b border-slate-100">
+                <input
+                  type="checkbox"
+                  checked={sigForm.enabled}
+                  onChange={(e) => setSigForm({ ...sigForm, enabled: e.target.checked })}
+                  className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                />
+                <span className="font-medium text-slate-800">Append corporate signature automatically</span>
+              </label>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  value={sigForm.name}
+                  onChange={(e) => setSigForm({ ...sigForm, name: e.target.value })}
+                  placeholder="e.g. Rahul Sharma"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                  Designation / Role
+                </label>
+                <input
+                  type="text"
+                  value={sigForm.designation}
+                  onChange={(e) => setSigForm({ ...sigForm, designation: e.target.value })}
+                  placeholder="e.g. Operations & Engineering"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    value={sigForm.phone}
+                    onChange={(e) => setSigForm({ ...sigForm, phone: e.target.value })}
+                    placeholder="+91 98250 12345"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Company Website
+                  </label>
+                  <input
+                    type="text"
+                    value={sigForm.website}
+                    onChange={(e) => setSigForm({ ...sigForm, website: e.target.value })}
+                    placeholder="https://delpat.in"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                  Confidentiality Disclaimer
+                </label>
+                <textarea
+                  rows={2}
+                  value={sigForm.customText}
+                  onChange={(e) => setSigForm({ ...sigForm, customText: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowSigModal(false)}
+                  className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-lg text-xs shadow-sm shadow-sky-600/20"
+                >
+                  Save Signature
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import type { MailboxFolder, MessageHeader, ParsedEmailMessage, SendEmailPayload } from '../types.js';
+import type { SearchFilters } from './imap.js';
 
 interface StoredDemoMessage extends ParsedEmailMessage {
   folder: string;
@@ -316,7 +317,13 @@ class DemoMailService {
     });
   }
 
-  getMessages(folderPath: string, page = 1, limit = 50, search = ''): { messages: MessageHeader[]; total: number } {
+  getMessages(
+    folderPath: string,
+    page = 1,
+    limit = 50,
+    search = '',
+    filters?: SearchFilters
+  ): { messages: MessageHeader[]; total: number } {
     let matched: StoredDemoMessage[];
     if (folderPath.toLowerCase() === 'starred') {
       matched = this.messages.filter((m) => m.isFlagged && m.folder !== 'Trash');
@@ -324,15 +331,49 @@ class DemoMailService {
       matched = this.messages.filter((m) => m.folder.toLowerCase() === folderPath.toLowerCase());
     }
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    const freeText = (filters?.search || search || '').trim().toLowerCase();
+    if (freeText) {
       matched = matched.filter(
         (m) =>
-          m.subject.toLowerCase().includes(q) ||
-          m.from.name.toLowerCase().includes(q) ||
-          m.from.address.toLowerCase().includes(q) ||
-          (m.text && m.text.toLowerCase().includes(q))
+          m.subject.toLowerCase().includes(freeText) ||
+          m.from.name.toLowerCase().includes(freeText) ||
+          m.from.address.toLowerCase().includes(freeText) ||
+          (m.text && m.text.toLowerCase().includes(freeText))
       );
+    }
+
+    if (filters?.from?.trim()) {
+      const q = filters.from.trim().toLowerCase();
+      matched = matched.filter(
+        (m) => m.from.name.toLowerCase().includes(q) || m.from.address.toLowerCase().includes(q)
+      );
+    }
+
+    if (filters?.to?.trim()) {
+      const q = filters.to.trim().toLowerCase();
+      matched = matched.filter((m) =>
+        m.to.some((t) => t.name.toLowerCase().includes(q) || t.address.toLowerCase().includes(q))
+      );
+    }
+
+    if (filters?.subject?.trim()) {
+      const q = filters.subject.trim().toLowerCase();
+      matched = matched.filter((m) => m.subject.toLowerCase().includes(q));
+    }
+
+    if (filters?.since?.trim()) {
+      const sinceDate = new Date(filters.since.trim()).getTime();
+      if (!isNaN(sinceDate)) {
+        matched = matched.filter((m) => new Date(m.date).getTime() >= sinceDate);
+      }
+    }
+
+    if (filters?.before?.trim()) {
+      const beforeDate = new Date(filters.before.trim()).getTime();
+      if (!isNaN(beforeDate)) {
+        const endOfDay = beforeDate + 86400000;
+        matched = matched.filter((m) => new Date(m.date).getTime() <= endOfDay);
+      }
     }
 
     // Sort newest first
@@ -358,6 +399,15 @@ class DemoMailService {
     }));
 
     return { messages: headers, total: matched.length };
+  }
+
+  markAsSpam(uid: number, junkFolder = 'Junk'): boolean {
+    const msg = this.messages.find((m) => m.uid === uid);
+    if (!msg) return false;
+    msg.isSeen = true;
+    if (!msg.flags.includes('\\Seen')) msg.flags.push('\\Seen');
+    msg.folder = junkFolder;
+    return true;
   }
 
   getMessageDetail(folderPath: string, uid: number): ParsedEmailMessage | null {

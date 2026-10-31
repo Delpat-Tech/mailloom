@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Search,
   RotateCw,
@@ -12,10 +12,13 @@ import {
   MailOpen,
   ChevronLeft,
   ChevronRight,
-  Inbox
+  Inbox,
+  SlidersHorizontal,
+  ShieldAlert
 } from 'lucide-react';
 import { format, isToday, isThisYear } from 'date-fns';
 import type { MessageHeader } from '../types.js';
+import type { SearchFilterParams } from '../services/api.js';
 
 interface MessageListProps {
   folderName: string;
@@ -31,8 +34,11 @@ interface MessageListProps {
   isLoading: boolean;
   searchTerm: string;
   onSearchChange: (value: string) => void;
+  filters?: SearchFilterParams;
+  onFiltersChange?: (filters: SearchFilterParams) => void;
   onBatchDelete: () => void;
   onBatchMarkRead: (isSeen: boolean) => void;
+  onBatchSpam?: () => void;
   page: number;
   limit: number;
   onPageChange: (page: number) => void;
@@ -52,14 +58,22 @@ export const MessageList: React.FC<MessageListProps> = ({
   isLoading,
   searchTerm,
   onSearchChange,
+  filters = {},
+  onFiltersChange,
   onBatchDelete,
   onBatchMarkRead,
+  onBatchSpam,
   page,
   limit,
   onPageChange
 }) => {
+  const [showFilters, setShowFilters] = useState(false);
   const allSelected = messages.length > 0 && messages.every((m) => selectedUids.has(m.uid));
   const someSelected = messages.some((m) => selectedUids.has(m.uid)) && !allSelected;
+
+  const hasActiveFilters = Boolean(
+    filters.from || filters.to || filters.subject || filters.since || filters.before
+  );
 
   const totalPages = Math.max(1, Math.ceil(totalMessages / limit));
 
@@ -100,25 +114,118 @@ export const MessageList: React.FC<MessageListProps> = ({
           </button>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative">
+        {/* Search Bar & Filter Toggle */}
+        <div className="relative flex items-center">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search sender, subject or snippet..."
-            className="w-full bg-slate-50 border border-slate-200 text-slate-800 placeholder-slate-400 text-xs rounded-lg pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all"
+            className="w-full bg-slate-50 border border-slate-200 text-slate-800 placeholder-slate-400 text-xs rounded-lg pl-9 pr-16 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all"
           />
-          {searchTerm && (
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {searchTerm && (
+              <button
+                onClick={() => onSearchChange('')}
+                className="text-xs text-slate-400 hover:text-slate-600 p-0.5"
+                title="Clear search"
+              >
+                ×
+              </button>
+            )}
             <button
-              onClick={() => onSearchChange('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+              type="button"
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-1 rounded transition-colors relative ${
+                showFilters || hasActiveFilters
+                  ? 'text-sky-600 bg-sky-100/70'
+                  : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+              }`}
+              title="Filter by From, To, Subject, or Date"
             >
-              ×
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              {hasActiveFilters && (
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-600 absolute top-0.5 right-0.5 ring-1 ring-white" />
+              )}
             </button>
-          )}
+          </div>
         </div>
+
+        {/* Expandable IMAP Filter Panel */}
+        {showFilters && (
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex flex-col gap-2 text-xs">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+              <span className="font-semibold text-[10px] text-slate-500 uppercase tracking-wider">
+                IMAP Search Filters
+              </span>
+              {hasActiveFilters && onFiltersChange && (
+                <button
+                  type="button"
+                  onClick={() => onFiltersChange({})}
+                  className="text-[11px] text-sky-600 hover:text-sky-700 font-medium"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">From</label>
+                <input
+                  type="text"
+                  value={filters.from || ''}
+                  onChange={(e) => onFiltersChange?.({ ...filters, from: e.target.value })}
+                  placeholder="sender@domain.com"
+                  className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">To</label>
+                <input
+                  type="text"
+                  value={filters.to || ''}
+                  onChange={(e) => onFiltersChange?.({ ...filters, to: e.target.value })}
+                  placeholder="recipient@domain.com"
+                  className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Subject</label>
+              <input
+                type="text"
+                value={filters.subject || ''}
+                onChange={(e) => onFiltersChange?.({ ...filters, subject: e.target.value })}
+                placeholder="Keywords in subject line..."
+                className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Since (Date)</label>
+                <input
+                  type="date"
+                  value={filters.since || ''}
+                  onChange={(e) => onFiltersChange?.({ ...filters, since: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Before (Date)</label>
+                <input
+                  type="date"
+                  value={filters.before || ''}
+                  onChange={(e) => onFiltersChange?.({ ...filters, before: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Batch Actions Toolbar */}
@@ -165,6 +272,15 @@ export const MessageList: React.FC<MessageListProps> = ({
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
+            {onBatchSpam && (
+              <button
+                onClick={onBatchSpam}
+                title="Mark as Spam / Move to Junk"
+                className="p-1 hover:bg-amber-50 text-slate-600 hover:text-amber-600 rounded transition-colors"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         )}
       </div>

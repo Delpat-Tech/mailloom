@@ -1,7 +1,16 @@
-import { ImapFlow } from 'imapflow';
+import { ImapFlow, SearchObject } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import type { AccountConfig, MailboxFolder, MessageHeader, ParsedEmailMessage, SpecialUseFolder } from '../types.js';
 import { cleanEmailHtml } from '../utils/sanitize.js';
+
+export interface SearchFilters {
+  search?: string;
+  from?: string;
+  to?: string;
+  subject?: string;
+  since?: string;
+  before?: string;
+}
 
 function detectSpecialUse(name: string, specialUse?: string): SpecialUseFolder {
   if (specialUse) {
@@ -160,19 +169,98 @@ export async function getLiveMessages(
   config: AccountConfig,
   folderPath: string,
   page = 1,
-  limit = 50
+  limit = 50,
+  filters?: SearchFilters
 ): Promise<{ messages: MessageHeader[]; total: number }> {
   const client = await getPooledImapClient(config);
   const headers: MessageHeader[] = [];
-  let total = 0;
 
   const lock = await client.getMailboxLock(folderPath, { readOnly: true });
   try {
     const mailbox = client.mailbox;
-    total = mailbox ? (mailbox.exists || 0) : 0;
-    if (total === 0) return { messages: [], total: 0 };
+    const mailboxTotal = mailbox ? (mailbox.exists || 0) : 0;
+    if (mailboxTotal === 0) return { messages: [], total: 0 };
 
-    // Calculate range from end for newest-first order
+    const hasFilters = Boolean(
+      filters && (
+        filters.search?.trim() ||
+        filters.from?.trim() ||
+        filters.to?.trim() ||
+        filters.subject?.trim() ||
+        filters.since?.trim() ||
+        filters.before?.trim()
+      )
+    );
+
+    if (hasFilters && filters) {
+      const searchCriteria: SearchObject = {};
+      if (filters.from?.trim()) searchCriteria.from = filters.from.trim();
+      if (filters.to?.trim()) searchCriteria.to = filters.to.trim();
+      if (filters.subject?.trim()) searchCriteria.subject = filters.subject.trim();
+      if (filters.since?.trim()) {
+        const d = new Date(filters.since.trim());
+        if (!isNaN(d.getTime())) searchCriteria.since = d;
+      }
+      if (filters.before?.trim()) {
+        const d = new Date(filters.before.trim());
+        if (!isNaN(d.getTime())) searchCriteria.before = d;
+      }
+      if (filters.search?.trim()) {
+        searchCriteria.text = filters.search.trim();
+      }
+
+      const searchResult = await client.search(searchCriteria, { uid: true });
+      if (!searchResult || !Array.isArray(searchResult) || searchResult.length === 0) {
+        return { messages: [], total: 0 };
+      }
+
+      // Sort descending (newest UID first)
+      const sortedUids = [...searchResult].sort((a, b) => b - a);
+      const total = sortedUids.length;
+      const startIdx = (page - 1) * limit;
+      const pagedUids = sortedUids.slice(startIdx, startIdx + limit);
+      if (pagedUids.length === 0) return { messages: [], total };
+
+      const messagesGen = client.fetch(pagedUids, {
+        uid: true,
+        flags: true,
+        envelope: true,
+        internalDate: true,
+        size: true
+      }, { uid: true });
+
+      const uidToHeader = new Map<number, MessageHeader>();
+      for await (const msg of messagesGen) {
+        const env = msg.envelope;
+        const fromAddr = env?.from?.[0] || { name: 'Unknown', address: 'unknown@example.com' };
+        const toAddrs = (env?.to || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
+        const ccAddrs = (env?.cc || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
+        const flagsArr = Array.from(msg.flags || []);
+
+        uidToHeader.set(msg.uid, {
+          uid: msg.uid,
+          seq: msg.seq,
+          id: env?.messageId || String(msg.uid),
+          from: { name: fromAddr.name || fromAddr.address || 'Unknown', address: fromAddr.address || '' },
+          to: toAddrs,
+          cc: ccAddrs,
+          subject: env?.subject || '(No Subject)',
+          date: new Date(msg.internalDate || Date.now()).toISOString(),
+          flags: flagsArr,
+          isSeen: flagsArr.includes('\\Seen'),
+          isFlagged: flagsArr.includes('\\Flagged'),
+          hasAttachments: false,
+          size: msg.size || 0,
+          snippet: ''
+        });
+      }
+
+      const orderedHeaders = pagedUids.map((uid) => uidToHeader.get(uid)).filter(Boolean) as MessageHeader[];
+      return { messages: orderedHeaders, total };
+    }
+
+    // Fast range pagination for default view
+    const total = mailboxTotal;
     const startSeq = Math.max(1, total - (page * limit) + 1);
     const endSeq = Math.max(1, total - ((page - 1) * limit));
     const range = `${startSeq}:${endSeq}`;
@@ -209,12 +297,12 @@ export async function getLiveMessages(
         snippet: ''
       });
     }
+
+    headers.reverse();
+    return { messages: headers, total };
   } finally {
     lock.release();
   }
-
-  headers.reverse();
-  return { messages: headers, total };
 }
 
 export async function getLiveMessageDetail(
@@ -349,6 +437,41 @@ export async function deleteLiveMessage(
   const lock = await client.getMailboxLock(folderPath);
   try {
     await client.messageDelete(String(uid), { uid: true });
+    return true;
+  } finally {
+    lock.release();
+  }
+}
+
+export async function markLiveMessageSpam(
+  config: AccountConfig,
+  folderPath: string,
+  uid: number,
+  junkFolder?: string
+): Promise<boolean> {
+  const client = await getPooledImapClient(config);
+
+  let targetFolder = junkFolder;
+  if (!targetFolder) {
+    const list = await client.list();
+    const junkMb = list.find(
+      (m) =>
+        m.specialUse === '\\Junk' ||
+        detectSpecialUse(m.name, m.specialUse) === 'Junk' ||
+        m.name.toLowerCase() === 'junk' ||
+        m.name.toLowerCase() === 'spam'
+    );
+    targetFolder = junkMb ? junkMb.path : 'Junk';
+  }
+
+  const lock = await client.getMailboxLock(folderPath);
+  try {
+    // 1. Mark as \Seen
+    await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
+    // 2. Move to junk folder if not already in junk
+    if (folderPath.toLowerCase() !== targetFolder.toLowerCase()) {
+      await client.messageMove(String(uid), targetFolder, { uid: true });
+    }
     return true;
   } finally {
     lock.release();
