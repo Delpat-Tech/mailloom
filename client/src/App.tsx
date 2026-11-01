@@ -23,7 +23,9 @@ import {
 } from './services/notifications.js';
 import {
   subscribePwaInstallState,
-  promptPwaInstall
+  promptPwaInstall,
+  canInstallPwa,
+  isPwaInstalled
 } from './services/pwa.js';
 import type {
   MailboxFolder,
@@ -74,19 +76,31 @@ export const App: React.FC = () => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // PWA & Browser Notifications State
-  const [canInstall, setCanInstall] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(() => isPwaInstalled());
   const [notificationPerm, setNotificationPerm] = useState<NotificationPermission>(() => getNotificationPermission());
 
   useEffect(() => {
-    const unsub = subscribePwaInstallState(setCanInstall);
+    const unsub = subscribePwaInstallState(() => {
+      setIsInstalled(isPwaInstalled());
+    });
     return unsub;
   }, []);
 
   const handleInstallApp = async () => {
-    const success = await promptPwaInstall();
-    if (success) {
-      showToast('Mailloom app installed successfully!');
-      setCanInstall(false);
+    if (canInstallPwa()) {
+      const success = await promptPwaInstall();
+      if (success) {
+        showToast('Mailloom app installed successfully!');
+        setIsInstalled(true);
+      }
+    } else {
+      const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent);
+      const isSafari = typeof navigator !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+      if (isSafari && isMac) {
+        showToast('To install in Safari: click File > "Add to Dock".');
+      } else {
+        showToast('To install: click the Install icon (computer with down arrow) in your browser address bar.');
+      }
     }
   };
 
@@ -576,7 +590,7 @@ export const App: React.FC = () => {
       {!account ? (
         <ConnectModal
           onConnected={handleConnected}
-          canInstall={canInstall}
+          canInstall={!isInstalled}
           onInstallApp={handleInstallApp}
           notificationPermission={notificationPerm}
           onRequestNotifications={handleRequestNotifications}
@@ -598,7 +612,7 @@ export const App: React.FC = () => {
             onSwitchAccount={handleSwitchAccount}
             onAddAccount={() => setIsAddingAccount(true)}
             onRemoveAccount={handleRemoveAccount}
-            canInstall={canInstall}
+            canInstall={!isInstalled}
             onInstallApp={handleInstallApp}
             notificationPermission={notificationPerm}
             onRequestNotifications={handleRequestNotifications}
@@ -657,7 +671,7 @@ export const App: React.FC = () => {
           isAddingAccount={true}
           onConnected={handleConnected}
           onCancel={() => setIsAddingAccount(false)}
-          canInstall={canInstall}
+          canInstall={!isInstalled}
           onInstallApp={handleInstallApp}
           notificationPermission={notificationPerm}
           onRequestNotifications={handleRequestNotifications}
