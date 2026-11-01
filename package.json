@@ -12,6 +12,7 @@
     "dev:client": "pnpm --filter mailloom-client dev"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "esbuild": "^0.28.2"
   }
 }

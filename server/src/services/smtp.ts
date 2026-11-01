@@ -16,7 +16,10 @@ export function createSmtpTransport(config: AccountConfig) {
     },
     tls: {
       rejectUnauthorized: false
-    }
+    },
+    connectionTimeout: 5000, // 5s connection timeout
+    greetingTimeout: 5000,   // 5s greeting timeout
+    socketTimeout: 10000     // 10s socket timeout
   });
 }
 

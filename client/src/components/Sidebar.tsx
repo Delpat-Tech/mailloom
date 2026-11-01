@@ -15,7 +15,10 @@ import {
   ChevronUp,
   UserPlus,
   Check,
-  X
+  X,
+  Download,
+  Bell,
+  BellRing
 } from 'lucide-react';
 import type { MailboxFolder, UserAccount, StoredAccountProfile } from '../types.js';
 
@@ -30,6 +33,10 @@ interface SidebarProps {
   onSwitchAccount?: (email: string) => void;
   onAddAccount?: () => void;
   onRemoveAccount?: (email: string) => void;
+  canInstall?: boolean;
+  onInstallApp?: () => void;
+  notificationPermission?: NotificationPermission;
+  onRequestNotifications?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -42,7 +49,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   savedAccounts = [],
   onSwitchAccount,
   onAddAccount,
-  onRemoveAccount
+  onRemoveAccount,
+  canInstall = false,
+  onInstallApp,
+  notificationPermission = 'default',
+  onRequestNotifications
 }) => {
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -148,6 +159,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           );
         })}
+      </div>
+
+      {/* App Utilities: PWA Install & Notification Permission Button */}
+      <div className="px-3 py-2 border-t border-slate-800/80 space-y-1.5 bg-slate-950/20">
+        {canInstall && onInstallApp && (
+          <button
+            type="button"
+            onClick={onInstallApp}
+            className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-semibold text-sky-300 bg-sky-950/60 hover:bg-sky-900/60 border border-sky-800/60 transition-all shadow-sm active:scale-[0.98]"
+          >
+            <div className="flex items-center gap-2">
+              <Download className="w-3.5 h-3.5 text-sky-400" />
+              <span>Install Desktop App</span>
+            </div>
+            <span className="text-[10px] bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded font-bold">
+              PWA
+            </span>
+          </button>
+        )}
+
+        {onRequestNotifications && notificationPermission !== 'granted' ? (
+          <button
+            type="button"
+            onClick={onRequestNotifications}
+            className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-semibold text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-800/50 transition-all shadow-sm active:scale-[0.98]"
+          >
+            <div className="flex items-center gap-2">
+              <Bell className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+              <span>Notifications</span>
+            </div>
+            <span className="text-[10px] bg-amber-500/30 text-amber-200 px-1.5 py-0.5 rounded font-bold">
+              Allow
+            </span>
+          </button>
+        ) : (
+          <div className="flex items-center justify-between px-3 py-1 text-[11px] text-slate-400">
+            <div className="flex items-center gap-1.5">
+              <BellRing className="w-3 h-3 text-emerald-400" />
+              <span>Notifications</span>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-semibold">Enabled</span>
+          </div>
+        )}
       </div>
 
       {/* User Account / Multi-Account Switcher Footer */}

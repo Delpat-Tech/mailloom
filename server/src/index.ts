@@ -12,7 +12,9 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
+const defaultClientDist = path.resolve(__dirname, '../../client/dist');
+const altClientDist = path.resolve(__dirname, './public');
+const CLIENT_DIST = process.env.CLIENT_DIST || (fs.existsSync(altClientDist) ? altClientDist : defaultClientDist);
 
 const fastify = Fastify({
   logger: true
@@ -34,22 +36,9 @@ await fastify.register(multipart, {
   }
 });
 
-// Rewrite /mail/api/... to /api/... if Nginx passes the subpath through
-fastify.addHook('onRequest', async (req) => {
-  if (req.raw.url?.startsWith('/mail/api/')) {
-    req.raw.url = req.raw.url.replace('/mail/api/', '/api/');
-  } else if (req.raw.url === '/mail/api') {
-    req.raw.url = '/api';
-  }
-});
-
-// Health check
-fastify.get('/api/health', async () => {
-  return { status: 'ok', server: 'Mailloom Webmail API', timestamp: new Date().toISOString() };
-});
-
-// Register Mail Routes
+// Register Mail Routes (they have /api/... inside mailRoutes)
 await fastify.register(mailRoutes);
+await fastify.register(mailRoutes, { prefix: '/mail' });
 
 // MIME type dictionary for native static serving
 const MIME_TYPES: Record<string, string> = {

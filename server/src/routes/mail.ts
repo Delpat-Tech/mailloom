@@ -88,11 +88,21 @@ export async function mailRoutes(fastify: FastifyInstance) {
 
     try {
       await testImapConnection(config);
-      if (config.smtpHost) {
-        await testSmtpConnection(config);
-      }
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
+    }
+
+    // Test SMTP with non-blocking timeout fallback so login never hangs
+    if (config.smtpHost) {
+      try {
+        await Promise.race([
+          testSmtpConnection(config),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP connection timed out')), 5000))
+        ]);
+      } catch (smtpErr) {
+        fastify.log.warn(`[AUTH] SMTP verification notice for ${config.email}: ${(smtpErr as Error).message}`);
+        // Allow login to succeed even if SMTP port has an issue so user can access mail
+      }
     }
 
     const token = encryptSession(config);

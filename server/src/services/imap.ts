@@ -143,12 +143,21 @@ export async function getLiveMailboxes(config: AccountConfig): Promise<MailboxFo
   for (const mb of list) {
     let unreadCount = 0;
     let totalCount = 0;
-    try {
-      const status = await client.status(mb.path, { unseen: true, messages: true });
-      unreadCount = status.unseen || 0;
-      totalCount = status.messages || 0;
-    } catch {
-      // Status might fail on non-selectable parent folders
+    const isNoSelect = mb.flags && (mb.flags.has('\\Noselect') || mb.flags.has('\\NonExistent'));
+
+    if (!isNoSelect) {
+      try {
+        const status = await Promise.race([
+          client.status(mb.path, { unseen: true, messages: true }),
+          new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+        ]);
+        if (status) {
+          unreadCount = status.unseen || 0;
+          totalCount = status.messages || 0;
+        }
+      } catch {
+        // Status might fail or timeout on non-selectable parent folders, continue gracefully
+      }
     }
 
     folders.push({

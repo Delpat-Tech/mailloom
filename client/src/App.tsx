@@ -17,8 +17,14 @@ import {
 } from './services/api.js';
 import {
   showDesktopNotification,
-  requestNotificationPermission
+  requestNotificationPermission,
+  getNotificationPermission,
+  playNotificationChime
 } from './services/notifications.js';
+import {
+  subscribePwaInstallState,
+  promptPwaInstall
+} from './services/pwa.js';
 import type {
   MailboxFolder,
   MessageHeader,
@@ -67,6 +73,38 @@ export const App: React.FC = () => {
   // Toast feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  // PWA & Browser Notifications State
+  const [canInstall, setCanInstall] = useState(false);
+  const [notificationPerm, setNotificationPerm] = useState<NotificationPermission>(() => getNotificationPermission());
+
+  useEffect(() => {
+    const unsub = subscribePwaInstallState(setCanInstall);
+    return unsub;
+  }, []);
+
+  const handleInstallApp = async () => {
+    const success = await promptPwaInstall();
+    if (success) {
+      showToast('Mailloom app installed successfully!');
+      setCanInstall(false);
+    }
+  };
+
+  const handleRequestNotifications = async () => {
+    const perm = await requestNotificationPermission();
+    setNotificationPerm(perm);
+    if (perm === 'granted') {
+      playNotificationChime();
+      showDesktopNotification({
+        title: 'Notifications Enabled',
+        body: 'You will now receive alerts for new incoming emails.'
+      });
+      showToast('Desktop notifications enabled!');
+    } else {
+      showToast('Notification permission was not granted.', 'error');
+    }
+  };
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
@@ -109,7 +147,10 @@ export const App: React.FC = () => {
       });
   }, []);
 
-  // 2. Fetch Folders
+  // 2. Fetch Folders (isolated from selectedFolder changes to prevent duplicate concurrent IMAP locks)
+  const selectedFolderRef = useRef(selectedFolder);
+  selectedFolderRef.current = selectedFolder;
+
   const loadFolders = useCallback(async () => {
     if (!account) return;
     try {
@@ -128,8 +169,9 @@ export const App: React.FC = () => {
 
       // If selectedFolder doesn't exist in folder list, default to first or INBOX
       if (res.folders.length > 0) {
+        const currentPath = selectedFolderRef.current;
         const hasCurrent = res.folders.some(
-          (f) => f.path.toLowerCase() === selectedFolder.toLowerCase()
+          (f) => f.path.toLowerCase() === currentPath.toLowerCase()
         );
         if (!hasCurrent) {
           const inbox = res.folders.find((f) => f.specialUse === 'Inbox') || res.folders[0];
@@ -139,7 +181,7 @@ export const App: React.FC = () => {
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : 'Failed to load folders', 'error');
     }
-  }, [account, selectedFolder]);
+  }, [account]);
 
   useEffect(() => {
     if (account) {
@@ -461,9 +503,6 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (!account) return;
 
-    // Prompt for notification permission on active session
-    requestNotificationPermission();
-
     const interval = setInterval(async () => {
       try {
         const folderRes = await api.getMailboxes();
@@ -535,7 +574,13 @@ export const App: React.FC = () => {
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans">
       {!account ? (
-        <ConnectModal onConnected={handleConnected} />
+        <ConnectModal
+          onConnected={handleConnected}
+          canInstall={canInstall}
+          onInstallApp={handleInstallApp}
+          notificationPermission={notificationPerm}
+          onRequestNotifications={handleRequestNotifications}
+        />
       ) : (
         <div className="flex-1 flex overflow-hidden">
           {/* Left Pane: Mailbox Navigation & Multi-Account Switcher */}
@@ -553,6 +598,10 @@ export const App: React.FC = () => {
             onSwitchAccount={handleSwitchAccount}
             onAddAccount={() => setIsAddingAccount(true)}
             onRemoveAccount={handleRemoveAccount}
+            canInstall={canInstall}
+            onInstallApp={handleInstallApp}
+            notificationPermission={notificationPerm}
+            onRequestNotifications={handleRequestNotifications}
           />
 
           {/* Middle Pane: Message List */}
@@ -608,6 +657,10 @@ export const App: React.FC = () => {
           isAddingAccount={true}
           onConnected={handleConnected}
           onCancel={() => setIsAddingAccount(false)}
+          canInstall={canInstall}
+          onInstallApp={handleInstallApp}
+          notificationPermission={notificationPerm}
+          onRequestNotifications={handleRequestNotifications}
         />
       )}
 
