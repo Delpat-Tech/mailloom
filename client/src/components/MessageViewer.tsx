@@ -14,7 +14,8 @@ import {
   Printer,
   ChevronDown,
   FolderInput,
-  ShieldAlert
+  ShieldAlert,
+  ArrowLeft
 } from 'lucide-react';
 import { format } from 'date-fns';
 import type { ParsedEmailMessage, MailboxFolder, EmailAttachment } from '../types.js';
@@ -31,6 +32,7 @@ interface MessageViewerProps {
   onReply: (message: ParsedEmailMessage, replyAll: boolean) => void;
   onForward: (message: ParsedEmailMessage) => void;
   folders: MailboxFolder[];
+  onBackToList?: () => void;
 }
 
 export const MessageViewer: React.FC<MessageViewerProps> = ({
@@ -43,7 +45,8 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   onMarkSpam,
   onReply,
   onForward,
-  folders
+  folders,
+  onBackToList
 }) => {
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -121,6 +124,14 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   if (isLoading) {
     return (
       <div className="flex-1 bg-white flex flex-col items-center justify-center text-slate-400 gap-3">
+        {onBackToList && (
+          <button
+            onClick={onBackToList}
+            className="absolute top-3 left-3 p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+        )}
         <div className="w-8 h-8 rounded-full border-2 border-sky-500 border-t-transparent animate-spin" />
         <span className="text-xs font-medium">Loading message contents...</span>
       </div>
@@ -129,7 +140,15 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
 
   if (!message) {
     return (
-      <div className="flex-1 bg-slate-50/50 flex flex-col items-center justify-center p-8 text-center select-none">
+      <div className="flex-1 bg-slate-50/50 flex flex-col items-center justify-center p-8 text-center select-none relative">
+        {onBackToList && (
+          <button
+            onClick={onBackToList}
+            className="absolute top-3 left-3 p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+        )}
         <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-inner">
           <Mail className="w-8 h-8 stroke-1" />
         </div>
@@ -152,20 +171,29 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   return (
     <div className="flex-1 bg-white flex flex-col h-full overflow-hidden">
       {/* Top Action Toolbar */}
-      <div className="px-6 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+      <div className="px-3 sm:px-6 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
         <div className="flex items-center gap-1">
+          {onBackToList && (
+            <button
+              onClick={onBackToList}
+              title="Back to list"
+              className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden mr-1"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={() => onReply(message, false)}
             title="Reply"
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
           >
             <Reply className="w-3.5 h-3.5" />
-            <span>Reply</span>
+            <span className="hidden sm:inline">Reply</span>
           </button>
           <button
             onClick={() => onReply(message, true)}
             title="Reply All"
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
           >
             <ReplyAll className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Reply All</span>
@@ -173,10 +201,10 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           <button
             onClick={() => onForward(message)}
             title="Forward"
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
           >
             <Forward className="w-3.5 h-3.5" />
-            <span>Forward</span>
+            <span className="hidden sm:inline">Forward</span>
           </button>
 
           <div className="h-4 w-[1px] bg-slate-200 mx-1.5" />
@@ -283,14 +311,14 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-4 sm:py-6">
         {/* Subject Header */}
-        <h2 className="text-xl font-bold text-slate-900 mb-4 tracking-tight leading-snug">
+        <h2 className="text-lg sm:text-xl font-bold text-slate-900 mb-4 tracking-tight leading-snug">
           {message.subject || '(No subject)'}
         </h2>
 
         {/* Sender & Recipient Information */}
-        <div className="flex items-start justify-between pb-4 border-b border-slate-100 mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between pb-4 border-b border-slate-100 mb-6 gap-2 sm:gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-sm">
               {(message.from.name || message.from.address || '?').charAt(0).toUpperCase()}

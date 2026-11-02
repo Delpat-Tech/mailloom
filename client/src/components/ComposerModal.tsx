@@ -230,12 +230,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   return (
     <div
-      className={`fixed z-50 transition-all duration-200 shadow-2xl rounded-t-xl sm:rounded-xl overflow-hidden bg-white border border-slate-200 flex flex-col ${
+      className={`fixed z-50 transition-all duration-200 shadow-2xl rounded-t-2xl sm:rounded-xl overflow-hidden bg-white border border-slate-200 flex flex-col ${
         isMinimized
-          ? 'bottom-0 right-6 w-72 h-11'
+          ? 'bottom-0 right-4 sm:right-6 w-72 h-11'
           : isMaximized
-          ? 'top-4 bottom-4 left-4 right-4 sm:left-12 sm:right-12'
-          : 'bottom-0 right-4 sm:right-8 w-full sm:w-[580px] md:w-[640px] h-[540px]'
+          ? 'top-2 bottom-2 left-2 right-2 sm:top-4 sm:bottom-4 sm:left-12 sm:right-12'
+          : 'inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 sm:bottom-0 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
       }`}
     >
       {/* Modal Header */}

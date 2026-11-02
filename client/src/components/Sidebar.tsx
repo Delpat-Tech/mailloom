@@ -37,6 +37,7 @@ interface SidebarProps {
   onInstallApp?: () => void;
   notificationPermission?: NotificationPermission;
   onRequestNotifications?: () => void;
+  onCloseMobileSidebar?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -53,7 +54,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   canInstall = false,
   onInstallApp,
   notificationPermission = 'default',
-  onRequestNotifications
+  onRequestNotifications,
+  onCloseMobileSidebar
 }) => {
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -113,6 +115,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="text-xs text-slate-500 font-medium">Delpat Webmail</span>
           </div>
         </div>
+        {onCloseMobileSidebar && (
+          <button
+            type="button"
+            onClick={onCloseMobileSidebar}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors lg:hidden"
+            title="Close sidebar"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Primary Compose Action */}

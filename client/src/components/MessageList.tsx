@@ -14,7 +14,8 @@ import {
   ChevronRight,
   Inbox,
   SlidersHorizontal,
-  ShieldAlert
+  ShieldAlert,
+  Menu
 } from 'lucide-react';
 import { format, isToday, isThisYear } from 'date-fns';
 import type { MessageHeader } from '../types.js';
@@ -42,6 +43,7 @@ interface MessageListProps {
   page: number;
   limit: number;
   onPageChange: (page: number) => void;
+  onOpenMobileSidebar?: () => void;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -65,7 +67,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   onBatchSpam,
   page,
   limit,
-  onPageChange
+  onPageChange,
+  onOpenMobileSidebar
 }) => {
   const [showFilters, setShowFilters] = useState(false);
   const allSelected = messages.length > 0 && messages.every((m) => selectedUids.has(m.uid));
@@ -94,11 +97,20 @@ export const MessageList: React.FC<MessageListProps> = ({
   };
 
   return (
-    <div className="w-[380px] lg:w-[420px] xl:w-[460px] flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-full select-none">
+    <div className="w-full flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-full select-none">
       {/* Header & Search */}
       <div className="p-3.5 border-b border-slate-100 flex flex-col gap-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            {onOpenMobileSidebar && (
+              <button
+                onClick={onOpenMobileSidebar}
+                className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors lg:hidden"
+                title="Open sidebar"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+            )}
             <h1 className="text-lg font-bold text-slate-800 tracking-tight">{folderName}</h1>
             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
               {totalMessages}

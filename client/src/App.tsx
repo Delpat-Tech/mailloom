@@ -75,6 +75,10 @@ export const App: React.FC = () => {
   // Toast feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  // Mobile responsive state
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+  const [mobileView, setMobileView] = useState<'list' | 'message'>('list');
+
   // PWA & Browser Notifications State
   const [isInstalled, setIsInstalled] = useState(() => isPwaInstalled());
   const [notificationPerm, setNotificationPerm] = useState<NotificationPermission>(() => getNotificationPermission());
@@ -232,12 +236,15 @@ export const App: React.FC = () => {
     setSelectedUid(null);
     setSelectedMessage(null);
     setSelectedUids(new Set());
+    setShowMobileSidebar(false); // Close sidebar on mobile after folder pick
+    setMobileView('list'); // Go back to list view on mobile
   };
 
   // 4. Select and View Message Detail
   const handleSelectMessage = async (uid: number) => {
     setSelectedUid(uid);
     setIsDetailLoading(true);
+    setMobileView('message'); // Switch to message view on mobile
 
     // Optimistically mark as seen in message list
     setMessages((prev) =>
@@ -596,72 +603,106 @@ export const App: React.FC = () => {
           onRequestNotifications={handleRequestNotifications}
         />
       ) : (
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden relative">
+          {/* Mobile/Tablet Sidebar Overlay */}
+          {showMobileSidebar && (
+            <div
+              className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 lg:hidden"
+              onClick={() => setShowMobileSidebar(false)}
+            />
+          )}
+
           {/* Left Pane: Mailbox Navigation & Multi-Account Switcher */}
-          <Sidebar
-            account={account}
-            folders={folders}
-            selectedFolder={selectedFolder}
-            onSelectFolder={handleSelectFolder}
-            onOpenComposer={() => {
-              setComposerInitial({});
-              setIsComposerOpen(true);
-            }}
-            onLogout={handleLogout}
-            savedAccounts={savedAccounts}
-            onSwitchAccount={handleSwitchAccount}
-            onAddAccount={() => setIsAddingAccount(true)}
-            onRemoveAccount={handleRemoveAccount}
-            canInstall={!isInstalled}
-            onInstallApp={handleInstallApp}
-            notificationPermission={notificationPerm}
-            onRequestNotifications={handleRequestNotifications}
-          />
+          <div
+            className={`
+              fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-200 ease-out shadow-2xl lg:shadow-none
+              lg:relative lg:translate-x-0 lg:z-auto
+              ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full'}
+            `}
+          >
+            <Sidebar
+              account={account}
+              folders={folders}
+              selectedFolder={selectedFolder}
+              onSelectFolder={handleSelectFolder}
+              onOpenComposer={() => {
+                setComposerInitial({});
+                setIsComposerOpen(true);
+                setShowMobileSidebar(false);
+              }}
+              onLogout={handleLogout}
+              savedAccounts={savedAccounts}
+              onSwitchAccount={handleSwitchAccount}
+              onAddAccount={() => setIsAddingAccount(true)}
+              onRemoveAccount={handleRemoveAccount}
+              canInstall={!isInstalled}
+              onInstallApp={handleInstallApp}
+              notificationPermission={notificationPerm}
+              onRequestNotifications={handleRequestNotifications}
+              onCloseMobileSidebar={() => setShowMobileSidebar(false)}
+            />
+          </div>
 
           {/* Middle Pane: Message List */}
-          <MessageList
-            folderName={
-              folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.name ||
-              selectedFolder
-            }
-            messages={messages}
-            totalMessages={totalMessages}
-            selectedUid={selectedUid}
-            onSelectMessage={handleSelectMessage}
-            selectedUids={selectedUids}
-            onToggleSelectUid={handleToggleSelectUid}
-            onSelectAll={handleSelectAll}
-            onToggleFlag={handleToggleFlag}
-            onRefresh={() => {
-              loadMessages();
-              loadFolders();
-            }}
-            isLoading={isMessagesLoading}
-            searchTerm={searchTerm}
-            onSearchChange={setSearchTerm}
-            filters={searchFilters}
-            onFiltersChange={setSearchFilters}
-            onBatchDelete={handleBatchDelete}
-            onBatchMarkRead={handleBatchMarkRead}
-            onBatchSpam={handleBatchSpam}
-            page={page}
-            limit={50}
-            onPageChange={setPage}
-          />
+          <div
+            className={`
+              flex-1 md:flex-none md:w-[320px] lg:w-[360px] xl:w-[420px] min-w-0 h-full
+              ${mobileView === 'message' ? 'hidden md:block' : 'block'}
+            `}
+          >
+            <MessageList
+              folderName={
+                folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.name ||
+                selectedFolder
+              }
+              messages={messages}
+              totalMessages={totalMessages}
+              selectedUid={selectedUid}
+              onSelectMessage={handleSelectMessage}
+              selectedUids={selectedUids}
+              onToggleSelectUid={handleToggleSelectUid}
+              onSelectAll={handleSelectAll}
+              onToggleFlag={handleToggleFlag}
+              onRefresh={() => {
+                loadMessages();
+                loadFolders();
+              }}
+              isLoading={isMessagesLoading}
+              searchTerm={searchTerm}
+              onSearchChange={setSearchTerm}
+              filters={searchFilters}
+              onFiltersChange={setSearchFilters}
+              onBatchDelete={handleBatchDelete}
+              onBatchMarkRead={handleBatchMarkRead}
+              onBatchSpam={handleBatchSpam}
+              page={page}
+              limit={50}
+              onPageChange={setPage}
+              onOpenMobileSidebar={() => setShowMobileSidebar(true)}
+            />
+          </div>
 
           {/* Right Pane: Message Viewer */}
-          <MessageViewer
-            folderPath={selectedFolder}
-            message={selectedMessage}
-            isLoading={isDetailLoading}
-            onToggleFlag={(uid, flag) => handleToggleFlag(uid, flag)}
-            onDelete={handleDeleteMessage}
-            onMove={handleMoveMessage}
-            onMarkSpam={handleMarkSpam}
-            onReply={handleReply}
-            onForward={handleForward}
-            folders={folders}
-          />
+          <div
+            className={`
+              flex-1 min-w-0
+              ${mobileView === 'list' ? 'hidden md:flex' : 'flex'}
+            `}
+          >
+            <MessageViewer
+              folderPath={selectedFolder}
+              message={selectedMessage}
+              isLoading={isDetailLoading}
+              onToggleFlag={(uid, flag) => handleToggleFlag(uid, flag)}
+              onDelete={handleDeleteMessage}
+              onMove={handleMoveMessage}
+              onMarkSpam={handleMarkSpam}
+              onReply={handleReply}
+              onForward={handleForward}
+              folders={folders}
+              onBackToList={() => setMobileView('list')}
+            />
+          </div>
         </div>
       )}
 
