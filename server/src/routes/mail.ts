@@ -17,6 +17,7 @@ import {
   closeUserSession
 } from '../services/imap.js';
 import { saveLiveDraft, deleteLiveDraft } from '../services/drafts.js';
+import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
 import { renderEmail } from '../utils/sanitize.js';
 import { sendLiveEmail, testSmtpConnection, SendError, getMaxMessageBytes } from '../services/smtp.js';
@@ -24,6 +25,8 @@ import { sendLiveEmail, testSmtpConnection, SendError, getMaxMessageBytes } from
 interface AuthenticatedRequest extends FastifyRequest {
   accountConfig?: AccountConfig;
 }
+
+const MAX_CONCURRENT_SENDS = 2;
 
 export async function mailRoutes(fastify: FastifyInstance) {
   // Authentication middleware
@@ -463,9 +466,21 @@ export async function mailRoutes(fastify: FastifyInstance) {
     { preHandler: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
+      const release = acquireSlot(`send|${config.email.toLowerCase()}|${config.imapHost}`, MAX_CONCURRENT_SENDS);
+      if (!release) {
+        return reply.status(429).send({ error: 'Two messages are already being sent. Wait a moment and try again.' });
+      }
+      reply.raw.once('close', release);
       const max = getMaxMessageBytes();
       let raw: Record<string, unknown> = {};
       const attachments: SendAttachment[] = [];
+
+      // Too big: answer, then close the connection so the rest of the upload is discarded, not buffered.
+      const tooLarge = (message: string) => {
+        reply.header('connection', 'close');
+        reply.raw.once('finish', () => req.raw.destroy());
+        return reply.status(413).send({ error: message });
+      };
 
       try {
         if (req.isMultipart()) {
@@ -474,11 +489,11 @@ export async function mailRoutes(fastify: FastifyInstance) {
             if (part.type === 'file') {
               const buf = await part.toBuffer();
               if (part.file.truncated || buf.length > max) {
-                return reply.status(413).send({ error: `"${part.filename}" is larger than the allowed size.` });
+                return tooLarge(`"${part.filename}" is larger than the allowed size.`);
               }
               total += buf.length;
               if (total > max) {
-                return reply.status(413).send({ error: 'Attachments together are larger than the allowed size.' });
+                return tooLarge('Attachments together are larger than the allowed size.');
               }
               attachments.push({
                 filename: part.filename || 'attachment',
@@ -492,7 +507,11 @@ export async function mailRoutes(fastify: FastifyInstance) {
         } else {
           raw = (req.body as Record<string, unknown>) || {};
         }
-      } catch {
+      } catch (err) {
+        // The multipart plugin throws (instead of returning a truncated file) when a file passes its size limit.
+        if ((err as { code?: string })?.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return tooLarge('An attachment is larger than the allowed size.');
+        }
         return reply.status(400).send({ error: 'The message could not be read.' });
       }
 

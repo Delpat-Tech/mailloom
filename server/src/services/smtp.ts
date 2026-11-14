@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import type { AccountConfig, SendEmailPayload, SendResult } from '../types.js';
-import { getPooledImapClient, getLiveMessageAttachments } from './imap.js';
+import { getPooledImapClient, getLiveMessageAttachments, MessageTooLargeError } from './imap.js';
 
 export function createSmtpTransport(config: AccountConfig) {
   const user = config.smtpUser || config.imapUser;
@@ -144,9 +144,15 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
   if (payload.forwardOf) {
     try {
       attachments.push(
-        ...(await getLiveMessageAttachments(config, payload.forwardOf.folder, payload.forwardOf.uid))
+        ...(await getLiveMessageAttachments(config, payload.forwardOf.folder, payload.forwardOf.uid, max))
       );
-    } catch {
+    } catch (err) {
+      if (err instanceof MessageTooLargeError) {
+        throw new SendError(
+          `The original message is larger than the ${formatLimit(max)} limit, so it cannot be forwarded with its attachments.`,
+          413
+        );
+      }
       throw new SendError('The original attachments could not be loaded, so nothing was sent.', 502);
     }
   }

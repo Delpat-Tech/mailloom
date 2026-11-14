@@ -502,14 +502,28 @@ export async function getLiveMessageDetail(
 }
 
 // Real (non-inline) attachments of a stored message, for forwarding.
+export class MessageTooLargeError extends Error {
+  constructor(public size: number, public limit: number) {
+    super('The original message is larger than the allowed size.');
+    this.name = 'MessageTooLargeError';
+  }
+}
+
 export async function getLiveMessageAttachments(
   config: AccountConfig,
   folderPath: string,
-  uid: number
+  uid: number,
+  maxBytes?: number
 ): Promise<Array<{ filename: string; content: Buffer; contentType: string }>> {
   const client = await getPooledImapClient(config);
   const lock = await client.getMailboxLock(folderPath, { readOnly: true });
   try {
+    // Check the size first so an oversized original is never downloaded into memory.
+    const head = await client.fetchOne(String(uid), { uid: true, size: true }, { uid: true });
+    if (!head) throw new Error('Original message not found');
+    if (maxBytes !== undefined && (head.size ?? 0) > maxBytes) {
+      throw new MessageTooLargeError(head.size ?? 0, maxBytes);
+    }
     const rawMsg = await client.download(String(uid), undefined, { uid: true });
     if (!rawMsg || !rawMsg.content) throw new Error('Original message not found');
     const parsed = await simpleParser(rawMsg.content);
