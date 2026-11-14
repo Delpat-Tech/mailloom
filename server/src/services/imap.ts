@@ -13,7 +13,10 @@ export interface SearchFilters {
   search?: string;
   from?: string;
   to?: string;
+  cc?: string;
   subject?: string;
+  /** Words in the message body only (the free-text `search` looks at headers and body). */
+  body?: string;
   since?: string;
   before?: string;
 }
@@ -467,6 +470,27 @@ function filterCriteria(filter: ListFilter): SearchObject {
   return {};
 }
 
+/** IMAP SEARCH criteria for the list filter plus the search fields (from, to, cc, subject, body, text, dates). */
+export function buildSearchCriteria(filters: SearchFilters | undefined, filter: ListFilter = 'all'): SearchObject {
+  const criteria: SearchObject = filterCriteria(filter);
+  if (filters?.from?.trim()) criteria.from = filters.from.trim();
+  if (filters?.to?.trim()) criteria.to = filters.to.trim();
+  if (filters?.cc?.trim()) criteria.cc = filters.cc.trim();
+  if (filters?.subject?.trim()) criteria.subject = filters.subject.trim();
+  if (filters?.body?.trim()) criteria.body = filters.body.trim();
+  if (filters?.since?.trim()) {
+    const d = new Date(filters.since.trim());
+    if (!isNaN(d.getTime())) criteria.since = d;
+  }
+  if (filters?.before?.trim()) {
+    const d = new Date(filters.before.trim());
+    if (!isNaN(d.getTime())) criteria.before = d;
+  }
+  if (filters?.search?.trim()) criteria.text = filters.search.trim();
+  if (Object.keys(criteria).length === 0) criteria.all = true;
+  return criteria;
+}
+
 /** Cached has-attachments per UID for a folder at a UIDVALIDITY (the conversation index). */
 export type AttachmentCache = (folder: string, uidValidity: string, uids: number[]) => Map<number, boolean>;
 
@@ -510,6 +534,8 @@ export async function getLiveMessages(
         filters.search?.trim() ||
         filters.from?.trim() ||
         filters.to?.trim() ||
+        filters.cc?.trim() ||
+        filters.body?.trim() ||
         filters.subject?.trim() ||
         filters.since?.trim() ||
         filters.before?.trim()
@@ -517,22 +543,7 @@ export async function getLiveMessages(
     );
 
     if (hasFilters || filter !== 'all') {
-      const searchCriteria: SearchObject = filterCriteria(filter);
-      if (filters?.from?.trim()) searchCriteria.from = filters.from.trim();
-      if (filters?.to?.trim()) searchCriteria.to = filters.to.trim();
-      if (filters?.subject?.trim()) searchCriteria.subject = filters.subject.trim();
-      if (filters?.since?.trim()) {
-        const d = new Date(filters.since.trim());
-        if (!isNaN(d.getTime())) searchCriteria.since = d;
-      }
-      if (filters?.before?.trim()) {
-        const d = new Date(filters.before.trim());
-        if (!isNaN(d.getTime())) searchCriteria.before = d;
-      }
-      if (filters?.search?.trim()) {
-        searchCriteria.text = filters.search.trim();
-      }
-      if (Object.keys(searchCriteria).length === 0) searchCriteria.all = true;
+      const searchCriteria = buildSearchCriteria(filters, filter);
 
       const searchResult = await client.search(searchCriteria, { uid: true });
       if (!searchResult || !Array.isArray(searchResult) || searchResult.length === 0) {

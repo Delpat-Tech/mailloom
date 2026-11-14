@@ -159,6 +159,19 @@ export async function crossFolderView(
   };
 }
 
+/** One search over every selectable folder except Trash and Junk (Snoozed counts), merged newest first. */
+export async function searchAllFolders(
+  config: AccountConfig,
+  criteria: SearchObject,
+  page: number,
+  limit: number
+): Promise<{ messages: MessageHeader[]; total: number }> {
+  const client = await getPooledImapClient(config);
+  const folders = await resolveFolders(client);
+  const searched = [...folders.viewable, ...(folders.snoozed ? [folders.snoozed] : [])];
+  return crossFolderView(config, criteria, searched, page, limit);
+}
+
 // -------------------------------------------------------------
 // LABELS (IMAP keywords)
 // -------------------------------------------------------------

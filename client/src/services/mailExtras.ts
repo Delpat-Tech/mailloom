@@ -1,5 +1,5 @@
 import { request } from './api.js';
-import type { ParsedEmailMessage } from '../types.js';
+import type { MessageHeader, ParsedEmailMessage } from '../types.js';
 
 /*
  * Client calls for the newer server endpoints (kept apart from api.ts).
@@ -25,4 +25,28 @@ export interface ContactSuggestion {
 /** Recipient suggestions for a typed prefix, best first (GET /api/contacts/suggest). */
 export function suggestContacts(q: string, limit = 8): Promise<ContactSuggestion[]> {
   return request<ContactSuggestion[]>(`/contacts/suggest?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
+export interface SearchAllParams {
+  search?: string;
+  from?: string;
+  to?: string;
+  cc?: string;
+  subject?: string;
+  body?: string;
+  since?: string;
+  before?: string;
+  filter?: 'all' | 'unread' | 'starred';
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Search every folder except Trash and Junk (Snoozed included), newest first. Each message carries
+ * the folder it lives in as `mailbox`. Uses the INBOX list route with scope=all.
+ */
+export function searchAllFolders(params: SearchAllParams): Promise<{ messages: MessageHeader[]; total: number }> {
+  const q = new URLSearchParams({ scope: 'all' });
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
+  return request<{ messages: MessageHeader[]; total: number }>(`/mailboxes/INBOX/messages?${q}`);
 }

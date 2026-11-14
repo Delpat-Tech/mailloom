@@ -17,9 +17,10 @@ import {
   restoreLiveMessage,
   isImapAuthError,
   LIST_FILTERS,
+  buildSearchCriteria,
   type ListFilter
 } from '../services/imap.js';
-import { enrichList } from '../services/organise.js';
+import { enrichList, searchAllFolders } from '../services/organise.js';
 import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
@@ -151,11 +152,17 @@ export async function mailRoutes(
         search = '',
         from = '',
         to = '',
+        cc = '',
+        body = '',
         subject = '',
         since = '',
         before = '',
-        filter = 'all'
+        filter = 'all',
+        scope = ''
       } = req.query as {
+        scope?: string;
+        cc?: string;
+        body?: string;
         filter?: string;
         page?: string;
         limit?: string;
@@ -180,10 +187,33 @@ export async function mailRoutes(
         search: search.trim() || undefined,
         from: from.trim() || undefined,
         to: to.trim() || undefined,
+        cc: cc.trim() || undefined,
+        body: body.trim() || undefined,
         subject: subject.trim() || undefined,
         since: since.trim() || undefined,
         before: before.trim() || undefined
       };
+
+      // scope=all: one search over every folder except Trash and Junk (Snoozed included), newest first.
+      // Each result carries its folder in `mailbox`. Anything else keeps the single-folder behaviour.
+      if (scope === 'all') {
+        if (listFilter === 'attachments') {
+          return reply.status(400).send({ code: 'INVALID_INPUT', error: 'The attachments filter cannot be combined with scope=all.' });
+        }
+        if (config.isDemo) {
+          const names = demoMailService.getMailboxes().map((f) => f.path).filter((n) => !['trash', 'junk', 'spam'].includes(n.toLowerCase()));
+          const merged = names.flatMap((n) => demoMailService.getMessages(n, 1, 10_000, search, filters).messages.map((m) => ({ ...m, mailbox: n })));
+          merged.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+          const slice = merged.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+          return { messages: await enrichList(store, indexer, config, slice), total: merged.length };
+        }
+        try {
+          const r = await searchAllFolders(config, buildSearchCriteria(filters, listFilter), pageNum, limitNum);
+          return { ...r, messages: await enrichList(store, indexer, config, r.messages, req.log) };
+        } catch (err) {
+          return failMail(req, reply, err, 'Could not search');
+        }
+      }
 
       if (config.isDemo) {
         const keep = (m: { isSeen: boolean; isFlagged: boolean; hasAttachments: boolean }) =>
