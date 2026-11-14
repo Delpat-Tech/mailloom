@@ -44,7 +44,10 @@ export const AUTH_ERRORS = {
   BAD_CREDENTIALS: 'Wrong email or password.',
   MAIL_SERVER_UNREACHABLE: 'Mail server unreachable. Please try again in a few minutes.',
   INVALID_INPUT: 'Enter your email address and password.',
-  DEMO_DISABLED: 'Demo mode is not available on this server.'
+  DEMO_DISABLED: 'Demo mode is not available on this server.',
+  NOT_DELPAT_MAILBOX: 'This address is not a Delpat mailbox',
+  INSECURE_CONNECTION:
+    'Sign-in needs a secure (https) connection. Open this site with https:// and try again.'
 } as const;
 
 function isLoopbackHost(hostname: string): boolean {
@@ -62,6 +65,24 @@ function cookieName(req: FastifyRequest, handle: string): string {
 
 function cookieOptions(req: FastifyRequest) {
   return { path: '/', httpOnly: true, sameSite: 'strict' as const, secure: useSecureCookies(req) };
+}
+
+/** True when this request reached us over https (directly, or via a trusted proxy's X-Forwarded-Proto). */
+function isHttps(req: FastifyRequest): boolean {
+  return req.protocol === 'https';
+}
+
+/** Ends the session a request was authenticated with and clears its cookie. */
+export async function endSession(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const session = req.mailSession;
+  if (!session) return;
+  req.server.mailloom.sessions.deleteByKey(session.key);
+  await closeSessionConnection(session.key);
+  clearAccountCookie(req, reply, session.handle);
+}
+
+export function sendSessionExpired(reply: FastifyReply) {
+  return sendAuthError(reply, 401, 'SESSION_EXPIRED');
 }
 
 function clearAccountCookie(req: FastifyRequest, reply: FastifyReply, handle: string): void {
@@ -106,6 +127,7 @@ export function accountConfigFor(session: Session, config: AppConfig): AccountCo
     smtpHost: mail.smtpHost,
     smtpPort: mail.smtpPort,
     smtpSecure: mail.smtpSecure,
+    smtpRequireTLS: !mail.smtpSecure && !mail.smtpAllowPlain,
     smtpUser: session.email,
     smtpPass: session.password,
     tls: { ...mail.tls },
@@ -189,6 +211,12 @@ export async function authRoutes(fastify: FastifyInstance) {
     const body = (req.body ?? {}) as { email?: unknown; password?: unknown; rememberMe?: unknown; isDemo?: unknown };
     const remember = body.rememberMe === true;
 
+    // Secure cookies cannot be stored over plain http (except on localhost), so signing in
+    // there would look like it worked and then lose the session. Say so instead.
+    if (!isHttps(req) && !isLoopbackHost(req.hostname || '')) {
+      return sendAuthError(reply, 400, 'INSECURE_CONNECTION');
+    }
+
     if (body.isDemo === true) {
       if (!config.demoMode) return sendAuthError(reply, 403, 'DEMO_DISABLED');
       const { sessionId, session } = sessions.create({
@@ -208,7 +236,14 @@ export async function authRoutes(fastify: FastifyInstance) {
       return sendAuthError(reply, 400, 'INVALID_INPUT');
     }
 
-    const retryMs = throttle.retryAfterMs(email, req.ip);
+    const domain = email.slice(email.lastIndexOf('@') + 1).toLowerCase();
+    if (!config.mailDomains.includes(domain)) {
+      return sendAuthError(reply, 403, 'NOT_DELPAT_MAILBOX');
+    }
+
+    // The attempt is counted before the mail server is asked, so parallel guesses cannot all
+    // slip under the limit. Success (or a mail-server outage) takes it back below.
+    const retryMs = throttle.begin(email, req.ip);
     if (retryMs > 0) {
       const minutes = Math.ceil(retryMs / 60000);
       reply.header('Retry-After', String(Math.ceil(retryMs / 1000)));
@@ -238,13 +273,13 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     const outcome = await verifyMailLogin(candidate, req.log);
     if (outcome === 'bad_credentials') {
-      throttle.recordFailure(email, req.ip);
       return sendAuthError(reply, 401, 'BAD_CREDENTIALS');
     }
     if (outcome === 'unreachable') {
+      throttle.refund(email, req.ip);
       return sendAuthError(reply, 503, 'MAIL_SERVER_UNREACHABLE');
     }
-    throttle.recordSuccess(email, req.ip);
+    throttle.succeed(email, req.ip);
 
     // Signing in again to an account this browser already has replaces that session.
     for (const [handle, oldId] of accountCookies(req)) {

@@ -16,6 +16,8 @@ export interface AccountConfig {
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
+  // Refuse to send credentials unless the SMTP connection is encrypted (STARTTLS or implicit TLS).
+  smtpRequireTLS?: boolean;
   smtpUser?: string;
   smtpPass?: string;
   // TLS options for IMAP and SMTP, from server config (MAIL_TLS_*). Never from the browser.

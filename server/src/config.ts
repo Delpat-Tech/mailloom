@@ -17,6 +17,8 @@ export interface MailServerConfig {
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
+  /** Allow SMTP without STARTTLS when smtpSecure is off. Local testing only (MAIL_SMTP_ALLOW_PLAIN=1). */
+  smtpAllowPlain: boolean;
   tls: {
     rejectUnauthorized: boolean;
     servername?: string;
@@ -39,12 +41,20 @@ export interface AppConfig {
   /** Force the Secure flag on cookies even for localhost. */
   cookieAlwaysSecure: boolean;
   /** Fastify trustProxy setting (needed behind nginx so req.ip is the client). */
-  trustProxy: boolean | string;
+  trustProxy: number | string | false;
+  /** Mail domains that may sign in (lower case), from MAIL_DOMAINS. */
+  mailDomains: string[];
+  /** Largest outgoing message in bytes (MAIL_MAX_MESSAGE_BYTES, default 10 MB). */
+  maxMessageBytes: number;
   demoMode: boolean;
   mail: MailServerConfig;
   /** Login throttle: failures allowed per user+IP within the window. */
   loginMaxFailures: number;
   loginWindowMs: number;
+  /** Failures allowed per client IP (any user) within the window. */
+  loginIpMaxFailures: number;
+  /** Failures allowed per email address (any IP) within the window. */
+  loginEmailMaxFailures: number;
 }
 
 // Values that were committed to the repository at some point. Never accept them.
@@ -79,6 +89,37 @@ function required(env: Env, name: string, hint: string): string {
   const value = env[name]?.trim();
   if (!value) throw new ConfigError(`${name} is not set. ${hint}`);
   return value;
+}
+
+/**
+ * TRUST_PROXY: a hop count (1 = one proxy in front) or a comma list of proxy IPs/CIDRs.
+ * "true" would trust any X-Forwarded-For header and let anyone fake their IP, so it is refused.
+ */
+function parseTrustProxy(raw: string | undefined): number | string | false {
+  const value = raw?.trim();
+  if (!value) return false;
+  const lower = value.toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(lower)) return false;
+  if (/^\d+$/.test(value)) {
+    const hops = Number(value);
+    if (hops > 10) throw new ConfigError('TRUST_PROXY hop count looks wrong (more than 10).');
+    return hops;
+  }
+  if (['true', 'yes', 'on'].includes(lower)) {
+    throw new ConfigError(
+      'TRUST_PROXY=true trusts every client and lets anyone fake their IP. Use the proxy IP list (e.g. 127.0.0.1) or a hop count (e.g. 1).'
+    );
+  }
+  const entries = value.split(',').map((e) => e.trim()).filter(Boolean);
+  for (const e of entries) {
+    const named = ['loopback', 'linklocal', 'uniquelocal'].includes(e.toLowerCase());
+    const addr = /^[0-9a-f:.]+(\/\d{1,3})?$/i.test(e) && (e.includes('.') || e.includes(':'));
+    if (!named && !addr) throw new ConfigError(`TRUST_PROXY entry "${e}" is not an IP address, CIDR range or hop count.`);
+    if (e === '0.0.0.0/0' || e === '::/0' || /\/0$/.test(e)) {
+      throw new ConfigError(`TRUST_PROXY entry "${e}" would trust every client.`);
+    }
+  }
+  return entries.join(',');
 }
 
 export function loadConfig(env: Env): AppConfig {
@@ -150,12 +191,25 @@ export function loadConfig(env: Env): AppConfig {
     }, undefined);
   }
 
-  const trustProxyRaw = env.TRUST_PROXY?.trim();
-  let trustProxy: boolean | string = false;
-  if (trustProxyRaw) {
-    const lower = trustProxyRaw.toLowerCase();
-    trustProxy = ['1', 'true', 'yes'].includes(lower) ? true : ['0', 'false', 'no'].includes(lower) ? false : trustProxyRaw;
-  }
+  const trustProxy = collect(() => parseTrustProxy(env.TRUST_PROXY), false as number | string | false);
+
+  const mailDomains = collect(() => {
+    const raw = required(env, 'MAIL_DOMAINS', 'List the mail domains that may sign in, comma separated, e.g. delpat.in,ydco.in.');
+    const list = raw
+      .split(',')
+      .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+      .filter(Boolean);
+    for (const d of list) {
+      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d)) {
+        throw new ConfigError(`MAIL_DOMAINS entry "${d}" is not a domain name like delpat.in.`);
+      }
+    }
+    if (list.length === 0) throw new ConfigError('MAIL_DOMAINS must list at least one domain.');
+    return list;
+  }, [] as string[]);
+
+  const smtpAllowPlain = collect(() => flag(env, 'MAIL_SMTP_ALLOW_PLAIN', false), false);
+  const maxMessageBytes = collect(() => int(env, 'MAIL_MAX_MESSAGE_BYTES', 10 * 1024 * 1024), 10 * 1024 * 1024);
 
   if (problems.length > 0) {
     throw new ConfigError(`Configuration problems:\n  - ${problems.join('\n  - ')}`);
@@ -170,9 +224,13 @@ export function loadConfig(env: Env): AppConfig {
     corsOrigins,
     cookieAlwaysSecure,
     trustProxy,
+    mailDomains,
+    maxMessageBytes,
     demoMode,
     loginMaxFailures: 5,
     loginWindowMs: 15 * 60_000,
+    loginIpMaxFailures: 20,
+    loginEmailMaxFailures: 10,
     mail: {
       imapHost,
       imapPort,
@@ -180,6 +238,7 @@ export function loadConfig(env: Env): AppConfig {
       smtpHost,
       smtpPort,
       smtpSecure,
+      smtpAllowPlain,
       tls: {
         rejectUnauthorized,
         servername: env.MAIL_TLS_SERVERNAME?.trim() || undefined

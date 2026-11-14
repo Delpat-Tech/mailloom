@@ -14,8 +14,12 @@ export function createSmtpTransport(config: AccountConfig) {
       user,
       pass
     },
+    // Same certificate rules as IMAP; the password is never sent over an unencrypted SMTP connection
+    // unless the server config explicitly allows it (local testing).
+    requireTLS: config.smtpRequireTLS ?? !config.smtpSecure,
     tls: {
-      rejectUnauthorized: false
+      rejectUnauthorized: config.tls?.rejectUnauthorized ?? true,
+      ...(config.tls?.servername ? { servername: config.tls.servername } : {})
     },
     connectionTimeout: 5000, // 5s connection timeout
     greetingTimeout: 5000,   // 5s greeting timeout

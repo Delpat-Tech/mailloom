@@ -6,7 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
-import { getPooledImapClient, closeAllPooledClients } from '../src/services/imap.js';
+import { LoginThrottle } from '../src/services/login-throttle.js';
+import { getPooledImapClient, closeAllPooledClients, setMaxConnectionAgeMs } from '../src/services/imap.js';
 import type { AccountConfig } from '../src/types.js';
 import { Browser, COLLEAGUE, TESTER, TEST_PASSWORD, buildTestApp, signIn, testEnv } from './helpers.js';
 
@@ -39,6 +40,30 @@ describe('configuration', () => {
       buildApp({ env: testEnv({ MAIL_ALLOW_INSECURE_TLS: undefined }), clientDist: null }),
       /MAIL_ALLOW_INSECURE_TLS/
     );
+  });
+
+  test('MAIL_DOMAINS is required and must hold real domains', async () => {
+    await assert.rejects(buildApp({ env: testEnv({ MAIL_DOMAINS: undefined }), clientDist: null }), /MAIL_DOMAINS is not set/);
+    await assert.rejects(buildApp({ env: testEnv({ MAIL_DOMAINS: 'not a domain' }), clientDist: null }), /MAIL_DOMAINS entry/);
+  });
+
+  test('TRUST_PROXY=true is refused; an IP list or hop count is accepted', async () => {
+    for (const bad of ['true', 'yes', '0.0.0.0/0', 'banana']) {
+      await assert.rejects(buildApp({ env: testEnv({ TRUST_PROXY: bad }), clientDist: null }), /TRUST_PROXY/, bad);
+    }
+    for (const good of ['127.0.0.1', '127.0.0.1,10.0.0.0/8', '1', 'loopback', undefined]) {
+      const a = await buildApp({ env: testEnv({ TRUST_PROXY: good }), clientDist: null });
+      await a.close();
+    }
+  });
+
+  test('maxMessageBytes defaults to 10 MB and can be set', async () => {
+    const a = await buildTestApp();
+    assert.equal(a.mailloom.config.maxMessageBytes, 10 * 1024 * 1024);
+    await a.close();
+    const b = await buildTestApp({ MAIL_MAX_MESSAGE_BYTES: '2048' });
+    assert.equal(b.mailloom.config.maxMessageBytes, 2048);
+    await b.close();
   });
 
   test('demo login is off by default', async () => {
@@ -101,7 +126,7 @@ describe('CORS and origin checks', () => {
 describe('sign-in', () => {
   let app: FastifyInstance;
   before(async () => {
-    app = await buildTestApp();
+    app = await buildTestApp({ TRUST_PROXY: '127.0.0.1' });
   });
   after(() => app.close());
 
@@ -129,7 +154,7 @@ describe('sign-in', () => {
   });
 
   test('off localhost the cookie is Secure and __Host- prefixed', async () => {
-    const t = await signIn(app, TESTER, { host: 'mail.delpat.test' });
+    const t = await signIn(app, TESTER, { host: 'mail.delpat.test', proto: 'https' });
     assert.equal(t.res.statusCode, 200);
     const cookie = t.res.cookies[0] as { name: string; secure?: boolean };
     assert.equal(cookie.name, `__Host-mls_${t.handle}`);
@@ -156,6 +181,45 @@ describe('sign-in', () => {
       payload: { email: TESTER, password: TEST_PASSWORD, imapHost: '203.0.113.9', imapPort: 1, smtpHost: '203.0.113.9' }
     });
     assert.equal(res.statusCode, 200);
+  });
+
+  test('only Delpat domains may sign in', async () => {
+    const t = await signIn(app, 'someone@gmail.com');
+    assert.equal(t.res.statusCode, 403);
+    assert.equal(t.res.json().error, 'This address is not a Delpat mailbox');
+    assert.equal(t.res.cookies.length, 0);
+    const upper = await signIn(app, 'TESTER@DELPAT.TEST');
+    assert.equal(upper.res.statusCode, 200);
+    // A look-alike domain does not pass.
+    assert.equal((await signIn(app, 'tester@delpat.test.evil.example')).res.statusCode, 403);
+    assert.equal((await signIn(app, 'tester@evil-delpat.test')).res.statusCode, 403);
+  });
+
+  test('plain http to a real host is refused instead of pretending to sign in', async () => {
+    const res = await signIn(app, TESTER, { host: 'mail.delpat.test' });
+    assert.equal(res.res.statusCode, 400);
+    assert.equal(res.res.json().code, 'INSECURE_CONNECTION');
+    assert.match(res.res.json().error, /https/);
+    assert.equal(res.res.cookies.length, 0);
+    // Direct plain http from an untrusted address cannot claim https.
+    const spoof = await app.inject({
+      method: 'POST',
+      url: '/api/auth/connect',
+      remoteAddress: '10.1.2.3',
+      headers: { host: 'mail.delpat.test', 'x-forwarded-proto': 'https' },
+      payload: { email: TESTER, password: TEST_PASSWORD }
+    });
+    assert.equal(spoof.statusCode, 400);
+  });
+
+  test('COOKIE_SECURE forces Secure __Host- cookies even on localhost', async () => {
+    const secureApp = await buildTestApp({ COOKIE_SECURE: 'true' });
+    const t = await signIn(secureApp, TESTER);
+    assert.equal(t.res.statusCode, 200);
+    const cookie = t.res.cookies[0] as { name: string; secure?: boolean };
+    assert.equal(cookie.name, `__Host-mls_${t.handle}`);
+    assert.equal(cookie.secure, true);
+    await secureApp.close();
   });
 
   test('mail server down: "Mail server unreachable"', async () => {
@@ -188,6 +252,57 @@ describe('sign-in', () => {
     clock += 15 * MIN + 1000;
     assert.equal((await signIn(tapp, TESTER, { browser: ip })).res.statusCode, 200);
     await tapp.close();
+  });
+});
+
+describe('login throttle', () => {
+  test('parallel wrong guesses are counted before the mail server answers', async () => {
+    const tapp = await buildTestApp();
+    const ip = new Browser('10.8.8.8');
+    const results = await Promise.all(
+      Array.from({ length: 12 }, (_, i) => signIn(tapp, TESTER, { password: `guess-${i}`, browser: new Browser('10.8.8.8') }))
+    );
+    const codes = results.map((r) => r.res.statusCode);
+    assert.equal(codes.filter((c) => c === 401).length, 5, `codes: ${codes}`);
+    assert.equal(codes.filter((c) => c === 429).length, 7, `codes: ${codes}`);
+    assert.equal((await signIn(tapp, TESTER, { browser: ip })).res.statusCode, 429);
+    await tapp.close();
+  });
+
+  test('a right password clears the email+IP count', async () => {
+    const tapp = await buildTestApp();
+    const b = new Browser('10.8.8.9');
+    for (let i = 0; i < 4; i++) await signIn(tapp, TESTER, { password: 'no', browser: b });
+    assert.equal((await signIn(tapp, TESTER, { browser: b })).res.statusCode, 200);
+    for (let i = 0; i < 4; i++) assert.equal((await signIn(tapp, TESTER, { password: 'no', browser: b })).res.statusCode, 401);
+    await tapp.close();
+  });
+
+  test('per-IP bucket: 20 failures across mailboxes block that IP', () => {
+    let clock = 1_000_000;
+    const t = new LoginThrottle(5, 15 * MIN, () => clock, 20, 10);
+    for (let i = 0; i < 20; i++) assert.equal(t.begin(`user${i}@delpat.test`, '9.9.9.9'), 0);
+    assert.ok(t.begin('fresh@delpat.test', '9.9.9.9') > 0, 'new mailbox from the same IP is blocked');
+    assert.equal(t.begin('fresh@delpat.test', '9.9.9.10'), 0, 'another IP is fine');
+    clock += 15 * MIN + 1;
+    assert.equal(t.begin('fresh@delpat.test', '9.9.9.9'), 0);
+  });
+
+  test('per-email bucket: 10 failures from different IPs block that mailbox', () => {
+    let clock = 1_000_000;
+    const t = new LoginThrottle(5, 15 * MIN, () => clock, 20, 10);
+    for (let i = 0; i < 10; i++) assert.equal(t.begin('Victim@delpat.test', `8.8.8.${i}`), 0);
+    assert.ok(t.begin('victim@delpat.test', '8.8.8.200') > 0);
+    assert.equal(t.begin('other@delpat.test', '8.8.8.200'), 0);
+  });
+
+  test('a success does not wipe the IP bucket', () => {
+    const t = new LoginThrottle(5, 15 * MIN, () => 1_000_000, 20, 10);
+    for (let i = 0; i < 19; i++) t.begin(`u${i}@delpat.test`, '7.7.7.7');
+    t.begin('mine@delpat.test', '7.7.7.7');
+    t.succeed('mine@delpat.test', '7.7.7.7');
+    t.begin('a@delpat.test', '7.7.7.7'); // 20th failure
+    assert.ok(t.begin('b@delpat.test', '7.7.7.7') > 0);
   });
 });
 
@@ -410,5 +525,111 @@ describe('IMAP connection pool', () => {
   test('a wrong password never rides a warm connection of the same user', async () => {
     await getPooledImapClient(base(TEST_PASSWORD));
     await assert.rejects(getPooledImapClient(base('wrong-password')));
+  });
+
+  test('a connection older than the age cap is replaced', async () => {
+    const cfg = base(TEST_PASSWORD, 'age-test');
+    const first = await getPooledImapClient(cfg);
+    assert.equal(await getPooledImapClient(cfg), first);
+    const previous = setMaxConnectionAgeMs(5);
+    try {
+      await new Promise((r) => setTimeout(r, 20));
+      const second = await getPooledImapClient(cfg);
+      assert.notEqual(second, first);
+      assert.ok(second.usable);
+    } finally {
+      setMaxConnectionAgeMs(previous);
+    }
+  });
+
+  test('a failed reconnect throws a recognisable authentication error', async () => {
+    await assert.rejects(getPooledImapClient(base('wrong-password', 'auth-fail')), (err: Error) => {
+      assert.equal(err.name, 'ImapAuthError');
+      return true;
+    });
+  });
+});
+
+describe('mail errors and expired credentials', () => {
+  let app: FastifyInstance;
+  before(async () => {
+    app = await buildTestApp();
+  });
+  after(() => app.close());
+
+  test('credentials the mail server no longer accepts end the session with 401 SESSION_EXPIRED', async () => {
+    // A session whose stored password is no longer valid (as after a password change).
+    const { sessionId, session } = app.mailloom.sessions.create({
+      email: TESTER,
+      name: 'tester',
+      password: 'changed-password',
+      isDemo: false,
+      remember: false
+    });
+    const headers = { cookie: `mls_${session.handle}=${sessionId}`, 'x-mailloom-account': session.handle };
+    const res = await app.inject({ method: 'GET', url: '/api/mailboxes', headers });
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.json().code, 'SESSION_EXPIRED');
+    assert.equal(app.mailloom.sessions.resolve(sessionId).status === 'ok', false, 'session is deleted');
+    const again = await app.inject({ method: 'GET', url: '/api/auth/me', headers });
+    assert.equal(again.statusCode, 401);
+  });
+
+  test('server errors show a fixed plain message, never the mail server text', async () => {
+    const t = await signIn(app, TESTER);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/mailboxes/${encodeURIComponent('No/Such/Folder')}/messages`,
+      headers: t.headers
+    });
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.json(), { error: 'Could not load messages' });
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/mailboxes/${encodeURIComponent('No/Such/Folder')}/messages/1`,
+      headers: t.headers
+    });
+    assert.equal(detail.statusCode, 500);
+    assert.deepEqual(detail.json(), { error: 'Could not load this message' });
+
+    for (const [method, url, payload, message] of [
+      ['POST', '/messages/1/flags', { flag: 'isSeen', value: true }, 'Could not update the message'],
+      ['POST', '/messages/1/move', { targetFolder: 'INBOX' }, 'Could not move the message'],
+      ['DELETE', '/messages/1', undefined, 'Could not delete the message'],
+      ['POST', '/messages/1/spam', {}, 'Could not mark the message as spam']
+    ] as const) {
+      const r = await app.inject({
+        method,
+        url: `/api/mailboxes/${encodeURIComponent('No/Such/Folder')}${url}`,
+        headers: t.headers,
+        payload
+      });
+      assert.equal(r.statusCode, 500, url);
+      assert.deepEqual(r.json(), { error: message }, url);
+    }
+  });
+
+  test('send over plain SMTP is refused unless the server config allows it', async () => {
+    const strict = await buildTestApp({ MAIL_SMTP_ALLOW_PLAIN: undefined });
+    const t = await signIn(strict, TESTER);
+    const res = await strict.inject({
+      method: 'POST',
+      url: '/api/messages/send',
+      headers: t.headers,
+      payload: { to: [COLLEAGUE], subject: 'hi', text: 'hello' }
+    });
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.json(), { error: 'Could not send the message' });
+    await strict.close();
+
+    const t2 = await signIn(app, TESTER);
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/api/messages/send',
+      headers: t2.headers,
+      payload: { to: [COLLEAGUE], subject: 'hi', text: 'hello' }
+    });
+    assert.equal(ok.statusCode, 200);
   });
 });

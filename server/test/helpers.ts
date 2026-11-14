@@ -25,6 +25,9 @@ export function testEnv(overrides: Record<string, string | undefined> = {}): Rec
     MAIL_SMTP_HOST: '127.0.0.1',
     MAIL_SMTP_PORT: process.env.GREENMAIL_SMTP_PORT || '1587',
     MAIL_SMTP_SECURE: 'false',
+    // GreenMail SMTP is plain text.
+    MAIL_SMTP_ALLOW_PLAIN: '1',
+    MAIL_DOMAINS: 'delpat.test',
     // GreenMail uses a self-signed certificate.
     MAIL_TLS_REJECT_UNAUTHORIZED: 'false',
     MAIL_ALLOW_INSECURE_TLS: '1',
@@ -70,14 +73,16 @@ export interface SignedIn {
 export async function signIn(
   app: FastifyInstance,
   email: string,
-  opts: { password?: string; rememberMe?: boolean; browser?: Browser; host?: string } = {}
+  opts: { password?: string; rememberMe?: boolean; browser?: Browser; host?: string; proto?: string } = {}
 ): Promise<SignedIn> {
   const browser = opts.browser ?? new Browser();
   const res = await app.inject({
     method: 'POST',
     url: '/api/auth/connect',
     remoteAddress: browser.remoteAddress,
-    headers: { ...(browser.cookies.size ? { cookie: browser.cookieHeader() } : {}), ...(opts.host ? { host: opts.host } : {}) },
+    headers: { ...(browser.cookies.size ? { cookie: browser.cookieHeader() } : {}), ...(opts.host ? { host: opts.host } : {}),
+      ...(opts.proto ? { 'x-forwarded-proto': opts.proto } : {})
+    },
     payload: { email, password: opts.password ?? TEST_PASSWORD, rememberMe: opts.rememberMe ?? false }
   });
   browser.absorb(res);

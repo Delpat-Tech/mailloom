@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
@@ -68,7 +68,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const config = loadConfig(env);
   const now = opts.now ?? Date.now;
 
-  const fastify = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy });
+  const fastify = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy as string | boolean });
 
   const sessions = new SessionStore(
     config.sessionDbPath,
@@ -76,7 +76,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     { idleMs: config.sessionIdleMs, shortMaxMs: config.sessionShortMaxMs, rememberMs: config.sessionRememberMs },
     now
   );
-  const throttle = new LoginThrottle(config.loginMaxFailures, config.loginWindowMs, now);
+  const throttle = new LoginThrottle(
+    config.loginMaxFailures,
+    config.loginWindowMs,
+    now,
+    config.loginIpMaxFailures,
+    config.loginEmailMaxFailures
+  );
   fastify.decorate('mailloom', { config, sessions, throttle });
 
   if (!config.mail.tls.rejectUnauthorized) {
@@ -96,6 +102,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     sessions.close();
   });
 
+  // Anything not handled by a route: never show internal error text to the browser.
+  fastify.setErrorHandler((err: FastifyError, req, reply) => {
+    const status = (err as { statusCode?: number }).statusCode;
+    if (status && status >= 400 && status < 500) {
+      return reply.status(status).send({ error: err.message, code: (err as { code?: string }).code });
+    }
+    req.log.error({ errName: err.name, errCode: (err as { code?: string }).code }, 'Unhandled error');
+    return reply.status(500).send({ error: 'Something went wrong. Please try again.' });
+  });
+
   // Cross-origin requests to the API are refused unless the origin is listed in CORS_ORIGINS.
   // Same-origin requests (the normal case) need no CORS at all.
   const allowedOrigins = new Set(config.corsOrigins);
@@ -110,7 +126,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await fastify.register(cors, {
     origin: config.corsOrigins.length > 0 ? config.corsOrigins : false,
     credentials: true,
-    allowedHeaders: ['Content-Type', ACCOUNT_HEADER]
+    allowedHeaders: ['Content-Type', ACCOUNT_HEADER, 'Idempotency-Key']
   });
 
   // Session cookies hold 256-bit random ids looked up server-side, so they are not signed.
