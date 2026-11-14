@@ -5,6 +5,11 @@ export interface RenderOptions {
   cids?: Map<string, string>;
   /** Load remote (https) images. Default: blocked. */
   allowRemoteImages?: boolean;
+  /**
+   * Show remote images through the signed image proxy: called with each remote image URL (http or
+   * https), returns the same-origin proxy URL. Takes effect only when allowRemoteImages is off.
+   */
+  proxyImage?: (url: string) => string;
 }
 
 export interface RenderedEmail {
@@ -144,6 +149,7 @@ const SAFE_DATA_IMG = /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,[a-z0-9
 export function renderEmail(dirtyHtml: string, opts: RenderOptions = {}): RenderedEmail {
   const cids = opts.cids || new Map<string, string>();
   const allowRemote = Boolean(opts.allowRemoteImages);
+  const proxy = allowRemote ? undefined : opts.proxyImage;
   let blocked = 0;
 
   // Pull the mail's own <style> blocks out; they are scrubbed and re-added in <head>.
@@ -195,6 +201,9 @@ export function renderEmail(dirtyHtml: string, opts: RenderOptions = {}): Render
             delete out.src; // the tag itself is dropped below
           } else if (allowRemote) {
             out.src = src.replace(/^http:/i, 'https:').replace(/^\/\//, 'https://');
+          } else if (proxy) {
+            // Protocol-relative URLs are fetched over https.
+            out.src = proxy(src.replace(/^\/\//, 'https://'));
           } else {
             delete out.src;
             blocked++;
@@ -208,7 +217,7 @@ export function renderEmail(dirtyHtml: string, opts: RenderOptions = {}): Render
     exclusiveFilter: (frame) => frame.tag === 'img' && isTrackingPixel(frame.attribs as Record<string, string>)
   });
 
-  const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src data:${allowRemote ? ' https:' : ''}`;
+  const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src data:${allowRemote ? ' https:' : proxy ? " 'self'" : ''}`;
   const doc =
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta http-equiv="Content-Security-Policy" content="${csp}">` +

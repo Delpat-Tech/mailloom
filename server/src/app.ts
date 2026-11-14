@@ -24,6 +24,7 @@ import { organiseRoutes } from './routes/organise.js';
 import { OrganiseStore } from './services/organise-store.js';
 import { Snoozer } from './services/snoozer.js';
 import { ConversationIndexer, type IndexerOptions } from './services/conv-index.js';
+import type { ImageFetchOptions } from './services/image-proxy.js';
 
 export interface BuildAppOptions {
   /** Environment to read configuration from. Defaults to process.env. */
@@ -41,6 +42,8 @@ export interface BuildAppOptions {
     endpointAllowed?: (endpoint: string) => boolean;
   };
   /** Test hooks for the conversation index (never set in production). */
+  /** Test hook for the remote image proxy: injectable resolver/address check (never set in production). */
+  imageProxy?: ImageFetchOptions;
   organise?: Pick<IndexerOptions, 'batchSize' | 'retryMs' | 'onBatch'> & { snoozeIntervalMs?: number };
 }
 
@@ -262,7 +265,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // Register routes at / and behind the /mail subpath used by nginx.
   for (const prefix of ['', '/mail']) {
     await fastify.register(authRoutes, { prefix });
-    await fastify.register(mailRoutes, { prefix, maxMessageBytes: config.maxMessageBytes });
+    await fastify.register(mailRoutes, {
+      prefix,
+      maxMessageBytes: config.maxMessageBytes,
+      sessionSecret: config.sessionSecret,
+      imageFetch: opts.imageProxy
+    });
     await fastify.register(connectionRoutes, { prefix });
     await fastify.register(agentRoutes, { prefix });
     await fastify.register(pushRoutes, { prefix });

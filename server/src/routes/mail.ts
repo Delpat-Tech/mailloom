@@ -23,6 +23,7 @@ import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.j
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
 import { renderEmail } from '../utils/sanitize.js';
+import { fetchRemoteImage, ImageProxyError, proxyImageUrl, verifyImageSignature, type ImageFetchOptions } from '../services/image-proxy.js';
 import { AgentError, locate } from '../agent/mail.js';
 import { sendLiveEmail, SendError, getMaxMessageBytes } from '../services/smtp.js';
 
@@ -53,7 +54,10 @@ function parseUid(raw: string): number {
 
 // Mail routes. Sign-in, sign-out and session checks live in ./auth.ts; requireAuth
 // sets req.accountConfig (server-configured mail host plus the session's credentials).
-export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageBytes?: number } = {}) {
+export async function mailRoutes(
+  fastify: FastifyInstance,
+  opts: { maxMessageBytes?: number; sessionSecret?: string; imageFetch?: ImageFetchOptions } = {}
+) {
   const draftBodyLimit = Math.ceil((opts.maxMessageBytes || 10 * 1024 * 1024) * 1.4) + 256 * 1024;
   // 4. List Mailbox Folders
   fastify.get('/api/mailboxes', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
@@ -162,7 +166,18 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       const folderPath = path;
       const messageUid = parseUid(uid);
       if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
-      const images = ['1', 'true'].includes(String((req.query as { images?: string }).images || ''));
+      // images=1: the reader chose "show images" (direct https). images=auto: through the signed proxy
+      // (never in Junk). Anything else, or nothing: blocked.
+      const imagesParam = String((req.query as { images?: string }).images || '');
+      const images = ['1', 'true'].includes(imagesParam);
+      const proxyImage =
+        imagesParam === 'auto' && opts.sessionSecret
+          ? (u: string) =>
+              proxyImageUrl(opts.sessionSecret!, u, {
+                prefix: req.url.startsWith('/mail/') ? '/mail' : '',
+                account: req.mailSession?.handle
+              })
+          : undefined;
       // peek=1: read without marking as read (the client prefetches neighbouring messages this way).
       const peek = ['1', 'true'].includes(String((req.query as { peek?: string }).peek || ''));
 
@@ -170,12 +185,15 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
         const msg = demoMailService.getMessageDetail(folderPath, messageUid);
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
         if (!msg.html) return msg;
-        const shown = renderEmail(msg.html, { allowRemoteImages: images });
+        const shown = renderEmail(msg.html, {
+          allowRemoteImages: images,
+          proxyImage: folderPath.toLowerCase() === 'junk' ? undefined : proxyImage
+        });
         return { ...msg, html: shown.html, blockedImages: shown.blockedImages };
       }
 
       try {
-        const msg = await getLiveMessageDetail(config, folderPath, messageUid, { allowRemoteImages: images, peek });
+        const msg = await getLiveMessageDetail(config, folderPath, messageUid, { allowRemoteImages: images, peek, proxyImage });
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
         return msg;
       } catch (err) {
@@ -183,6 +201,32 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       }
     }
   );
+
+  // 6b. Remote image proxy. Signed URLs only (see services/image-proxy.ts); needs a signed-in session.
+  fastify.get('/api/image-proxy', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const q = req.query as { u?: unknown; sig?: unknown };
+    const url = typeof q.u === 'string' ? q.u : '';
+    const sig = typeof q.sig === 'string' ? q.sig : '';
+    if (!url || url.length > 4096 || !opts.sessionSecret) return reply.status(400).send({ error: 'Invalid image address' });
+    if (!verifyImageSignature(opts.sessionSecret, url, sig)) return reply.status(403).send({ error: 'Image address not signed' });
+    const release = acquireSlot(`img|${req.mailSession!.key}`, 12);
+    if (!release) return reply.status(429).send({ error: 'Too many images at once' });
+    try {
+      const img = await fetchRemoteImage(url, opts.imageFetch);
+      reply.header('Content-Type', img.contentType);
+      reply.header('Content-Length', img.body.length);
+      reply.header('Content-Disposition', 'inline');
+      reply.header('Content-Security-Policy', "default-src 'none'");
+      reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('Cache-Control', 'private, max-age=86400');
+      return reply.send(img.body);
+    } catch (err) {
+      const e = err instanceof ImageProxyError ? err : new ImageProxyError('UPSTREAM_ERROR');
+      return reply.status(e.status).send({ code: e.code, error: 'The image could not be loaded' });
+    } finally {
+      release();
+    }
+  });
 
   // 7. Download Attachment
   fastify.get(

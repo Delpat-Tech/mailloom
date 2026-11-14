@@ -595,6 +595,8 @@ function addrList(list: Array<{ name?: string; address?: string }> | undefined) 
 export interface DetailOptions {
   /** Load remote images referenced by the message (default: blocked). */
   allowRemoteImages?: boolean;
+  /** Show remote images through the image proxy (ignored in the Junk folder). */
+  proxyImage?: (url: string) => string;
   /** Do not mark the message as read (used for prefetching). */
   peek?: boolean;
 }
@@ -661,7 +663,9 @@ export async function getLiveMessageDetail(
           // The image stays hidden; the rest of the mail is still shown.
         }
       }
-      const rendered = renderEmail(rawHtml, { cids, allowRemoteImages: options.allowRemoteImages });
+      // Mail in Junk never loads remote images on its own.
+      const proxyImage = options.proxyImage && (await getFolderKind(client, folderPath)) !== 'Junk' ? options.proxyImage : undefined;
+      const rendered = renderEmail(rawHtml, { cids, allowRemoteImages: options.allowRemoteImages, proxyImage });
       html = rendered.html;
       blockedImages = rendered.blockedImages;
     }
