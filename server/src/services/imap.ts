@@ -6,6 +6,8 @@ import { renderEmail, findCidReferences } from '../utils/sanitize.js';
 import { sniffImage } from './richbody.js';
 import { classifyParts, findPart, isValidPartId, type LeafPart, type MessageParts } from './mailparts.js';
 import { cleanFilename, decodeCharset, decodeTransfer, htmlToText, makeSnippet } from '../utils/mime.js';
+import { bounceCandidate, parseDsn, parsePlainBounce, type BounceCandidate } from './bounce.js';
+import { referencesFromHeaderBlock, threadIdFor } from './threading.js';
 
 export interface SearchFilters {
   search?: string;
@@ -315,16 +317,30 @@ export async function getLiveMailboxes(config: AccountConfig): Promise<MailboxFo
 // -------------------------------------------------------------
 // MESSAGE LIST
 // -------------------------------------------------------------
+export type ListFilter = 'all' | 'unread' | 'starred' | 'attachments';
+export const LIST_FILTERS: readonly ListFilter[] = ['all', 'unread', 'starred', 'attachments'];
+
+/** Labels are IMAP keywords "$label_<id>", so they live on the mailbox and show in other clients. */
+export const LABEL_KEYWORD_PREFIX = '$label_';
+
 const LIST_FETCH = {
   uid: true,
   flags: true,
   envelope: true,
   internalDate: true,
   size: true,
-  bodyStructure: true
-} as const;
+  bodyStructure: true,
+  headers: ['references']
+};
 
-function toHeader(msg: FetchMessageObject): { header: MessageHeader; parts: MessageParts } {
+interface ListItem {
+  header: MessageHeader;
+  parts: MessageParts;
+  bounce?: BounceCandidate | null;
+}
+
+/** `where` names the folder and UIDVALIDITY, for messages without a Message-ID (their own thread). */
+function toHeader(msg: FetchMessageObject, where = ''): ListItem {
   const env = msg.envelope;
   const fromAddr = env?.from?.[0] || { name: 'Unknown', address: 'unknown@example.com' };
   const toAddrs = (env?.to || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
@@ -333,6 +349,7 @@ function toHeader(msg: FetchMessageObject): { header: MessageHeader; parts: Mess
   const parts = classifyParts(msg.bodyStructure);
   return {
     parts,
+    bounce: bounceCandidate(fromAddr.address || '', env?.subject || '', msg.bodyStructure, parts.all),
     header: {
       uid: msg.uid,
       seq: msg.seq,
@@ -347,16 +364,20 @@ function toHeader(msg: FetchMessageObject): { header: MessageHeader; parts: Mess
       isFlagged: flagsArr.includes('\\Flagged'),
       hasAttachments: parts.attachments.length > 0,
       size: msg.size || 0,
-      snippet: ''
+      snippet: '',
+      labels: flagsArr.filter((f) => f.startsWith(LABEL_KEYWORD_PREFIX)).map((f) => f.slice(LABEL_KEYWORD_PREFIX.length)),
+      threadId: threadIdFor({
+        messageId: env?.messageId,
+        inReplyTo: env?.inReplyTo,
+        references: referencesFromHeaderBlock(msg.headers),
+        fallbackKey: `${where}:${msg.uid}`
+      })
     }
   };
 }
 
 /** Fill `snippet` (first ~140 characters of text) with one small partial fetch per distinct text part number. */
-async function addSnippets(
-  client: ImapFlow,
-  items: Array<{ header: MessageHeader; parts: MessageParts }>
-): Promise<void> {
+async function addSnippets(client: ImapFlow, items: ListItem[]): Promise<void> {
   const groups = new Map<string, { part: LeafPart; uids: number[] }>();
   for (const it of items) {
     const part = it.parts.text?.[0] || it.parts.html?.[0];
@@ -383,12 +404,82 @@ async function addSnippets(
   }
 }
 
+const BOUNCE_PART_BYTES = 16 * 1024;
+
+/** Bounces get `bounce` (original subject, recipient, reason) from a small partial fetch of their report parts. */
+async function addBounces(client: ImapFlow, items: ListItem[], ownEmail: string): Promise<void> {
+  for (const it of items) {
+    const c = it.bounce;
+    if (!c) continue;
+    const wanted = [c.kind === 'dsn' ? c.statusPart : undefined, c.kind === 'dsn' ? c.originalPart : undefined, c.textPart].filter(
+      (p): p is LeafPart => Boolean(p)
+    );
+    if (wanted.length === 0) continue;
+    try {
+      const m = await client.fetchOne(
+        String(it.header.uid),
+        { uid: true, bodyParts: wanted.map((p) => ({ key: p.partId, start: 0, maxLength: BOUNCE_PART_BYTES })) },
+        { uid: true }
+      );
+      const read = (p?: LeafPart): string => {
+        if (!p || !m) return '';
+        const raw = m.bodyParts?.get(p.partId);
+        return raw ? decodeCharset(decodeTransfer(raw, p.encoding), p.charset) : '';
+      };
+      it.header.bounce =
+        c.kind === 'dsn'
+          ? await parseDsn(read(c.statusPart), read(c.originalPart), read(c.textPart))
+          : await parsePlainBounce(read(c.textPart), ownEmail);
+    } catch {
+      // Shown as an ordinary message when the report cannot be read.
+    }
+  }
+}
+
+/**
+ * List entries for the given UIDs of the folder the caller has locked, in the order given:
+ * header, snippet, labels, threadId and (for bounces) the bounce summary.
+ */
+export async function fetchListItems(client: ImapFlow, uids: number[], ownEmail: string): Promise<MessageHeader[]> {
+  if (uids.length === 0) return [];
+  const mb = client.mailbox;
+  const where = mb ? `${mb.path}:${mb.uidValidity}` : '';
+  const byUid = new Map<number, ListItem>();
+  for await (const msg of client.fetch(uids, LIST_FETCH, { uid: true })) byUid.set(msg.uid, toHeader(msg, where));
+  const items = uids.map((u) => byUid.get(u)).filter((x): x is ListItem => Boolean(x));
+  await addSnippets(client, items);
+  await addBounces(client, items, ownEmail);
+  return items.map((i) => i.header);
+}
+
+/** IMAP SEARCH criteria for the list filters (attachments is narrowed further by BODYSTRUCTURE). */
+function filterCriteria(filter: ListFilter): SearchObject {
+  if (filter === 'unread') return { seen: false };
+  if (filter === 'starred') return { flagged: true };
+  if (filter === 'attachments') {
+    // Cheap server-side pre-filter: mail with attachments is multipart/mixed (or a bare application/* part).
+    return { or: [{ header: { 'content-type': 'multipart/mixed' } }, { header: { 'content-type': 'application/' } }] };
+  }
+  return {};
+}
+
+/** Keep only the UIDs whose BODYSTRUCTURE lists a real attachment. */
+async function withAttachments(client: ImapFlow, uids: number[]): Promise<number[]> {
+  if (uids.length === 0) return [];
+  const keep = new Set<number>();
+  for await (const msg of client.fetch(uids, { uid: true, bodyStructure: true }, { uid: true })) {
+    if (classifyParts(msg.bodyStructure).attachments.length > 0) keep.add(msg.uid);
+  }
+  return uids.filter((u) => keep.has(u));
+}
+
 export async function getLiveMessages(
   config: AccountConfig,
   folderPath: string,
   page = 1,
   limit = 50,
-  filters?: SearchFilters
+  filters?: SearchFilters,
+  filter: ListFilter = 'all'
 ): Promise<{ messages: MessageHeader[]; total: number }> {
   const client = await getPooledImapClient(config);
 
@@ -413,22 +504,23 @@ export async function getLiveMessages(
       )
     );
 
-    if (hasFilters && filters) {
-      const searchCriteria: SearchObject = {};
-      if (filters.from?.trim()) searchCriteria.from = filters.from.trim();
-      if (filters.to?.trim()) searchCriteria.to = filters.to.trim();
-      if (filters.subject?.trim()) searchCriteria.subject = filters.subject.trim();
-      if (filters.since?.trim()) {
+    if (hasFilters || filter !== 'all') {
+      const searchCriteria: SearchObject = filterCriteria(filter);
+      if (filters?.from?.trim()) searchCriteria.from = filters.from.trim();
+      if (filters?.to?.trim()) searchCriteria.to = filters.to.trim();
+      if (filters?.subject?.trim()) searchCriteria.subject = filters.subject.trim();
+      if (filters?.since?.trim()) {
         const d = new Date(filters.since.trim());
         if (!isNaN(d.getTime())) searchCriteria.since = d;
       }
-      if (filters.before?.trim()) {
+      if (filters?.before?.trim()) {
         const d = new Date(filters.before.trim());
         if (!isNaN(d.getTime())) searchCriteria.before = d;
       }
-      if (filters.search?.trim()) {
+      if (filters?.search?.trim()) {
         searchCriteria.text = filters.search.trim();
       }
+      if (Object.keys(searchCriteria).length === 0) searchCriteria.all = true;
 
       const searchResult = await client.search(searchCriteria, { uid: true });
       if (!searchResult || !Array.isArray(searchResult) || searchResult.length === 0) {
@@ -436,22 +528,13 @@ export async function getLiveMessages(
       }
 
       // Sort descending (newest UID first)
-      const sortedUids = [...searchResult].sort((a, b) => b - a);
+      let sortedUids = [...searchResult].sort((a, b) => b - a);
+      if (filter === 'attachments') sortedUids = await withAttachments(client, sortedUids);
       const total = sortedUids.length;
       const startIdx = (page - 1) * limit;
       const pagedUids = sortedUids.slice(startIdx, startIdx + limit);
       if (pagedUids.length === 0) return { messages: [], total };
-
-      const uidToItem = new Map<number, { header: MessageHeader; parts: MessageParts }>();
-      for await (const msg of client.fetch(pagedUids, LIST_FETCH, { uid: true })) {
-        uidToItem.set(msg.uid, toHeader(msg));
-      }
-      const items = pagedUids.map((uid) => uidToItem.get(uid)).filter(Boolean) as Array<{
-        header: MessageHeader;
-        parts: MessageParts;
-      }>;
-      await addSnippets(client, items);
-      return { messages: items.map((i) => i.header), total };
+      return { messages: await fetchListItems(client, pagedUids, config.email), total };
     }
 
     // Fast range pagination for default view
@@ -461,13 +544,10 @@ export async function getLiveMessages(
     if ((page - 1) * limit >= total) return { messages: [], total };
     const range = `${startSeq}:${endSeq}`;
 
-    const items: Array<{ header: MessageHeader; parts: MessageParts }> = [];
-    for await (const msg of client.fetch(range, LIST_FETCH)) {
-      items.push(toHeader(msg));
-    }
-    items.reverse();
-    await addSnippets(client, items);
-    return { messages: items.map((i) => i.header), total };
+    const uids: number[] = [];
+    for await (const msg of client.fetch(range, { uid: true })) uids.push(msg.uid);
+    uids.sort((a, b) => b - a);
+    return { messages: await fetchListItems(client, uids, config.email), total };
   } finally {
     lock.release();
   }

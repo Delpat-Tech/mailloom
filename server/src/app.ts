@@ -20,6 +20,9 @@ import { isAllowedPushEndpoint, loadPushConfig } from './push/config.js';
 import { PushStore } from './push/store.js';
 import { createPushSender, type PushSendFn } from './push/sender.js';
 import { DEFAULT_TIMING, PushWatcher, type WatcherTiming } from './push/watcher.js';
+import { organiseRoutes } from './routes/organise.js';
+import { OrganiseStore } from './services/organise-store.js';
+import { Snoozer } from './services/snoozer.js';
 
 export interface BuildAppOptions {
   /** Environment to read configuration from. Defaults to process.env. */
@@ -164,6 +167,19 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
   if (pushWatcher) fastify.addHook('onReady', async () => pushWatcher.startAll());
 
+  // Labels, snooze and the conversation index (same database). Snoozed mail is woken by a timer for
+  // mailboxes with a stored (push) login, and on the next signed-in request for everyone else.
+  const organiseStore = new OrganiseStore(sessions.database, now);
+  const snoozer = new Snoozer(organiseStore, pushStore, config, fastify.log);
+  fastify.decorate('mailloomOrganise', { store: organiseStore, snoozer, now });
+  fastify.addHook('onReady', async () => {
+    snoozer.start();
+    void snoozer.tick();
+  });
+  fastify.addHook('preHandler', async (req) => {
+    if (req.accountConfig) await snoozer.wakeFor(req.accountConfig);
+  });
+
   if (!config.mail.tls.rejectUnauthorized) {
     fastify.log.warn('MAIL_TLS_REJECT_UNAUTHORIZED=false: mail server certificates are NOT checked (local testing only).');
   }
@@ -182,6 +198,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   fastify.addHook('onClose', async () => {
     clearInterval(sweeper);
+    snoozer.stop();
     await pushWatcher?.stopAll();
     await closeAllPooledClients();
     sessions.close();
@@ -243,6 +260,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await fastify.register(connectionRoutes, { prefix });
     await fastify.register(agentRoutes, { prefix });
     await fastify.register(pushRoutes, { prefix });
+    await fastify.register(organiseRoutes, { prefix });
   }
 
   const clientDist = opts.clientDist === undefined ? resolveClientDist(env) : opts.clientDist;

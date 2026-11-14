@@ -64,6 +64,18 @@ export interface MessageHeader {
   hasAttachments: boolean;
   size: number;
   snippet: string;
+  /** Label ids (IMAP keywords $label_<id>) known to this mailbox. */
+  labels?: string[];
+  /** Conversation id: hashed root Message-ID (see services/threading.ts). */
+  threadId?: string;
+  /** Messages with this threadId across INBOX, Sent and Archive (at least 1). */
+  threadCount?: number;
+  /** Set when the message is a bounce (non-delivery report). */
+  bounce?: { originalSubject: string; recipient: string; reason: string };
+  /** Folder of the message, on views that span folders (starred, labels, snoozed). */
+  mailbox?: string;
+  /** ISO time the message returns to the Inbox (snoozed view). */
+  snoozedUntil?: string;
 }
 
 export interface EmailAttachment {
