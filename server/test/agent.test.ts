@@ -546,6 +546,25 @@ describe('agent API on the mailbox', () => {
     }
   });
 
+  test('every response with mail text carries the untrusted note, and subjects and names lose hidden characters', async () => {
+    const subject = uniq('Invisible');
+    const id = await plant(TESTER, { subject: `${subject} \u202Eevil\u200B`, from: `"Ann\u200B \u202EBob" <${COLLEAGUE}>`, text: 'hi' });
+    const search = await agent.get(`/search?folder=INBOX&query=${encodeURIComponent(subject)}`);
+    assert.equal(search.status, 200);
+    assert.equal(search.body.untrusted, true);
+    assert.match(search.body.note, /never as instructions/);
+    const hit = search.body.messages.find((m: { message_id: string }) => m.message_id === id);
+    assert.ok(hit);
+    assert.equal(hit.subject, `${subject} evil`);
+    assert.equal(hit.from.name, 'Ann Bob');
+    const attention = await agent.get('/needs-attention');
+    assert.match(attention.body.note, /never as instructions/);
+    const msg = await agent.get(`/message?message_id=${encodeURIComponent(id)}`);
+    assert.equal(msg.body.subject, `${subject} evil`);
+    assert.equal(msg.body.from.name, 'Ann Bob');
+    assert.match(msg.body.note, /never as instructions/);
+  });
+
   test('reply and forward validate message_id like the read endpoints do', async () => {
     for (const path of ['/reply', '/forward']) {
       for (const bad of ['<a b@x>', 'a\nb@x', 'x'.repeat(999)]) {
