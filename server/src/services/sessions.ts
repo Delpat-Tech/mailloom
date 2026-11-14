@@ -71,7 +71,14 @@ export class SessionStore {
     private now: () => number = Date.now
   ) {
     this.cipher = createCredentialCipher(secret);
-    this.db = new DatabaseSync(dbPath);
+    try {
+      this.db = new DatabaseSync(dbPath);
+    } catch (err) {
+      throw new Error(
+        `Cannot open the session database at SESSION_DB_PATH="${dbPath}" (${(err as Error).message}). ` +
+          'Check that the folder exists and the server user can write to it.'
+      );
+    }
     if (dbPath !== ':memory:') {
       this.db.exec('PRAGMA journal_mode = WAL');
       try {
