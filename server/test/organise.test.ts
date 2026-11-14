@@ -93,35 +93,41 @@ test('empty Trash deletes everything for good; other folders cannot be emptied',
 });
 
 test('unknown folders keep their own names, nested folders know their depth, "%" folders work', async () => {
-  await resetAccount(GM.tester);
+  await resetAccount(GM.tester); // makes sure Sent, Drafts, Trash and Junk exist on a fresh server
+  // Own, uniquely named folders: nothing here depends on what other tests left behind.
+  const tag = `${process.pid}${Date.now().toString(36)}`;
+  const parent = `Projects ${tag}`;
+  const nameAlpha = `Alpha ${tag}`;
+  const percent = `100% done ${tag}`;
+  const consent = `Consent forms ${tag}`;
   const nested = await withImap(GM.tester, async (c) => {
     const d = (await c.list())[0].delimiter || '/';
-    const child = `Projects${d}Alpha`;
-    for (const n of ['Projects', child, '100% done', 'Consent forms']) await c.mailboxCreate(n);
+    const child = `${parent}${d}${nameAlpha}`;
+    for (const n of [parent, child, percent, consent]) await c.mailboxCreate(n);
     return child;
   });
   try {
     const folders = await getLiveMailboxes(tester);
     const by = (n: string) => folders.find((f) => f.name === n);
-    assert.equal(by('Projects')?.specialUse, undefined);
-    assert.equal(by('100% done')?.specialUse, undefined);
-    assert.equal(by('Consent forms')?.specialUse, undefined, 'must not be mistaken for Sent');
+    assert.equal(by(parent)?.specialUse, undefined);
+    assert.equal(by(percent)?.specialUse, undefined);
+    assert.equal(by(consent)?.specialUse, undefined, 'must not be mistaken for Sent');
     assert.equal(by('INBOX')?.specialUse, 'Inbox');
     assert.equal(by('Trash')?.specialUse, 'Trash');
     assert.equal(by('Sent')?.specialUse, 'Sent');
-    const alpha = by('Alpha');
+    const alpha = by(nameAlpha);
     assert.ok(alpha, 'nested folder listed by its own name');
     assert.equal(alpha.depth, 1);
-    assert.ok(alpha.parentPath && by('Projects')?.path === alpha.parentPath);
+    assert.ok(alpha.parentPath && by(parent)?.path === alpha.parentPath);
 
-    const uid = await put('100% done', 'percent');
+    const uid = await put(percent, 'percent');
     assert.ok(uid);
-    const list = await getLiveMessages(tester, '100% done');
+    const list = await getLiveMessages(tester, percent);
     assert.equal(list.total, 1);
     assert.equal(list.messages[0].subject, 'percent');
   } finally {
     await withImap(GM.tester, async (c) => {
-      for (const n of [nested, 'Projects', '100% done', 'Consent forms']) await c.mailboxDelete(n).catch(() => {});
+      for (const n of [nested, parent, percent, consent]) await c.mailboxDelete(n).catch(() => {});
     });
   }
 });
