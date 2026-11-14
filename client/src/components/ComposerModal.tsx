@@ -1,4 +1,5 @@
 import { usePresence, LEAVE_COMPOSER_MS, Presence } from './Presence.js';
+import { AnchoredPanel } from './AnchoredPanel.js';
 import { usePopover } from '../hooks/usePopover.js';
 import { readImageFile, IMAGE_TYPES, MAX_IMAGE_BYTES } from '../services/richtext.js';
 import { splitRecipients, mergeRecipients, recipientSnapshot, isValidRecipient } from '../services/recipients';
@@ -121,11 +122,14 @@ const ComposerMore: React.FC<{
   const ref = useRef<HTMLDivElement>(null);
   usePopover(ref, onClose, anchor);
   return (
-    <div
-      ref={ref}
+    <AnchoredPanel
+      panelRef={ref}
+      anchor={anchor}
+      align="start"
+      prefer="above"
       role="menu"
       aria-label="More composer options"
-      className="anim-menu origin-bl absolute bottom-full left-0 mb-1 z-40 w-48 bg-surface text-ink border border-line rounded shadow-xl py-1.5"
+      className="anim-menu origin-bl w-48 bg-surface text-ink border border-line rounded shadow-xl py-1.5"
     >
       {items.map((it) => (
         <button
@@ -142,7 +146,7 @@ const ComposerMore: React.FC<{
           <span>{it.label}</span>
         </button>
       ))}
-    </div>
+    </AnchoredPanel>
   );
 };
 

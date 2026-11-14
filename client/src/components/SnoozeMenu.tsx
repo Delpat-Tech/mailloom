@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { usePopover } from '../hooks/usePopover.js';
+import { AnchoredPanel } from './AnchoredPanel.js';
 import { snoozePresets, toLocalInputValue } from '../services/snooze.js';
 import { clockTime, snoozeText } from '../services/time.js';
 
@@ -12,7 +13,7 @@ interface Props {
 }
 
 /** "Snooze until": four quick times and a date and time of your own. */
-export const SnoozeMenu: React.FC<Props> = ({ onPick, onClose, className = 'right-0 mt-1 origin-tr', anchor }) => {
+export const SnoozeMenu: React.FC<Props> = ({ onPick, onClose, anchor }) => {
   const ref = useRef<HTMLDivElement>(null);
   usePopover(ref, onClose, anchor);
   const presets = useMemo(() => snoozePresets(new Date()), []);
@@ -26,11 +27,12 @@ export const SnoozeMenu: React.FC<Props> = ({ onPick, onClose, className = 'righ
   const valid = !isNaN(when.getTime()) && when.getTime() > Date.now();
 
   return (
-    <div
-      ref={ref}
+    <AnchoredPanel
+      panelRef={ref}
+      anchor={anchor}
       role="dialog"
       aria-label="Snooze until"
-      className={`anim-menu absolute z-40 w-64 max-w-[calc(100vw-1rem)] bg-surface text-ink border border-line rounded shadow-xl py-1.5 ${className}`}
+      className="anim-menu origin-tr w-64 max-w-[calc(100vw-1rem)] bg-surface text-ink border border-line rounded shadow-xl py-1.5"
     >
       <div className="px-3 pt-1 pb-1.5 text-xs font-bold text-ink-3">Snooze until</div>
       {presets.map((p) => (
@@ -77,6 +79,6 @@ export const SnoozeMenu: React.FC<Props> = ({ onPick, onClose, className = 'righ
           Pick date and time
         </button>
       )}
-    </div>
+    </AnchoredPanel>
   );
 };

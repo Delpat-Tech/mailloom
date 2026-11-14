@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Check, Minus, Plus } from 'lucide-react';
 import { usePopover } from '../hooks/usePopover.js';
+import { AnchoredPanel } from './AnchoredPanel.js';
 import { LABEL_COLOURS, LABEL_NAME, LABEL_DOT, type Label, type LabelColour } from '../services/labels.js';
 import { TagSwatch } from './LabelChip.js';
 
@@ -22,7 +23,6 @@ export const LabelMenu: React.FC<Props> = ({
   onToggle,
   onCreate,
   onClose,
-  className = 'right-0 mt-1 origin-tr',
   anchor
 }) => {
   const ref = useRef<HTMLDivElement>(null);
@@ -34,11 +34,12 @@ export const LabelMenu: React.FC<Props> = ({
   const trimmed = name.trim();
 
   return (
-    <div
-      ref={ref}
+    <AnchoredPanel
+      panelRef={ref}
+      anchor={anchor}
       role="dialog"
       aria-label="Label"
-      className={`anim-menu absolute z-40 w-64 max-w-[calc(100vw-1rem)] bg-surface text-ink border border-line rounded shadow-xl py-1.5 ${className}`}
+      className="anim-menu origin-tr w-64 max-w-[calc(100vw-1rem)] bg-surface text-ink border border-line rounded shadow-xl py-1.5"
     >
       <div className="px-3 pt-1 pb-1.5 text-xs font-bold text-ink-3">Label</div>
       {labels.length === 0 && !creating && <p className="px-3 pb-2 text-[13px] text-ink-3">No labels yet.</p>}
@@ -132,6 +133,6 @@ export const LabelMenu: React.FC<Props> = ({
           <Plus className="w-4 h-4" aria-hidden="true" /> New label
         </button>
       )}
-    </div>
+    </AnchoredPanel>
   );
 };

@@ -1539,6 +1539,7 @@ export const App: React.FC = () => {
               onOpenMobileSidebar={() => setShowMobileSidebar(true)}
               accountLabel={account?.name || account?.email}
               onClearSelection={() => setSelectedUids(new Set())}
+              viewKind={viewRef?.kind}
             />
           </div>
 

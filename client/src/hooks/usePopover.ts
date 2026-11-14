@@ -11,7 +11,7 @@ export function usePopover(ref: RefObject<HTMLElement>, onClose: (refocus: boole
     if (!root) return;
     const items = () =>
       Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])'));
-    items()[0]?.focus();
+    items()[0]?.focus({ preventScroll: true });
     const onDown = (e: MouseEvent | TouchEvent) => {
       const t = e.target as Node;
       if (!root.contains(t) && !anchor?.current?.contains(t)) onClose(false);

@@ -205,3 +205,52 @@ describe('list as in the design', () => {
     expect(screen.getByText('12 unread')).toBeTruthy();
   });
 });
+
+describe('empty views say what would appear there', () => {
+  it('a search with no results names the search and offers Clear search', () => {
+    const onSearchChange = vi.fn();
+    list({ searchTerm: 'logo', onSearchChange }, []);
+    expect(screen.getByText('No mail matches "logo"')).toBeTruthy();
+    const clears = screen.getAllByRole('button', { name: 'Clear search' });
+    expect(clears.length).toBe(2);
+    fireEvent.click(clears[clears.length - 1]);
+    expect(onSearchChange).toHaveBeenCalledWith('');
+    expect(screen.queryByText(/currently empty/)).toBeNull();
+  });
+
+  it('every kind of empty view has its own words', async () => {
+    const { emptyState } = await import('../components/MessageList.js');
+    const base = { folderName: 'Inbox' };
+    expect(emptyState({ ...base, viewKind: 'starred' }).title).toBe('Nothing starred yet');
+    expect(emptyState({ ...base, viewKind: 'snoozed' }).hint).toMatch(/comes back/);
+    expect(emptyState({ folderName: 'Client', viewKind: 'label' }).title).toBe('No mail labelled "Client"');
+    expect(emptyState({ ...base, filter: 'unread' }).title).toBe('No unread mail');
+    expect(emptyState({ ...base, filter: 'attachments' }).title).toBe('No mail with files here');
+    expect(emptyState({ ...base, filter: 'starred' }).title).toBe('No starred mail here');
+    expect(emptyState({ ...base, folderKind: 'Inbox' }).title).toBe('Your inbox is empty');
+    expect(emptyState({ ...base, folderKind: 'Junk' }).title).toBe('No spam');
+    expect(emptyState({ ...base, hasFilters: true }).action).toBe('clear-filters');
+  });
+});
+
+describe('one click opens a row', () => {
+  it('opens the pressed row even if its button was redrawn between mouse down and up', () => {
+    const onSelectMessage = vi.fn();
+    list({ onSelectMessage });
+    const btn = screen.getAllByRole('button', { name: /Subject 1/ })[0];
+    fireEvent.mouseDown(btn);
+    // The click lands on the list, not on the (replaced) button.
+    fireEvent.click(screen.getByRole('list', { name: 'Inbox messages' }));
+    expect(onSelectMessage).toHaveBeenCalledWith(1);
+  });
+
+  it('a plain click opens it once', () => {
+    const onSelectMessage = vi.fn();
+    list({ onSelectMessage });
+    const btn = screen.getAllByRole('button', { name: /Subject 2/ })[0];
+    fireEvent.mouseDown(btn);
+    fireEvent.click(btn);
+    expect(onSelectMessage).toHaveBeenCalledTimes(1);
+    expect(onSelectMessage).toHaveBeenCalledWith(2);
+  });
+});

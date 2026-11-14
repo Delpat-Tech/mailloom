@@ -65,6 +65,8 @@ interface MessageListProps {
   onOpenMobileSidebar?: () => void;
   accountLabel?: string;
   onClearSelection?: () => void;
+  /** Set in views that span folders (Starred, Snoozed, a label), for the empty message. */
+  viewKind?: 'starred' | 'snoozed' | 'label';
   folderKind?: SpecialUseFolder;
   /** Empty Trash / Junk (the caller asks for confirmation). */
   onEmptyFolder?: () => void;
@@ -81,6 +83,35 @@ interface MessageListProps {
 }
 
 const TOUCH = 'min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center';
+
+/** What an empty list says: why it is empty and what would appear there. */
+export function emptyState(o: {
+  searchTerm?: string;
+  hasFilters?: boolean;
+  filter?: ListFilter;
+  folderKind?: SpecialUseFolder;
+  viewKind?: 'starred' | 'snoozed' | 'label';
+  folderName: string;
+}): { title: string; hint: string; action?: 'clear-search' | 'clear-filters' } {
+  const q = (o.searchTerm || '').trim();
+  if (q) return { title: `No mail matches "${q.length > 40 ? q.slice(0, 39) + '…' : q}"`, hint: 'Check the spelling, or try fewer words.', action: 'clear-search' };
+  if (o.hasFilters) return { title: 'No mail matches these filters', hint: 'Try widening the dates or removing a filter.', action: 'clear-filters' };
+  if (o.viewKind === 'starred') return { title: 'Nothing starred yet', hint: 'Star a message and it will appear here.' };
+  if (o.viewKind === 'snoozed') return { title: 'Nothing snoozed', hint: 'Mail you snooze waits here and comes back to your inbox at the time you pick.' };
+  if (o.viewKind === 'label') return { title: `No mail labelled "${o.folderName}"`, hint: 'Apply this label to a message and it will appear here.' };
+  if (o.filter === 'unread') return { title: 'No unread mail', hint: 'Mail you have not read yet will appear here.' };
+  if (o.filter === 'starred') return { title: 'No starred mail here', hint: 'Starred messages in this folder will appear here.' };
+  if (o.filter === 'attachments') return { title: 'No mail with files here', hint: 'Messages that have attachments will appear here.' };
+  switch (o.folderKind) {
+    case 'Inbox': return { title: 'Your inbox is empty', hint: 'New mail will appear here.' };
+    case 'Sent': return { title: 'No sent mail', hint: 'Mail you send will appear here.' };
+    case 'Drafts': return { title: 'No drafts', hint: 'Messages you start writing are saved here.' };
+    case 'Trash': return { title: 'Trash is empty', hint: 'Deleted mail stays here until you empty it.' };
+    case 'Junk': return { title: 'No spam', hint: 'Mail marked as spam will appear here.' };
+    case 'Archive': return { title: 'Nothing archived', hint: 'Mail you archive will appear here.' };
+    default: return { title: `${o.folderName} is empty`, hint: 'Mail you move here will appear here.' };
+  }
+}
 
 export function rowLabel(msg: MessageHeader, dateText: string): string {
   const parts = [
@@ -348,7 +379,6 @@ const MessageRow = React.memo(function MessageRow({
           {snoozeOpen && (
             <SnoozeMenu
               anchor={snoozeBtn}
-              className="right-10 top-9 origin-tr"
               onClose={(refocus) => {
                 ctl.closeSnooze();
                 if (refocus) snoozeBtn.current?.focus();
@@ -392,6 +422,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   onOpenMobileSidebar,
   accountLabel,
   onClearSelection,
+  viewKind,
   folderKind,
   onEmptyFolder,
   filter = 'all',
@@ -405,6 +436,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   const [showFilters, setShowFilters] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const sentinelRef = useRef<HTMLLIElement>(null);
+  const downUid = useRef<number | null>(null);
   // The Search tab and the "/" key ask for the search box (open on a phone, then focus).
   useEffect(() => {
     const open = () => {
@@ -518,6 +550,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     }),
     []
   );
+  const empty = emptyState({ searchTerm, hasFilters: hasActiveFilters, filter, folderKind, viewKind, folderName });
   const showSkeleton = useAfterDelay(isLoading && messages.length === 0, 150);
   const labelMap = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
   const [snoozeUid, setSnoozeUid] = useState<number | null>(null);
@@ -842,15 +875,35 @@ export const MessageList: React.FC<MessageListProps> = ({
         showSkeleton ? <SkeletonRows /> : <div className="flex-1" />
       ) : messages.length === 0 ? (
         <div className="flex-1 py-20 flex flex-col items-center justify-center text-ink-3 gap-2">
-          <Inbox className="w-10 h-10 stroke-[1.4] text-ink-3" />
-          <span className="text-base font-extrabold text-ink">No messages found</span>
-          <span className="text-xs text-ink-3">This mailbox folder is currently empty</span>
+          <Inbox className="w-10 h-10 stroke-[1.4] text-ink-3" aria-hidden="true" />
+          <span className="text-base font-extrabold text-ink text-center px-6">{empty.title}</span>
+          <span className="text-[13px] text-ink-3 text-center px-8 max-w-[34ch]">{empty.hint}</span>
+          {empty.action && (
+            <button
+              type="button"
+              onClick={() => (empty.action === 'clear-search' ? onSearchChange('') : onFiltersChange?.({}))}
+              className="t-fast mt-2 min-h-[44px] sm:min-h-[36px] px-4 rounded border border-line-2 bg-surface hover:bg-hover text-[13px] font-extrabold text-ink-2"
+            >
+              {empty.action === 'clear-search' ? 'Clear search' : 'Clear filters'}
+            </button>
+          )}
         </div>
       ) : (
         <ul
           ref={scrollerRef}
           aria-label={`${folderName} messages`}
           onKeyDown={onRowKeyDown}
+          onMouseDown={(e) => {
+            const el = (e.target as HTMLElement).closest('[data-row-open]');
+            downUid.current = el ? Number(el.getAttribute('data-row-open')) : null;
+          }}
+          onClick={(e) => {
+            // If the row's button was redrawn between mouse down and up (the list just refreshed),
+            // the click lands on the list instead: it still opens the row that was pressed.
+            const t = e.target as HTMLElement;
+            if (downUid.current !== null && !t.closest('button')) ctl.open(downUid.current);
+            downUid.current = null;
+          }}
           onScroll={(e) => {
             if (e.currentTarget.clientHeight > 0) savedScroll.current = e.currentTarget.scrollTop;
           }}

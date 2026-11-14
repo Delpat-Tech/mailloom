@@ -97,12 +97,14 @@
 .row-wrap[data-leaving='true'] { grid-template-rows: 0fr; opacity: 0; pointer-events: none; }
 
 /* Hover quick actions: fade only, their space is always reserved. */
-.row-quick { opacity: 0; transition: opacity var(--dur-1) var(--ease-out); }
+.row-quick { opacity: 0; pointer-events: none; transition: opacity var(--dur-1) var(--ease-out); }
+.row-time { transition: opacity var(--dur-1) var(--ease-out), visibility 0s linear 0s; }
 .row-wrap:hover .row-quick,
-.row-wrap:focus-within .row-quick,
-.row-quick[data-open='true'] { opacity: 1; }
+.row-wrap:has(:focus-visible) .row-quick,
+.row-quick[data-open='true'] { opacity: 1; pointer-events: auto; }
+/* The time and the quick actions share one fixed slot: the time fades out as they fade in, and is gone (not just faint). */
 .row-wrap:hover .row-time,
-.row-wrap:focus-within .row-time { opacity: 0; }
+.row-wrap:has(:focus-visible) .row-time { opacity: 0; visibility: hidden; transition: opacity var(--dur-1) var(--ease-out), visibility 0s linear var(--dur-1); }
 
 /* Skeleton rows: a soft shimmer (a moving highlight, transform only). */
 .skel { position: relative; overflow: hidden; background: var(--hover); border-radius: 3px; }
@@ -130,7 +132,7 @@
 /* Touch screens have no hover: the quick actions stay out of the way. */
 @media (hover: none) {
   .row-quick { display: none; }
-  .row-wrap:hover .row-time { opacity: 1; }
+  .row-wrap:hover .row-time { opacity: 1; visibility: visible; }
 }
 
 /* Phone: while the reader covers the list, the list is hidden from keyboard and screen readers (after the slide). */

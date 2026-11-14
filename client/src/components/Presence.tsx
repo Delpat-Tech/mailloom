@@ -1,4 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+
+/** True while the nearest Presence is playing its leaving animation (portalled panels read this). */
+export const LeavingContext = createContext(false);
+export const useLeaving = () => useContext(LeavingContext);
 
 /** How long the leaving animations last (matches motion.css; the composer's is a little longer). */
 export const LEAVE_MS = 130;
@@ -45,7 +49,7 @@ export const Presence: React.FC<{ show: boolean; ms?: number; children: React.Re
   if (!mounted) return null;
   return (
     <div style={{ display: 'contents' }} data-leaving={leaving ? 'true' : undefined}>
-      {show ? children : last.current}
+      <LeavingContext.Provider value={leaving}>{show ? children : last.current}</LeavingContext.Provider>
     </div>
   );
 };

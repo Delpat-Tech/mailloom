@@ -108,3 +108,20 @@ describe('message toolbar', () => {
     expect(screen.getByText('Delete').className).not.toMatch(/sm:inline/);
   });
 });
+
+describe('menus do not scroll anything', () => {
+  it('opening the More menu leaves every scroll container where it was, and draws the menu on the page', async () => {
+    renderViewer();
+    const scrollers = Array.from(document.querySelectorAll<HTMLElement>('div, section'));
+    scrollers.forEach((el, i) => {
+      el.scrollTop = 10 + i;
+    });
+    const before = scrollers.map((el) => el.scrollTop);
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.setup().click(screen.getAllByRole('button', { name: 'More actions' })[0]);
+    const menu = await screen.findByRole('menu', { name: 'More actions' });
+    expect(menu.parentElement).toBe(document.body);
+    expect(menu.style.position === 'fixed' || menu.className.includes('fixed')).toBe(true);
+    expect(scrollers.map((el) => el.scrollTop)).toEqual(before);
+  });
+});

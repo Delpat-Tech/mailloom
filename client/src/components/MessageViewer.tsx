@@ -1,3 +1,4 @@
+import { AnchoredPanel } from './AnchoredPanel.js';
 import { Presence } from './Presence.js';
 import { realUid } from '../services/uidKey.js';
 import React, { useState, useRef, useEffect } from 'react';
@@ -89,7 +90,7 @@ const MoreMenu: React.FC<{ items: MenuItem[]; always?: boolean; label?: string }
   useEffect(() => {
     if (!open) return;
     const entries = () => Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') || []);
-    entries()[0]?.focus();
+    entries()[0]?.focus({ preventScroll: true });
     const close = (refocus: boolean) => {
       setOpen(false);
       if (refocus) btnRef.current?.focus();
@@ -137,11 +138,12 @@ const MoreMenu: React.FC<{ items: MenuItem[]; always?: boolean; label?: string }
         <MoreHorizontal className="w-5 h-5" />
       </button>
       {open && (
-        <div
-          ref={menuRef}
+        <AnchoredPanel
+          panelRef={menuRef}
+          anchor={btnRef}
           role="menu"
           aria-label={label}
-          className="absolute right-0 mt-1 w-56 max-w-[calc(100vw-1rem)] bg-surface rounded shadow-xl border border-line py-1.5 z-30"
+          className="anim-menu origin-tr w-56 max-w-[calc(100vw-1rem)] bg-surface rounded shadow-xl border border-line py-1.5"
         >
           {items.map((it) => (
             <button
@@ -159,7 +161,7 @@ const MoreMenu: React.FC<{ items: MenuItem[]; always?: boolean; label?: string }
               <span>{it.label}</span>
             </button>
           ))}
-        </div>
+        </AnchoredPanel>
       )}
     </div>
   );
@@ -301,6 +303,8 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   const [viewMode, setViewMode] = useState<'html' | 'text'>('html');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const snoozeBtnRef = useRef<HTMLButtonElement>(null);
+  const labelBtnRef = useRef<HTMLButtonElement>(null);
   const level = useToolbarLevel(toolbarRef, !!message && !isLoading);
   const full = level === 'full';
   const labels = level !== 'tight';
@@ -311,8 +315,24 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
     const iframe = iframeRef.current;
     const doc = iframe?.contentDocument;
     if (!iframe || !doc?.documentElement) return;
-    // The document's own height (not scrollHeight, which can never be less than the frame): no empty area.
-    iframe.style.height = `${Math.ceil(doc.documentElement.offsetHeight)}px`;
+    // The height of the content itself (the bottom of its last element), never the frame's own height
+    // and never the window's: a short mail leaves no empty area, and the reader has one scroll.
+    const body = doc.body;
+    const view = doc.defaultView;
+    let h = doc.documentElement.offsetHeight;
+    if (body && view) {
+      let bottom = 0;
+      for (const el of Array.from(body.children)) {
+        const rect = el.getBoundingClientRect();
+        if (rect.height === 0 && rect.bottom === 0) continue;
+        bottom = Math.max(bottom, rect.bottom + (parseFloat(view.getComputedStyle(el).marginBottom) || 0));
+      }
+      if (bottom === 0) bottom = body.getBoundingClientRect().bottom;
+      const cs = view.getComputedStyle(body);
+      const measured = bottom + view.scrollY + (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+      if (measured > 0) h = measured;
+    }
+    iframe.style.height = `${Math.ceil(h)}px`;
   }, []);
 
   useEffect(() => {
@@ -325,6 +345,9 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
       const doc = iframe.contentDocument;
       if (!doc?.documentElement) return;
       observer?.disconnect();
+      // Pictures arriving later change the height: measure again when any of them loads.
+      doc.addEventListener('load', fitFrame, true);
+      doc.fonts?.ready.then(fitFrame).catch(() => undefined);
       if (typeof ResizeObserver !== 'undefined') {
         observer = new ResizeObserver(fitFrame);
         observer.observe(doc.documentElement);
@@ -535,6 +558,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           )}
           {onSnooze && (
             <button
+              ref={snoozeBtnRef}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onMenuChange?.(menu === 'snooze' ? null : 'snooze')}
               aria-haspopup="dialog"
@@ -551,6 +575,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           )}
           {onToggleLabel && (
             <button
+              ref={labelBtnRef}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onMenuChange?.(menu === 'label' ? null : 'label')}
               aria-haspopup="dialog"
@@ -579,7 +604,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             <Presence show={menu === 'snooze' && !!onSnooze}>
             {menu === 'snooze' && onSnooze && (
               <SnoozeMenu
-                className="left-0 top-full mt-1 origin-tl"
+                anchor={snoozeBtnRef}
                 onClose={() => onMenuChange?.(null)}
                 onPick={(until) => {
                   onMenuChange?.(null);
@@ -591,7 +616,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             <Presence show={menu === 'label' && !!onToggleLabel && !!onCreateLabel}>
             {menu === 'label' && onToggleLabel && onCreateLabel && (
               <LabelMenu
-                className="left-0 top-full mt-1 origin-tl"
+                anchor={labelBtnRef}
                 labels={labelList}
                 states={labelStates(labelList, [{ labels: messageLabelIds }])}
                 onToggle={onToggleLabel}
