@@ -644,6 +644,35 @@ describe('agent API guard rails and broken keys', () => {
     }
   });
 
+  test('a message bigger than the configured maximum is refused; a 4th simultaneous request gets 429', async () => {
+    const app = await buildTestApp({ ...AGENT_ENV, MAIL_MAX_MESSAGE_BYTES: '1000' });
+    try {
+      const s = await signIn(app, TESTER);
+      const a = agentClient(app, (await createKey(app, s)).json().key);
+      const subject = uniq('Huge');
+      const id = await plant(TESTER, { subject, text: 'big', attachments: [{ filename: 'big.bin', content: crypto.randomBytes(1_400_000), contentType: 'application/octet-stream' }] });
+      const big = await a.get(`/message?message_id=${encodeURIComponent(id)}`);
+      assert.equal(big.status, 413);
+      assert.equal(big.body.code, 'MESSAGE_TOO_LARGE');
+
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      sendHooks.createTransport = () => ({ sendMail: async () => { await gate; throw Object.assign(new Error('x'), { code: 'EENVELOPE', command: 'RCPT TO' }); }, close: () => undefined }) as never;
+      const slow = [1, 2, 3].map((i) => a.post('/send', { to: [COLLEAGUE], subject: uniq('Slow'), text: 'x', idempotency_key: uniq(`slow${i}`) }));
+      await new Promise((r) => setTimeout(r, 300));
+      const fourth = await a.get('/folders');
+      assert.equal(fourth.status, 429);
+      assert.equal(fourth.body.code, 'TOO_MANY_REQUESTS');
+      release();
+      await Promise.all(slow);
+      sendHooks.createTransport = undefined;
+      assert.equal((await a.get('/folders')).status, 200);
+    } finally {
+      sendHooks.createTransport = undefined;
+      await app.close();
+    }
+  });
+
   test('a key whose mailbox password no longer works is marked broken and refused; rotating fixes it', async () => {
     const app = await buildTestApp(AGENT_ENV);
     try {

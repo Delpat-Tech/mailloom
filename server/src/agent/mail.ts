@@ -45,8 +45,8 @@ export interface MessageSummary {
   has_attachments: boolean;
 }
 
-/** Largest raw message the agent API will download and parse. */
-const MAX_RAW_BYTES = 60 * 1024 * 1024;
+/** Headers and encoding overhead allowed on top of the configured largest message. */
+const RAW_OVERHEAD_BYTES = 1024 * 1024;
 
 function addr(a: MessageAddressObject | undefined): Address | null {
   return a ? { name: a.name || '', address: a.address || '' } : null;
@@ -273,11 +273,12 @@ export interface LoadedMessage {
   parsed: ParsedMail;
 }
 
-export async function loadMessage(account: AccountConfig, folder: string, uid: number): Promise<LoadedMessage> {
+/** maxMessageBytes is the server's MAIL_MAX_MESSAGE_BYTES: bigger messages are refused before they are downloaded. */
+export async function loadMessage(account: AccountConfig, folder: string, uid: number, maxMessageBytes: number): Promise<LoadedMessage> {
   return inFolder(account, folder, true, async (c) => {
     const meta = await c.fetchOne(String(uid), { uid: true, size: true, flags: true }, { uid: true });
     if (!meta) throw notFound();
-    if ((meta.size || 0) > MAX_RAW_BYTES) throw new AgentError(413, 'MESSAGE_TOO_LARGE', 'This message is too large to read through the agent API.');
+    if ((meta.size || 0) > maxMessageBytes + RAW_OVERHEAD_BYTES) throw new AgentError(413, 'MESSAGE_TOO_LARGE', 'This message is too large to read through the agent API.');
     const full = await c.fetchOne(String(uid), { uid: true, source: true }, { uid: true });
     if (!full || !full.source) throw notFound();
     const parsed = await simpleParser(full.source, { skipImageLinks: true, skipTextToHtml: true });
