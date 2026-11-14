@@ -706,12 +706,12 @@ export const App: React.FC = () => {
     const b = messagesRef.current.find((m) => m.uid === selectedUid)?.bounce;
     // Only the server-supplied location of the original is used. The bounce's own subject and
     // recipient text can be spoofed, so the new mail is never built from them.
-    if (!b || !b.retryable || !b.sentMailbox || typeof b.sentUid !== 'number') {
+    if (!b || !b.retryable || !b.original) {
       showToast('The original message could not be found in Sent.', 'error');
       return;
     }
     try {
-      const d = await api.getMessageDetail(b.sentMailbox, b.sentUid, { peek: true });
+      const d = await api.getMessageDetail(b.original.mailbox, b.original.uid, { peek: true });
       openComposer({
         to: d.to.map((a) => a.address).filter(Boolean),
         cc: (d.cc || []).map((a) => a.address).filter(Boolean),
