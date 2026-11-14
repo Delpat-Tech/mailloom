@@ -65,6 +65,16 @@ export function relativeAgo(iso: string, now: Date = new Date()): string {
   return days < 7 ? `${days} day${days === 1 ? '' : 's'} ago` : '';
 }
 
+/** "Until Mon 09:00" for snoozed mail (within a week), otherwise "Until 21 Nov, 09:00". */
+export function untilText(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (!valid(d)) return '';
+  const n = -daysAgo(d, now);
+  if (n === 0) return `Until ${clockTime(d)}`;
+  if (n > 0 && n < 7) return `Until ${short(DAYS[d.getDay()])} ${clockTime(d)}`;
+  return `Until ${d.getDate()} ${short(MONTHS[d.getMonth()])}, ${clockTime(d)}`;
+}
+
 export type DayBucket = 'today' | 'yesterday' | 'week' | 'earlier';
 
 export function dayBucket(iso: string, now: Date = new Date()): DayBucket {

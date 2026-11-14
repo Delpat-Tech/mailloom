@@ -295,3 +295,19 @@ describe('British 24-hour dates', () => {
     expect(t.folderTitle('Clients')).toBe('Clients');
   });
 });
+
+describe('snoozed time and the sent toast', () => {
+  it('shows when snoozed mail comes back, and who a sent mail went to', async () => {
+    const { untilText } = await import('../services/time.js');
+    const { sentToText } = await import('../services/recipients.js');
+    const now = new Date(2026, 10, 14, 11, 0); // Sat 14 Nov 2026
+    expect(untilText(new Date(2026, 10, 16, 9, 0).toISOString(), now)).toBe('Until Mon 09:00');
+    expect(untilText(new Date(2026, 10, 14, 18, 0).toISOString(), now)).toBe('Until 18:00');
+    expect(untilText(new Date(2026, 11, 2, 9, 0).toISOString(), now)).toBe('Until 2 Dec, 09:00');
+    expect(sentToText(['colleague@delpat.test'])).toBe('Sent to colleague@delpat.test');
+    expect(sentToText(['Priya Shah'])).toBe('Sent to Priya Shah');
+    expect(sentToText(['Ann', 'Ben'])).toBe('Sent to Ann and Ben');
+    expect(sentToText(['Ann', 'Ben', 'Cy'])).toBe('Sent to Ann and 2 others');
+    expect(sentToText([])).toBe('Message sent');
+  });
+});

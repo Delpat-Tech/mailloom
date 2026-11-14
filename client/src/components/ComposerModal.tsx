@@ -4,6 +4,7 @@ import { usePopover } from '../hooks/usePopover.js';
 import { readImageFile, IMAGE_TYPES, MAX_IMAGE_BYTES } from '../services/richtext.js';
 import { splitRecipients, mergeRecipients, recipientSnapshot, isValidRecipient } from '../services/recipients';
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Minus,
@@ -62,6 +63,8 @@ export interface SentInfo {
   warning?: string;
   /** Set when some recipients did not receive the mail. */
   error?: string;
+  /** Who it went to, by name where known, otherwise the address (for the "Sent to ..." toast). */
+  to?: string[];
 }
 
 export interface ComposerReplyMeta {
@@ -482,7 +485,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       if (draftUidRef.current && draftUidRef.current !== draftUidAtSend) {
         void api.deleteDraft(draftUidRef.current).catch(() => {}); // a save that raced the send
       }
-      onSentSuccess({ warning: res.warning, error: res.success ? undefined : res.error });
+      onSentSuccess({ warning: res.warning, error: res.success ? undefined : res.error, to: finalTo.map((e) => nameOf(e) || e) });
       onClose();
     } catch (err: unknown) {
       sentRef.current = false; // sending failed: the composer stays open and keeps autosaving
@@ -546,7 +549,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     }
   };
 
-  return (
+  // Drawn at the root of the page, above the reader and everything in it, at every moment of the animation.
+  return createPortal(
     <div
       ref={panelRef}
       role="dialog"
@@ -1102,6 +1106,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 };

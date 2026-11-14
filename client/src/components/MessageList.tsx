@@ -21,7 +21,7 @@ import {
   Clock,
   AlertTriangle
 } from 'lucide-react';
-import { rowTime, dayBucket, groupHeader, fullDate } from '../services/time.js';
+import { rowTime, untilText, dayBucket, groupHeader } from '../services/time.js';
 import { avatarClass, initialsOf } from '../services/avatar.js';
 import type { MessageHeader, SpecialUseFolder } from '../types.js';
 import type { SearchFilterParams, ListFilter } from '../services/api.js';
@@ -171,6 +171,7 @@ const MessageRow = React.memo(function MessageRow({
   const rowLabels = (msg.labels ?? []).map((id) => labelMap.get(id)).filter((l): l is Label => !!l);
   const shownLabels = rowLabels.slice(0, 2);
   const snoozeBtn = useRef<HTMLButtonElement>(null);
+  const slotW = msg.snoozedUntil ? 'w-[100px]' : 'w-[72px] [@media(hover:hover)]:w-[96px]';
   const pressed = useRef(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout>>();
   return (
@@ -281,14 +282,8 @@ const MessageRow = React.memo(function MessageRow({
                     </span>
                   )}
                 </span>
-                <span
-                  title={fullDate(msg.date)}
-                  className={`row-time text-xs shrink-0 tabular-nums text-right [@media(hover:hover)]:min-w-[88px] ${
-                    isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-3'
-                  } ${bounce ? '!text-warn-ink' : ''}`}
-                >
-                  {dateText}
-                </span>
+                {/* The time itself is drawn in the shared slot below; this keeps its room. */}
+                <span aria-hidden="true" className={`shrink-0 ${slotW}`} />
               </span>
               <span
                 className={`block text-[13.5px] truncate mt-px ${isUnread ? 'font-bold text-ink' : 'font-medium text-ink'} ${
@@ -340,8 +335,17 @@ const MessageRow = React.memo(function MessageRow({
           </button>
 
           {/* Quick actions: fade in on hover or keyboard focus; the space is reserved by the time. */}
-          <div className="row-quick absolute right-[44px] sm:right-[36px] top-[9px] max-lg:top-[7px] w-[88px] justify-end flex gap-0.5" data-open={snoozeOpen || undefined}>
-            {canArchive && (
+          {/* One slot, one fixed width: the time fades out as the quick actions fade in (and back). */}
+          <div className={`row-slot absolute right-[44px] sm:right-[36px] top-[9px] max-lg:top-[7px] h-6 pointer-events-none ${slotW}`}>
+            <span
+              className={`row-time absolute inset-0 flex items-center justify-end text-xs tabular-nums whitespace-nowrap ${
+                isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-3'
+              } ${bounce ? '!text-warn-ink' : ''}`}
+            >
+              {dateText}
+            </span>
+            <div className="row-quick absolute inset-0 flex justify-end items-center gap-0.5" data-open={snoozeOpen || undefined}>
+              {canArchive && (
               <button
                 type="button"
                 tabIndex={tab}
@@ -377,6 +381,7 @@ const MessageRow = React.memo(function MessageRow({
             >
               <Clock className="w-3.5 h-3.5" />
             </button>
+            </div>
           </div>
           <Presence show={snoozeOpen}>
           {snoozeOpen && (
@@ -911,7 +916,7 @@ export const MessageList: React.FC<MessageListProps> = ({
                 const isChecked = selectedUids.has(msg.uid);
                 const isUnread = !msg.isSeen;
                 const tab = rowUid === msg.uid ? 0 : -1;
-                const dateText = formatMessageDate(msg.date);
+                const dateText = msg.snoozedUntil ? untilText(msg.snoozedUntil) : formatMessageDate(msg.date);
                 const who = msg.from.name || msg.from.address;
                 const isDraft = folderKind === 'Drafts';
 

@@ -53,3 +53,12 @@ export function isValidRecipient(entry: string): boolean {
 export function recipientSnapshot(list: string[], typed: string): string[] {
   return mergeRecipients(list, typed);
 }
+
+/** "Sent to Priya Shah", "Sent to Ann and Ben", "Sent to Ann and 2 others". */
+export function sentToText(to?: string[]): string {
+  const list = (to ?? []).filter(Boolean);
+  if (list.length === 0) return 'Message sent';
+  if (list.length === 1) return `Sent to ${list[0]}`;
+  if (list.length === 2) return `Sent to ${list[0]} and ${list[1]}`;
+  return `Sent to ${list[0]} and ${list.length - 1} others`;
+}

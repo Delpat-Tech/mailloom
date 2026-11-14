@@ -148,3 +148,14 @@ describe('composer footer and chips', () => {
     }
   });
 });
+
+describe('composer stacking', () => {
+  it('is drawn in a portal at the root of the page, above the reader', () => {
+    const { container } = render(
+      <ComposerModal isOpen onClose={() => {}} onSentSuccess={() => {}} requestConfirm={() => {}} accountEmail="a@delpat.test" />
+    );
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    const dialog = screen.getAllByRole('dialog')[0];
+    expect(dialog.parentElement).toBe(document.body);
+  });
+});

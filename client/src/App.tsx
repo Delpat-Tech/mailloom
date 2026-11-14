@@ -12,7 +12,8 @@ import { useSwipeBack } from './hooks/useSwipeBack.js';
 import { folderLabel } from './services/folderName.js';
 import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
-import { realUid } from './services/uidKey.js';
+import { sentToText } from './services/recipients';
+import { realUid, keyFor } from './services/uidKey.js';
 import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
 import { PendingActions } from './services/pendingActions.js';
 import { LruCache, Limiter } from './services/cache.js';
@@ -108,7 +109,14 @@ export const App: React.FC = () => {
   // Messages in Current Folder
   const [messages, setMessages] = useState<MessageHeader[]>([]);
   messagesRef.current = messages;
-  const visibleMessages = useMemo(() => messages.filter((m) => !hidden.has(m.uid)), [messages, hidden]);
+  // Mail snoozed a moment ago whose server call is still waiting out the Undo window: shown in the Snoozed view at once.
+  const [pendingSnoozed, setPendingSnoozed] = useState<MessageHeader[]>([]);
+  const visibleMessages = useMemo(() => {
+    const shown = messages.filter((m) => !hidden.has(m.uid));
+    if (parseViewPath(selectedFolder)?.kind !== 'snoozed' || pendingSnoozed.length === 0) return shown;
+    const have = new Set(shown.map((m) => `${m.mailbox ?? ''}:${m.uid}`));
+    return [...pendingSnoozed.filter((m) => !have.has(`${m.mailbox ?? ''}:${m.uid}`)), ...shown];
+  }, [messages, hidden, pendingSnoozed, selectedFolder]);
   visibleRef.current = visibleMessages;
   const [totalMessages, setTotalMessages] = useState(0);
   const [page, setPage] = useState(1);
@@ -579,7 +587,7 @@ export const App: React.FC = () => {
 
   // Optimistic removal (archive, delete, snooze, move): the row fades and collapses at once, the next mail opens,
   // and an Undo toast stays for 6 s. The server call waits for that window; if it fails the row comes back.
-  const scheduleRemoval = (uids: number[], label: string, run: () => Promise<void>, failText?: (err: unknown) => string | null) => {
+  const scheduleRemoval = (uids: number[], label: string, run: () => Promise<void>, failText?: (err: unknown) => string | null, onRestore?: () => void) => {
     const reopen =
       selectedUid !== null && uids.includes(selectedUid)
         ? (() => {
@@ -606,6 +614,7 @@ export const App: React.FC = () => {
         }, 170);
       },
       restore: () => {
+        onRestore?.();
         undone = true;
         setLeaving(drop);
         setHidden(drop);
@@ -651,10 +660,23 @@ export const App: React.FC = () => {
   const handleSnooze = (uid: number, until: Date, mailbox?: string) => {
     const box = mailbox ?? boxOf(uid);
     setMenu(null);
+    // The Snoozed view shows it at once (with its wake-up time); the server call follows the Undo window.
+    const src = messagesRef.current.find((m) => m.uid === uid);
+    const rowKey = keyFor(box, realUid(uid));
+    const row: MessageHeader | null = src ? { ...src, uid: rowKey, mailbox: box, snoozedUntil: until.toISOString() } : null;
+    const clearPending = () => setPendingSnoozed((p) => p.filter((m) => m.uid !== rowKey));
+    if (row) setPendingSnoozed((p) => [row, ...p.filter((m) => m.uid !== rowKey)]);
     scheduleRemoval([uid], `Snoozed until ${snoozeText(until)}`, async () => {
-      const r = await snoozeApi.snooze(box, [uid], until);
-      if (!r.success) throw new Error('The message could not be snoozed.');
-    }, (err) => ((err as { status?: number } | null)?.status === 422 ? "This mail can't be snoozed" : null));
+      try {
+        const r = await snoozeApi.snooze(box, [uid], until);
+        if (!r.success) throw new Error('The message could not be snoozed.');
+        // Committed: refresh the Snoozed view once, then drop the stand-in row.
+        listCache.clear();
+        if (parseViewPath(selectedFolderRef.current)?.kind === 'snoozed') await loadMessagesRef.current(true);
+      } finally {
+        clearPending();
+      }
+    }, (err) => ((err as { status?: number } | null)?.status === 422 ? "This mail can't be snoozed" : null), clearPending);
   };
 
   const handleToggleLabel = async (labelId: string, turnOn: boolean, uid: number | null = selectedUid) => {
@@ -1688,7 +1710,7 @@ export const App: React.FC = () => {
         onSentSuccess={(info) => {
           if (info?.error) showToast(info.error, 'error');
           else if (info?.warning) showToast(info.warning, 'error');
-          else showToast('Email sent successfully');
+          else showToast(sentToText(info?.to));
           loadFolders();
           if (selectedFolder.toLowerCase().includes('sent')) {
             loadMessages();

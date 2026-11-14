@@ -274,3 +274,14 @@ describe('one click opens a row', () => {
     expect(btn.outerHTML).toBe(before);
   });
 });
+
+describe('row time slot', () => {
+  it('snoozed rows show "Until ..." in the time slot, shared with the quick actions', () => {
+    const when = new Date(Date.now() + 2 * 86400000);
+    when.setHours(9, 0, 0, 0);
+    list({}, [msg(1, { snoozedUntil: when.toISOString() })]);
+    const slot = document.querySelector('.row-slot')!;
+    expect(slot.querySelector('.row-time')!.textContent).toMatch(/^Until /);
+    expect(slot.querySelector('.row-quick')).toBeTruthy(); // the actions live in the same slot as the time
+  });
+});

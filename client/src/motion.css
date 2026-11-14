@@ -99,6 +99,10 @@
 /* Hover quick actions: fade only, their space is always reserved. */
 .row-quick { opacity: 0; pointer-events: none; transition: opacity var(--dur-1) var(--ease-out); }
 .row-time { transition: opacity var(--dur-1) var(--ease-out), visibility 0s linear 0s; }
+.row-wrap [data-row-open]:focus,
+.row-wrap button:focus:not(:focus-visible) { outline: none; }
+/* Keyboard focus only: a ring drawn inside the row, all round, with a radius (never clipped into side lines). */
+.row-wrap button:focus-visible { outline: 2px solid var(--focus); outline-offset: -3px; border-radius: 4px; }
 .row-wrap:hover .row-quick,
 .row-wrap:has(:focus-visible) .row-quick,
 .row-quick[data-open='true'] { opacity: 1; pointer-events: auto; }
