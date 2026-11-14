@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { SendEmailPayload, SendAttachment } from '../types.js';
 import { parseRecipientsLenient, parseRecipients, RecipientError, type Recipient } from '../utils/recipients.js';
@@ -22,12 +23,58 @@ import { enrichList } from '../services/organise.js';
 import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
+import { sniffImage } from '../services/richbody.js';
 import { renderEmail } from '../utils/sanitize.js';
 import { fetchRemoteImage, ImageProxyError, proxyImageUrl, verifyImageSignature, type ImageFetchOptions } from '../services/image-proxy.js';
 import { AgentError, locate } from '../agent/mail.js';
 import { sendLiveEmail, SendError, getMaxMessageBytes } from '../services/smtp.js';
 
 type AuthenticatedRequest = FastifyRequest;
+
+const CSP_ATTACHMENT = "default-src 'none'; sandbox";
+// Chrome's built-in PDF viewer does not start under a CSP `sandbox` directive, so PDFs shown inline get
+// `default-src 'none'` alone (still no scripts, frames or network from the document itself).
+const CSP_INLINE_PDF = "default-src 'none'";
+
+/** Reads the first bytes of a stream; `stream` is a replacement that still delivers every byte. */
+async function peekStream(source: NodeJS.ReadableStream, want = 16): Promise<{ head: Buffer; stream: Readable }> {
+  const s = source as Readable;
+  let head = Buffer.alloc(0);
+  while (head.length < want) {
+    const chunk = s.read() as Buffer | null;
+    if (chunk) {
+      head = Buffer.concat([head, chunk]);
+      continue;
+    }
+    const ended = await new Promise<boolean>((resolve) => {
+      const onReadable = () => done(false);
+      const onEnd = () => done(true);
+      const done = (v: boolean) => {
+        s.off('readable', onReadable);
+        s.off('end', onEnd);
+        s.off('close', onEnd);
+        resolve(v);
+      };
+      s.once('readable', onReadable);
+      s.once('end', onEnd);
+      s.once('close', onEnd);
+    });
+    if (ended) break;
+  }
+  async function* replay() {
+    if (head.length) yield head;
+    for await (const c of s) yield c;
+  }
+  return { head, stream: Readable.from(replay(), { objectMode: false }) };
+}
+
+/** What an attachment may be shown as inline: a real png/jpeg/gif/webp or PDF, judged by its bytes. */
+function inlineKind(head: Buffer): { type: string; csp: string } | undefined {
+  const image = sniffImage(head);
+  if (image) return { type: image, csp: CSP_ATTACHMENT };
+  if (head.length >= 5 && head.subarray(0, 5).toString('latin1') === '%PDF-') return { type: 'application/pdf', csp: CSP_INLINE_PDF };
+  return undefined;
+}
 
 /**
  * Answers a failed mail operation. If the mail server refused the session's stored credentials,
@@ -238,13 +285,17 @@ export async function mailRoutes(
       const messageUid = parseUid(uid);
       if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
 
+      // ?inline=1 asks to show the file in the browser; only sniffed images and PDFs are allowed that.
+      const wantInline = ['1', 'true'].includes(String((req.query as { inline?: string }).inline || ''));
+
       if (config.isDemo) {
         const att = demoMailService.getAttachmentData(messageUid, partId);
         if (!att) return reply.status(404).send({ error: 'Attachment not found' });
-        reply.header('Content-Type', att.contentType);
-        reply.header('Content-Disposition', contentDisposition(att.filename));
+        const kind = wantInline ? inlineKind(att.buffer.subarray(0, 16)) : undefined;
+        reply.header('Content-Type', kind ? kind.type : att.contentType);
+        reply.header('Content-Disposition', contentDisposition(att.filename, kind ? 'inline' : 'attachment'));
         reply.header('X-Content-Type-Options', 'nosniff');
-        reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
+        reply.header('Content-Security-Policy', kind ? kind.csp : CSP_ATTACHMENT);
         return reply.send(att.buffer);
       }
 
@@ -258,11 +309,22 @@ export async function mailRoutes(
       }
       if (!attData) return reply.status(404).send({ error: 'Attachment not found' });
 
-      reply.header('Content-Type', attData.contentType);
-      reply.header('Content-Disposition', contentDisposition(attData.filename));
+      let kind: { type: string; csp: string } | undefined;
+      let body: NodeJS.ReadableStream = attData.stream;
+      if (wantInline) {
+        try {
+          const peeked = await peekStream(attData.stream);
+          kind = inlineKind(peeked.head);
+          body = peeked.stream;
+        } catch (err) {
+          return failMail(req, reply, err, 'Could not download the attachment');
+        }
+      }
+      reply.header('Content-Type', kind ? kind.type : attData.contentType);
+      reply.header('Content-Disposition', contentDisposition(attData.filename, kind ? 'inline' : 'attachment'));
       reply.header('X-Content-Type-Options', 'nosniff');
-      reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
-      return reply.send(attData.stream);
+      reply.header('Content-Security-Policy', kind ? kind.csp : CSP_ATTACHMENT);
+      return reply.send(body);
     }
   );
 
