@@ -235,6 +235,8 @@ export interface SendEmailResponse {
   error?: string;
 }
 
+export type ListFilter = 'all' | 'unread' | 'starred' | 'attachments';
+
 export interface SearchFilterParams {
   search?: string;
   from?: string;
@@ -296,10 +298,12 @@ export const api = {
     page = 1,
     limit = 50,
     search = '',
-    filters?: SearchFilterParams
+    filters?: SearchFilterParams,
+    filter: ListFilter = 'all'
   ): Promise<{ messages: MessageHeader[]; total: number }> => {
     const encoded = encodeURIComponent(folderPath);
     const query = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (filter !== 'all') query.set('filter', filter);
     if (search.trim()) query.set('search', search.trim());
     if (filters?.from?.trim()) query.set('from', filters.from.trim());
     if (filters?.to?.trim()) query.set('to', filters.to.trim());
@@ -324,10 +328,14 @@ export const api = {
   getMessageDetail: async (
     folderPath: string,
     uid: number,
-    options: { showImages?: boolean } = {}
+    options: { showImages?: boolean; peek?: boolean } = {}
   ): Promise<ParsedEmailMessage> => {
     const encoded = encodeURIComponent(folderPath);
-    const q = options.showImages ? '?images=1' : '';
+    const params = new URLSearchParams();
+    if (options.showImages) params.set('images', '1');
+    // peek: read without marking as read (prefetching neighbours).
+    if (options.peek) params.set('peek', '1');
+    const q = params.toString() ? `?${params}` : '';
     return request<ParsedEmailMessage>(`/mailboxes/${encoded}/messages/${uid}${q}`);
   },
 

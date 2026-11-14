@@ -32,6 +32,21 @@ export interface MessageHeader {
   hasAttachments: boolean;
   size: number;
   snippet: string;
+  /** Label ids (server contract: labels, threads, views). */
+  labels?: string[];
+  threadId?: string;
+  threadCount?: number;
+  /** Set on items from views that span folders (Starred, Snoozed, a label). */
+  mailbox?: string;
+  snoozedUntil?: string;
+  /** A "message not delivered" report: what was sent and why it failed. */
+  bounce?: BounceInfo;
+}
+
+export interface BounceInfo {
+  originalSubject: string;
+  recipient: string;
+  reason: string;
 }
 
 export interface EmailAttachment {
