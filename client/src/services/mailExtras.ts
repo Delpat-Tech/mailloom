@@ -14,3 +14,15 @@ export function getMessageDetailProxied(folderPath: string, uid: number, options
   if (options.peek) params.set('peek', '1');
   return request<ParsedEmailMessage>(`/mailboxes/${encodeURIComponent(folderPath)}/messages/${uid}?${params}`);
 }
+
+export interface ContactSuggestion {
+  name: string;
+  email: string;
+  count: number;
+  lastUsed: string;
+}
+
+/** Recipient suggestions for a typed prefix, best first (GET /api/contacts/suggest). */
+export function suggestContacts(q: string, limit = 8): Promise<ContactSuggestion[]> {
+  return request<ContactSuggestion[]>(`/contacts/suggest?q=${encodeURIComponent(q)}&limit=${limit}`);
+}

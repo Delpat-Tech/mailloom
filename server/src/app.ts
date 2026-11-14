@@ -24,6 +24,8 @@ import { organiseRoutes } from './routes/organise.js';
 import { OrganiseStore } from './services/organise-store.js';
 import { Snoozer } from './services/snoozer.js';
 import { ConversationIndexer, type IndexerOptions } from './services/conv-index.js';
+import { ContactIndexer, ContactStore, type ContactIndexerOptions } from './services/contacts.js';
+import { contactRoutes } from './routes/contacts.js';
 import type { ImageFetchOptions } from './services/image-proxy.js';
 
 export interface BuildAppOptions {
@@ -44,6 +46,8 @@ export interface BuildAppOptions {
   /** Test hooks for the conversation index (never set in production). */
   /** Test hook for the remote image proxy: injectable resolver/address check (never set in production). */
   imageProxy?: ImageFetchOptions;
+  /** Test hooks for the recipient-suggestion index (never set in production). */
+  contacts?: Pick<ContactIndexerOptions, 'batchSize' | 'minIntervalMs'>;
   organise?: Pick<IndexerOptions, 'batchSize' | 'retryMs' | 'onBatch'> & { snoozeIntervalMs?: number };
 }
 
@@ -179,6 +183,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const snoozer = new Snoozer(organiseStore, pushStore, config, fastify.log, now, opts.organise?.snoozeIntervalMs);
   const indexer = new ConversationIndexer(organiseStore, { ...opts.organise, log: fastify.log, now });
   fastify.decorate('mailloomOrganise', { store: organiseStore, snoozer, indexer, now });
+  const contactStore = new ContactStore(sessions.database);
+  const contactIndexer = new ContactIndexer(contactStore, { ...opts.contacts, log: fastify.log, now });
+  fastify.decorate('mailloomContacts', { store: contactStore, indexer: contactIndexer, now });
   fastify.addHook('onReady', async () => {
     snoozer.start();
     void snoozer.tick();
@@ -208,6 +215,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     clearInterval(sweeper);
     snoozer.stop();
     await indexer.close();
+    await contactIndexer.close();
     await pushWatcher?.stopAll();
     await closeAllPooledClients();
     sessions.close();
@@ -275,6 +283,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await fastify.register(agentRoutes, { prefix });
     await fastify.register(pushRoutes, { prefix });
     await fastify.register(organiseRoutes, { prefix });
+    await fastify.register(contactRoutes, { prefix });
   }
 
   const clientDist = opts.clientDist === undefined ? resolveClientDist(env) : opts.clientDist;

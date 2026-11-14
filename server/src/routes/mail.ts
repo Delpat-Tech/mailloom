@@ -624,6 +624,8 @@ export async function mailRoutes(
 
       try {
         const r = await sendLiveEmail(config, payload);
+        // The Sent copy is stored by now: refresh the recipient suggestions.
+        if (r.accepted.length > 0) fastify.mailloomContacts.indexer.kick(config, true);
         let draftDeleted: boolean | undefined;
         if (payload.draftUid && r.accepted.length > 0) {
           draftDeleted = await deleteLiveDraft(config, payload.draftUid).catch(() => false);
