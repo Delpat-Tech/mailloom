@@ -104,6 +104,39 @@ test('list shows a preview and a paperclip only where there are real attachments
   assert.equal(by('with logo only').hasAttachments, false, 'an inline logo is not an attachment');
 });
 
+test('logo sent as attachment-disposition with a Content-ID inside multipart/related is inline when the HTML references it', async () => {
+  await resetAccount(GM.tester);
+  const uid = await appendRaw(
+    GM.tester,
+    'INBOX',
+    await buildMime({
+      subject: 'apple logo',
+      html: '<p>hi</p><img src="cid:applelogo">',
+      attachments: [
+        { filename: 'logo.png', content: PNG, cid: 'applelogo', contentDisposition: 'attachment', contentType: 'image/png' },
+        { filename: 'spare.png', content: PNG, cid: 'unused', contentDisposition: 'attachment', contentType: 'image/png' }
+      ]
+    })
+  );
+  const d = (await getLiveMessageDetail(tester, 'INBOX', uid))!;
+  assert.match(d.html || '', /src="data:image\/png;base64,/);
+  assert.deepEqual(d.attachments.map((a) => a.filename), ['spare.png']);
+  const uid2 = await appendRaw(
+    GM.tester,
+    'INBOX',
+    await buildMime({
+      subject: 'apple logo only',
+      html: '<img src="cid:applelogo">',
+      attachments: [{ filename: 'logo.png', content: PNG, cid: 'applelogo', contentDisposition: 'attachment', contentType: 'image/png' }]
+    })
+  );
+  const l2 = await getLiveMessages(tester, 'INBOX');
+  assert.equal(l2.messages.find((m) => m.subject === 'apple logo only')!.hasAttachments, false);
+  const d2 = (await getLiveMessageDetail(tester, 'INBOX', uid2))!;
+  assert.equal(d2.attachments.length, 0);
+  assert.match(d2.html || '', /src="data:image\/png/);
+});
+
 test('previews decode quoted-printable and base64 in other charsets', async () => {
   await resetAccount(GM.tester);
   const qp =
