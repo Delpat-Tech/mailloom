@@ -591,6 +591,8 @@ function addrList(list: Array<{ name?: string; address?: string }> | undefined) 
 export interface DetailOptions {
   /** Load remote images referenced by the message (default: blocked). */
   allowRemoteImages?: boolean;
+  /** Do not mark the message as read (used for prefetching). */
+  peek?: boolean;
 }
 
 export async function getLiveMessageDetail(
@@ -612,7 +614,7 @@ export async function getLiveMessageDetail(
 
     const flags = Array.from(msg.flags || []);
     const wasFlagged = flags.includes('\\Flagged');
-    if (!flags.includes('\\Seen')) {
+    if (!flags.includes('\\Seen') && !options.peek) {
       await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
       flags.push('\\Seen');
     }

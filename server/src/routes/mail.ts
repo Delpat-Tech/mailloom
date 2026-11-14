@@ -163,6 +163,8 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       const messageUid = parseUid(uid);
       if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
       const images = ['1', 'true'].includes(String((req.query as { images?: string }).images || ''));
+      // peek=1: read without marking as read (the client prefetches neighbouring messages this way).
+      const peek = ['1', 'true'].includes(String((req.query as { peek?: string }).peek || ''));
 
       if (config.isDemo) {
         const msg = demoMailService.getMessageDetail(folderPath, messageUid);
@@ -173,7 +175,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       }
 
       try {
-        const msg = await getLiveMessageDetail(config, folderPath, messageUid, { allowRemoteImages: images });
+        const msg = await getLiveMessageDetail(config, folderPath, messageUid, { allowRemoteImages: images, peek });
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
         return msg;
       } catch (err) {

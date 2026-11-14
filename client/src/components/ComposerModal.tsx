@@ -1,3 +1,7 @@
+import { usePresence, LEAVE_COMPOSER_MS, Presence } from './Presence.js';
+import { AnchoredPanel } from './AnchoredPanel.js';
+import { usePopover } from '../hooks/usePopover.js';
+import { readImageFile, IMAGE_TYPES, MAX_IMAGE_BYTES } from '../services/richtext.js';
 import { splitRecipients, mergeRecipients, recipientSnapshot, isValidRecipient } from '../services/recipients';
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -10,9 +14,15 @@ import {
   AlertCircle,
   FileSpreadsheet,
   PenTool,
-  Info
+  Info,
+  Bold,
+  ImagePlus,
+  MoreHorizontal,
+  Type
 } from 'lucide-react';
 import { api, ApiError } from '../services/api.js';
+import { clockTime } from '../services/time.js';
+import { avatarClass, initialsOf } from '../services/avatar.js';
 import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
@@ -62,6 +72,8 @@ export interface ComposerReplyMeta {
   forwardedAttachmentNames?: string[];
   /** UID of the saved draft this composer was opened from. */
   draftUid?: number;
+  /** Known names for addresses (lower case address to name), so chips can show people, not addresses. */
+  names?: Record<string, string>;
 }
 
 interface ComposerModalProps {
@@ -97,6 +109,46 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+const ICON_BTN =
+  't-fast shrink-0 p-2 text-ink-3 hover:text-ink hover:bg-hover rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] flex items-center justify-center';
+
+/** The "..." menu in the composer's bottom bar: Templates, Signature, Plain text. */
+const ComposerMore: React.FC<{
+  items: { key: string; label: string; icon: React.ReactNode; onSelect: () => void }[];
+  anchor: React.RefObject<HTMLElement>;
+  onClose: (refocus: boolean) => void;
+}> = ({ items, anchor, onClose }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  usePopover(ref, onClose, anchor);
+  return (
+    <AnchoredPanel
+      panelRef={ref}
+      anchor={anchor}
+      align="start"
+      prefer="above"
+      role="menu"
+      aria-label="More composer options"
+      className="anim-menu origin-bl w-48 bg-surface text-ink border border-line rounded shadow-xl py-1.5"
+    >
+      {items.map((it) => (
+        <button
+          key={it.key}
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onClose(false);
+            it.onSelect();
+          }}
+          className="w-full min-h-[44px] sm:min-h-[36px] text-left px-3 py-2 text-sm font-semibold text-ink-2 hover:bg-sel hover:text-sel-ink flex items-center gap-3"
+        >
+          {it.icon}
+          <span>{it.label}</span>
+        </button>
+      ))}
+    </AnchoredPanel>
+  );
+};
 
 export const ComposerModal: React.FC<ComposerModalProps> = ({
   isOpen,
@@ -135,6 +187,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showFormat, setShowFormat] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const nameOf = (email: string) => replyMeta?.names?.[email.toLowerCase()] || '';
   const [showSigModal, setShowSigModal] = useState(false);
   const [signature, setSignature] = useState<AccountSignature>(() =>
     getSignatureForAccount(accountEmail, accountName)
@@ -214,7 +271,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       }
       lastSavedSnap.current = snap;
       lastSaveAtRef.current = Date.now();
-      setDraftStatus({ text: `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, error: false });
+      setDraftStatus({ text: `Draft saved ${clockTime()}`, error: false });
       return true;
     } catch (err: unknown) {
       const tooBig = err instanceof ApiError && err.status === 413;
@@ -310,7 +367,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
 
-  if (!isOpen) return null;
+  const { mounted: cmpMounted, leaving: cmpLeaving } = usePresence(isOpen, LEAVE_COMPOSER_MS);
+  if (!cmpMounted) return null;
 
   const handleAddRecipient = (
     type: 'to' | 'cc' | 'bcc',
@@ -494,23 +552,31 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="composer-title"
-      className={`fixed z-50 transition-all duration-200 shadow-2xl rounded-t-2xl sm:rounded-xl overflow-hidden bg-white border border-slate-200 flex flex-col ${
+      data-leaving={cmpLeaving ? 'true' : undefined}
+      onKeyDown={(e) => {
+        // Ctrl+Enter (Cmd+Enter on a Mac) sends from anywhere in the composer.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isSending && !isMinimized) {
+          e.preventDefault();
+          void handleSend();
+        }
+      }}
+      className={`anim-composer cmp-panel fixed z-[55] shadow-2xl rounded-t sm:rounded overflow-hidden bg-surface border border-line flex flex-col ${
         isMinimized
-          ? 'bottom-0 right-4 sm:right-6 w-72 h-11'
+          ? 'cmp-min inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
           : isMaximized
           ? 'top-2 bottom-2 left-2 right-2 sm:top-4 sm:bottom-4 sm:left-12 sm:right-12'
           : 'inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 sm:bottom-0 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
       }`}
     >
       {/* Modal Header */}
-      <div className="bg-slate-900 text-slate-200 px-4 py-2.5 flex items-center justify-between select-none cursor-pointer">
-        <span id="composer-title" className="text-xs font-semibold tracking-wide text-white truncate">
+      <div className="bg-cmp-top text-white pl-4 pr-2 min-h-[42px] flex items-center justify-between select-none cursor-pointer">
+        <span id="composer-title" className="text-[13.5px] font-extrabold text-white truncate">
           {subject || 'New Message'}
         </span>
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setIsMinimized(!isMinimized)}
-            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            className="p-1 text-white hover:bg-white/15 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title={isMinimized ? 'Expand' : 'Minimize'}
             aria-label={isMinimized ? 'Expand' : 'Minimize'}
           >
@@ -521,7 +587,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               setIsMaximized(!isMaximized);
               setIsMinimized(false);
             }}
-            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            className="p-1 text-white hover:bg-white/15 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title={isMaximized ? 'Restore size' : 'Maximize'}
             aria-label={isMaximized ? 'Restore size' : 'Maximize'}
           >
@@ -529,7 +595,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           </button>
           <button
             onClick={handleCloseClick}
-            className="p-1 hover:text-red-400 hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            className="p-1 text-white hover:bg-white/15 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title="Close"
             aria-label="Close"
           >
@@ -538,38 +604,44 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         </div>
       </div>
 
-      {!isMinimized && (
-        <div className="flex-1 flex flex-col bg-white overflow-hidden">
+      {(
+        <div aria-hidden={isMinimized || undefined} className={`cmp-content flex-1 flex flex-col bg-surface overflow-hidden ${isMinimized ? 'cmp-content-min' : ''}`}>
           {/* Error Banner */}
           {errorMsg && (
-            <div role="alert" className="bg-red-50 text-red-700 px-4 py-2 text-xs flex items-center gap-2 border-b border-red-200 shrink-0">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+            <div role="alert" className="bg-warn-bg text-warn-ink px-4 py-2 text-xs flex items-center gap-2 border-b border-warn-line shrink-0">
+              <AlertCircle className="w-4 h-4 shrink-0 text-warn-ink" />
               <span className="flex-1">{errorMsg}</span>
-              <button onClick={() => setErrorMsg(null)} aria-label="Dismiss error" className="text-red-500 font-bold px-2 min-h-[44px] sm:min-h-0">
+              <button onClick={() => setErrorMsg(null)} aria-label="Dismiss error" className="text-warn-ink font-bold px-2 min-h-[44px] sm:min-h-0">
                 ×
               </button>
             </div>
           )}
 
           {/* Recipients & Subject Fields */}
-          <div className="px-4 py-2 border-b border-slate-100 flex flex-col divide-y divide-slate-100 text-xs">
+          <div className="px-4 py-2 border-b border-line flex flex-col divide-y divide-line text-xs">
             {/* To Line */}
             <div className="py-1.5 flex items-center gap-2">
-              <label htmlFor="composer-to" className="text-slate-400 font-medium w-12">To:</label>
+              <label htmlFor="composer-to" className="text-ink-3 font-medium w-12">To:</label>
               <div className="flex-1 flex flex-wrap items-center gap-1.5">
                 {toList.map((email, idx) => (
                   <span
                     key={idx}
                     aria-invalid={!isValidRecipient(email) || undefined}
-                    title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
-                    className={`inline-flex items-center gap-1 bg-sky-50 text-sky-700 border border-sky-200/80 px-2 py-0.5 rounded-md text-xs font-medium${!isValidRecipient(email) ? ' !bg-red-50 !text-red-700 !border-red-300 line-through' : ''}`}
+                    title={!isValidRecipient(email) ? 'Not a valid address' : email}
+                    className={`inline-flex items-center gap-1.5 bg-sheet text-ink border border-line pl-[3px] pr-1.5 py-[2px] rounded-[3px] text-[13px] font-bold${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
                   >
-                    <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
+                    <span
+                      aria-hidden="true"
+                      className={`cut-av w-5 h-5 shrink-0 grid place-items-center text-[9px] font-extrabold text-white ${avatarClass(email)}`}
+                    >
+                      {initialsOf(nameOf(email) || email)}
+                    </span>
+                    <span>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                     <button
                       type="button"
                       onClick={() => handleRemoveRecipient('to', idx)}
-                      aria-label={`Remove ${email}`}
-                      className="hover:text-sky-900 px-1 min-h-[44px] sm:min-h-0"
+                      aria-label={`Remove ${nameOf(email) || email}`}
+                      className="hover:text-act px-1 min-h-[44px] sm:min-h-0"
                     >
                       ×
                     </button>
@@ -591,17 +663,17 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     if (toInput) handleAddRecipient('to', toInput);
                   }}
                   placeholder={toList.length === 0 ? 'recipients@example.com (press Enter)' : ''}
-                  className="flex-1 min-w-[140px] focus:outline-none bg-transparent py-0.5 text-slate-800"
+                  className="flex-1 min-w-[140px] focus:outline-none bg-transparent py-0.5 text-ink"
                 />
               </div>
-              <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <div className="flex items-center gap-2 text-[11px] text-ink-3">
                 {!showCc && (
-                  <button onClick={() => setShowCc(true)} className="hover:text-slate-700 min-h-[44px] px-1 sm:min-h-0">
+                  <button onClick={() => setShowCc(true)} className="hover:text-ink-2 min-h-[44px] px-1 sm:min-h-0">
                     Cc
                   </button>
                 )}
                 {!showBcc && (
-                  <button onClick={() => setShowBcc(true)} className="hover:text-slate-700 min-h-[44px] px-1 sm:min-h-0">
+                  <button onClick={() => setShowBcc(true)} className="hover:text-ink-2 min-h-[44px] px-1 sm:min-h-0">
                     Bcc
                   </button>
                 )}
@@ -611,21 +683,21 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             {/* Cc Line */}
             {showCc && (
               <div className="py-1.5 flex items-center gap-2">
-                <label htmlFor="composer-cc" className="text-slate-400 font-medium w-12">Cc:</label>
+                <label htmlFor="composer-cc" className="text-ink-3 font-medium w-12">Cc:</label>
                 <div className="flex-1 flex flex-wrap items-center gap-1.5">
                   {ccList.map((email, idx) => (
                     <span
                       key={idx}
                       aria-invalid={!isValidRecipient(email) || undefined}
                     title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
-                    className={`inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-xs font-medium${!isValidRecipient(email) ? ' !bg-red-50 !text-red-700 !border-red-300 line-through' : ''}`}
+                    className={`inline-flex items-center gap-1 bg-hover text-ink-2 px-2 py-0.5 rounded text-xs font-medium${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
                     >
-                      <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
+                      <span title={email}>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('cc', idx)}
                         aria-label={`Remove ${email}`}
-                        className="hover:text-slate-900 px-1 min-h-[44px] sm:min-h-0"
+                        className="hover:text-ink px-1 min-h-[44px] sm:min-h-0"
                       >
                         ×
                       </button>
@@ -646,7 +718,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                       if (ccInput) handleAddRecipient('cc', ccInput);
                     }}
                     placeholder="Cc recipients..."
-                    className="flex-1 min-w-[120px] focus:outline-none bg-transparent py-0.5 text-slate-800"
+                    className="flex-1 min-w-[120px] focus:outline-none bg-transparent py-0.5 text-ink"
                   />
                 </div>
               </div>
@@ -655,21 +727,21 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             {/* Bcc Line */}
             {showBcc && (
               <div className="py-1.5 flex items-center gap-2">
-                <label htmlFor="composer-bcc" className="text-slate-400 font-medium w-12">Bcc:</label>
+                <label htmlFor="composer-bcc" className="text-ink-3 font-medium w-12">Bcc:</label>
                 <div className="flex-1 flex flex-wrap items-center gap-1.5">
                   {bccList.map((email, idx) => (
                     <span
                       key={idx}
                       aria-invalid={!isValidRecipient(email) || undefined}
                     title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
-                    className={`inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-xs font-medium${!isValidRecipient(email) ? ' !bg-red-50 !text-red-700 !border-red-300 line-through' : ''}`}
+                    className={`inline-flex items-center gap-1 bg-hover text-ink-2 px-2 py-0.5 rounded text-xs font-medium${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
                     >
-                      <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
+                      <span title={email}>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('bcc', idx)}
                         aria-label={`Remove ${email}`}
-                        className="hover:text-slate-900 px-1 min-h-[44px] sm:min-h-0"
+                        className="hover:text-ink px-1 min-h-[44px] sm:min-h-0"
                       >
                         ×
                       </button>
@@ -690,28 +762,28 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                       if (bccInput) handleAddRecipient('bcc', bccInput);
                     }}
                     placeholder="Bcc recipients..."
-                    className="flex-1 min-w-[120px] focus:outline-none bg-transparent py-0.5 text-slate-800"
+                    className="flex-1 min-w-[120px] focus:outline-none bg-transparent py-0.5 text-ink"
                   />
                 </div>
               </div>
             )}
 
             {droppedNote && (
-              <p role="status" className="px-4 py-1 text-[11px] text-slate-500">
+              <p role="status" className="px-4 py-1 text-[11px] text-ink-3">
                 {droppedNote}
               </p>
             )}
 
             {/* Subject Line */}
             <div className="py-1.5 flex items-center gap-2">
-              <label htmlFor="composer-subject" className="text-slate-400 font-medium w-12">Subject:</label>
+              <label htmlFor="composer-subject" className="text-ink-3 font-medium w-12">Subject:</label>
               <input
                 id="composer-subject"
                 type="text"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder="Subject"
-                className="flex-1 focus:outline-none bg-transparent py-0.5 text-slate-800 font-medium"
+                className="flex-1 focus:outline-none bg-transparent py-0.5 text-ink font-medium"
               />
             </div>
           </div>
@@ -725,7 +797,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                 value={bodyText}
                 onChange={(e) => setBodyText(e.target.value)}
                 placeholder="Write your email message here..."
-                className="w-full flex-1 resize-none focus:outline-none text-sm text-slate-800 font-sans leading-relaxed"
+                className="w-full flex-1 resize-none focus:outline-none text-sm text-ink font-sans leading-relaxed"
               />
             ) : (
               <RichEditor
@@ -739,31 +811,32 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                 ariaLabel="Message"
                 placeholder="Write your email message here..."
                 contentClassName="min-h-[10rem]"
+                hideToolbar={!showFormat}
               />
             )}
 
             {replyMeta?.forwardedAttachmentNames && replyMeta.forwardedAttachmentNames.length > 0 && (
-              <div className="pt-2 text-xs text-slate-500">
+              <div className="pt-2 text-xs text-ink-3">
                 The original attachments will be included: {replyMeta.forwardedAttachmentNames.join(', ')}
               </div>
             )}
 
             {/* Attached Files Pill List */}
             {attachments.length > 0 && (
-              <div className="pt-3 border-t border-slate-100 flex flex-wrap gap-2">
+              <div className="pt-3 border-t border-line flex flex-wrap gap-2">
                 {attachments.map((att, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 px-2.5 py-1 rounded-lg text-xs text-slate-700 transition-colors"
+                    className="flex items-center gap-1.5 bg-hover hover:bg-line px-2.5 py-1 rounded text-xs text-ink-2 transition-colors"
                   >
-                    <Paperclip className="w-3 h-3 text-slate-400" />
+                    <Paperclip className="w-3 h-3 text-ink-3" />
                     <span className="font-medium max-w-[150px] truncate">{att.filename}</span>
-                    <span className="text-[10px] text-slate-400">({formatFileSize(att.size)})</span>
+                    <span className="text-[11px] text-ink-3">({formatFileSize(att.size)})</span>
                     <button
                       type="button"
                       onClick={() => removeAttachment(idx)}
                       aria-label={`Remove attachment ${att.filename}`}
-                      className="ml-1 text-slate-400 hover:text-red-500 font-bold px-1 min-h-[44px] sm:min-h-0"
+                      className="ml-1 text-ink-3 hover:text-warn-ink font-bold px-1 min-h-[44px] sm:min-h-0"
                     >
                       ×
                     </button>
@@ -782,103 +855,153 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             className="hidden"
           />
 
-          {/* Bottom Action Bar */}
-          <div className="px-3 sm:px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex flex-wrap items-center justify-between gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleSend}
-                disabled={isSending}
-                className="flex items-center gap-2 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs px-4 py-2 min-h-[44px] sm:min-h-0 rounded-lg shadow-sm shadow-sky-600/20 transition-all disabled:opacity-50"
-              >
-                {isSending ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Sending...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Send Message</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-lg transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
-                title="Attach files"
-                aria-label="Attach files"
-              >
-                <Paperclip className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={togglePlainMode}
-                aria-pressed={plainMode}
-                title={plainMode ? 'Back to formatted text' : 'Write this message as plain text'}
-                className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded-lg transition-colors border font-medium ${
-                  plainMode
-                    ? 'text-slate-800 bg-slate-200 border-slate-300'
-                    : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
-                }`}
-              >
-                <span>Plain text</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowTemplateModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors border border-sky-200/60 font-medium"
-                title="Insert pre-written email templates"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-sky-600" />
-                <span>Templates</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSigForm(signature);
-                  setSigError(null);
-                  setShowSigModal(true);
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded-lg transition-colors border font-medium ${
-                  signature.enabled
-                    ? 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200/60'
-                    : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
-                }`}
-                title="Configure Delpat corporate signature"
-              >
-                <PenTool className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Signature</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 min-w-0">
-            {/* Fixed-size slot: the status never moves the buttons. Icon only on narrow screens. */}
-            <span
-              className={`shrink-0 w-5 sm:w-48 h-5 flex items-center justify-end overflow-hidden text-[11px] ${draftStatus?.error ? 'text-red-600 font-semibold' : 'text-slate-400'}`}
-              role="status"
-              title={statusText}
-              aria-label={statusText || undefined}
+          {/* Bottom bar: one row. Send, attach, picture, formatting on the left; saved time and delete on the right. */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept={IMAGE_TYPES.join(',')}
+            multiple
+            aria-label="Choose a picture"
+            className="hidden"
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              for (const f of files) {
+                try {
+                  const src = await readImageFile(f, MAX_IMAGE_BYTES);
+                  editorRef.current?.chain().focus().setImage({ src, alt: f.name }).run();
+                } catch (err) {
+                  setErrorMsg(err instanceof Error ? err.message : 'That picture could not be added.');
+                }
+              }
+            }}
+          />
+          <div className="px-3 sm:px-4 py-2.5 border-t border-line bg-sheet flex flex-nowrap items-center gap-1 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+            <button
+              onClick={handleSend}
+              disabled={isSending}
+              aria-keyshortcuts="Control+Enter"
+              className="cut-tr shrink-0 whitespace-nowrap flex items-center gap-2 bg-act hover:bg-act-hov text-act-ink font-extrabold text-[13.5px] pl-3 pr-3.5 mr-1 min-h-[44px] sm:min-h-[36px] transition-colors disabled:opacity-50"
             >
-              {statusText && (
+              {isSending ? (
                 <>
-                  <Info className="w-4 h-4 sm:hidden" aria-hidden="true" />
-                  <span className="hidden sm:block truncate">{statusText}</span>
+                  <div className="w-3.5 h-3.5 border-2 border-surface border-t-transparent rounded-full animate-spin" />
+                  <span>Sending...</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Send</span>
+                  <kbd aria-hidden="true" className="hidden md:inline-block text-[10.5px] font-semibold leading-none px-1 py-[3px] rounded-[3px] border border-current opacity-80">Ctrl+Enter</kbd>
                 </>
               )}
-            </span>
-            <button
-              onClick={handleDiscard}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
-              title="Discard message"
-              aria-label="Discard message"
-            >
-              <Trash2 className="w-4 h-4" />
             </button>
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={ICON_BTN}
+              title="Attach files"
+              aria-label="Attach files"
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
+            {!plainMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  className={ICON_BTN}
+                  title="Insert picture"
+                  aria-label="Insert picture"
+                >
+                  <ImagePlus className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFormat((v) => !v)}
+                  aria-pressed={showFormat}
+                  className={`${ICON_BTN} ${showFormat ? '!bg-sel !text-sel-ink' : ''}`}
+                  title="Formatting"
+                  aria-label="Formatting"
+                >
+                  <Bold className="w-4 h-4" />
+                </button>
+              </>
+            )}
+            <div className="relative shrink-0">
+              <button
+                ref={moreBtn}
+                type="button"
+                onClick={() => setMoreOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                className={ICON_BTN}
+                title="More"
+                aria-label="More composer options"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+              </button>
+              <Presence show={moreOpen}>
+                {moreOpen && (
+                  <ComposerMore
+                    anchor={moreBtn}
+                    onClose={(refocus) => {
+                      setMoreOpen(false);
+                      if (refocus) moreBtn.current?.focus();
+                    }}
+                    items={[
+                      {
+                        key: 'templates',
+                        label: 'Templates',
+                        icon: <FileSpreadsheet className="w-4 h-4" />,
+                        onSelect: () => setShowTemplateModal(true)
+                      },
+                      {
+                        key: 'signature',
+                        label: signature.enabled ? 'Signature (on)' : 'Signature',
+                        icon: <PenTool className="w-4 h-4" />,
+                        onSelect: () => {
+                          setSigForm(signature);
+                          setSigError(null);
+                          setShowSigModal(true);
+                        }
+                      },
+                      {
+                        key: 'plain',
+                        label: plainMode ? 'Back to formatted text' : 'Plain text',
+                        icon: <Type className="w-4 h-4" />,
+                        onSelect: togglePlainMode
+                      }
+                    ]}
+                  />
+                )}
+              </Presence>
+            </div>
+
+            <div className="flex items-center gap-1 min-w-0 ml-auto">
+              {/* Fixed-size slot: the status never moves the buttons. Icon only on narrow screens. */}
+              <span
+                className={`shrink-0 w-5 sm:w-40 h-5 flex items-center justify-end overflow-hidden text-[11px] whitespace-nowrap ${draftStatus?.error ? 'text-warn-ink font-semibold' : 'text-ink-3'}`}
+                role="status"
+                title={statusText}
+                aria-label={statusText || undefined}
+              >
+                {statusText && (
+                  <>
+                    <Info className="w-4 h-4 sm:hidden" aria-hidden="true" />
+                    <span className="hidden sm:block truncate">{statusText}</span>
+                  </>
+                )}
+              </span>
+              <button
+                onClick={handleDiscard}
+                className="p-2 text-ink-3 hover:text-warn-ink hover:bg-warn-bg rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center shrink-0"
+                title="Discard message"
+                aria-label="Discard message"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
@@ -901,44 +1024,44 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
       {/* Signature Settings Modal */}
       {showSigModal && (
-        <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[60] bg-scrim anim-scrim flex items-center justify-center p-4">
           <div
             ref={sigRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="signature-title"
-            className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-full overflow-y-auto"
+            className="bg-surface rounded shadow-2xl border border-line w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-full overflow-y-auto"
           >
-            <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
+            <div className="px-4 py-3 bg-cmp-top text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <PenTool className="w-4 h-4 text-sky-400" />
-                <span id="signature-title" className="text-xs font-semibold">Corporate Email Signature</span>
+                <PenTool className="w-4 h-4" />
+                <span id="signature-title" className="text-[13.5px] font-extrabold">Corporate Email Signature</span>
               </div>
               <button
                 onClick={() => setShowSigModal(false)}
                 aria-label="Close signature settings"
-                className="text-slate-400 hover:text-white min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+                className="text-white hover:bg-white/15 rounded min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <form onSubmit={handleSaveSignature} className="p-4 space-y-3 text-xs">
-              <label className="flex items-center gap-2 select-none cursor-pointer pb-2 border-b border-slate-100">
+              <label className="flex items-center gap-2 select-none cursor-pointer pb-2 border-b border-line">
                 <input
                   type="checkbox"
                   checked={sigForm.enabled}
                   onChange={(e) => setSigForm({ ...sigForm, enabled: e.target.checked })}
-                  className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                  className="rounded border-line-2 text-act focus:ring-focus"
                 />
-                <span className="font-medium text-slate-800">Add my signature to new messages and replies</span>
+                <span className="font-medium text-ink">Add my signature to new messages and replies</span>
               </label>
 
               <div>
-                <span id="sig-editor-label" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                <span id="sig-editor-label" className="block text-[11px] font-semibold text-ink-3 mb-1">
                   Signature
                 </span>
-                <div className="border border-slate-200 rounded-lg p-2 bg-slate-50/50">
+                <div className="border border-line rounded p-2 bg-sheet">
                   <RichEditor
                     content={sigForm.html}
                     onChange={(html) => setSigForm((f) => ({ ...f, html }))}
@@ -949,28 +1072,28 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     contentClassName="min-h-[7rem] max-h-56"
                   />
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-[11px] text-ink-3">
                   Logos are sent inside the message, not as an attachment (up to {formatBytes(SIGNATURE_IMAGE_MAX_BYTES)}).
                   The signature is saved in this browser only.
                 </p>
                 {sigError && (
-                  <p role="alert" className="mt-1 text-[11px] text-red-600">
+                  <p role="alert" className="mt-1 text-[11px] text-warn-ink">
                     {sigError}
                   </p>
                 )}
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+              <div className="pt-2 flex justify-end gap-2 border-t border-line">
                 <button
                   type="button"
                   onClick={() => setShowSigModal(false)}
-                  className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg text-xs"
+                  className="px-3 py-1.5 text-ink-2 hover:bg-hover rounded text-xs"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-lg text-xs shadow-sm shadow-sky-600/20"
+                  className="px-3 py-1.5 bg-act hover:bg-act-hov text-act-ink font-medium rounded text-xs shadow-sm"
                 >
                   Save Signature
                 </button>

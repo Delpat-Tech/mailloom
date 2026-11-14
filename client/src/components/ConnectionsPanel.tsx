@@ -1,3 +1,4 @@
+import { fullDate } from '../services/time.js';
 import React, { useCallback, useEffect, useState } from 'react';
 import { X, KeyRound, Copy, Check, RotateCw, Ban, Pencil, AlertCircle, Plus } from 'lucide-react';
 import { connectionsApi, type AgentAuditEntry, type AgentKey, type AgentScope } from '../services/connections.js';
@@ -15,7 +16,7 @@ const SCOPE_LABELS: Record<AgentScope, string> = {
 
 function when(iso: string | null): string {
   if (!iso) return 'Never';
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return fullDate(iso) || iso;
 }
 
 function errorText(err: unknown): string {
@@ -127,21 +128,21 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="connections-title"
     >
-      <div className="w-full max-w-2xl max-h-[90vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+      <div className="anim-dialog w-full max-w-2xl max-h-[90vh] flex flex-col bg-surface border border-line rounded shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <div className="flex items-center gap-2.5">
-            <KeyRound className="w-5 h-5 text-sky-400" />
+            <KeyRound className="w-5 h-5 text-act" />
             <div>
-              <h2 id="connections-title" className="text-sm font-bold text-white">Connections</h2>
-              <p className="text-[11px] text-slate-400">Keys that let Work OS (Claude) use {email}</p>
+              <h2 id="connections-title" className="text-sm font-bold text-ink">Connections</h2>
+              <p className="text-[11px] text-ink-3">Keys that let Work OS (Claude) use {email}</p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800" aria-label="Close">
+          <button type="button" onClick={onClose} className="p-1.5 rounded text-ink-3 hover:text-ink hover:bg-hover" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -152,7 +153,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
               key={t}
               type="button"
               onClick={() => setTab(t)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${tab === t ? 'bg-sky-950/60 text-sky-300 border border-sky-800/50' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+              className={`px-3 py-1.5 rounded text-xs font-semibold ${tab === t ? 'bg-sel text-sel-ink border border-line' : 'text-ink-3 hover:text-ink hover:bg-hover'}`}
             >
               {t === 'keys' ? 'Keys' : 'Activity'}
             </button>
@@ -161,34 +162,34 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-300 bg-red-950/40 border border-red-900/60 rounded-lg px-3 py-2" role="alert">
+            <div className="flex items-start gap-2 text-xs text-warn-ink bg-warn-bg border border-warn-line rounded px-3 py-2" role="alert">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
 
           {!apiEnabled && (
-            <div className="text-xs text-amber-200 bg-amber-950/40 border border-amber-900/60 rounded-lg px-3 py-2">
+            <div className="text-xs text-caution bg-caution-bg border border-caution-line rounded px-3 py-2">
               The agent API is switched off on this server, so keys cannot be used yet.
             </div>
           )}
 
           {newKey && (
-            <div className="border border-sky-800/60 bg-sky-950/30 rounded-xl p-3 space-y-2">
-              <div className="text-xs font-semibold text-sky-200">Copy this key now. It will not be shown again.</div>
+            <div className="border border-line bg-sel rounded p-3 space-y-2">
+              <div className="text-xs font-semibold text-act">Copy this key now. It will not be shown again.</div>
               <div className="flex items-center gap-2">
-                <code className="flex-1 text-[11px] text-white bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 break-all select-all">{newKey}</code>
+                <code className="flex-1 text-[11px] text-ink bg-sheet border border-line rounded px-2.5 py-2 break-all select-all">{newKey}</code>
                 <button
                   type="button"
                   onClick={copy}
-                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white"
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded text-xs font-semibold bg-act hover:bg-act-hov text-act-ink"
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
-              <div className="text-[11px] text-slate-400">Paste it into Work OS. Anyone with this key can use your mailbox as allowed below.</div>
-              <button type="button" onClick={() => setNewKey(null)} className="text-[11px] text-slate-400 hover:text-white underline">
+              <div className="text-[11px] text-ink-3">Paste it into Work OS. Anyone with this key can use your mailbox as allowed below.</div>
+              <button type="button" onClick={() => setNewKey(null)} className="text-[11px] text-ink-3 hover:text-ink underline">
                 I have saved it
               </button>
             </div>
@@ -197,30 +198,30 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
           {tab === 'keys' && (
             <>
               {mode ? (
-                <form onSubmit={submit} className="border border-slate-800 rounded-xl p-3 space-y-3 bg-slate-950/40">
-                  <div className="text-xs font-semibold text-white">
+                <form onSubmit={submit} className="border border-line rounded p-3 space-y-3 bg-sheet">
+                  <div className="text-xs font-semibold text-ink">
                     {mode.kind === 'create' ? 'New key' : `New value for "${mode.key.name}" (the old one stops working)`}
                   </div>
                   {mode.kind === 'create' && (
                     <>
-                      <label className="block text-[11px] text-slate-400">
+                      <label className="block text-[11px] text-ink-3">
                         Name
                         <input
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           maxLength={80}
-                          className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-600"
+                          className="mt-1 w-full bg-sheet border border-line rounded px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-act"
                         />
                       </label>
                       <fieldset className="space-y-1.5">
-                        <legend className="text-[11px] text-slate-400 mb-1">Allowed</legend>
+                        <legend className="text-[11px] text-ink-3 mb-1">Allowed</legend>
                         {(Object.keys(SCOPE_LABELS) as AgentScope[]).map((s) => (
-                          <label key={s} className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
+                          <label key={s} className="flex items-center gap-2 text-xs text-ink cursor-pointer">
                             <input
                               type="checkbox"
                               checked={scopes[s]}
                               onChange={(e) => setScopes({ ...scopes, [s]: e.target.checked })}
-                              className="accent-sky-500"
+                              className="accent-act"
                             />
                             {SCOPE_LABELS[s]}
                           </label>
@@ -228,7 +229,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                       </fieldset>
                     </>
                   )}
-                  <label className="block text-[11px] text-slate-400">
+                  <label className="block text-[11px] text-ink-3">
                     Your mailbox password (to confirm it is you)
                     <input
                       type="password"
@@ -236,7 +237,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
-                      className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-600"
+                      className="mt-1 w-full bg-sheet border border-line rounded px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-act"
                     />
                   </label>
                   <div className="flex gap-2 justify-end">
@@ -246,14 +247,14 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                         setMode(null);
                         setPassword('');
                       }}
-                      className="px-3 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-slate-800"
+                      className="px-3 py-1.5 rounded text-xs text-ink-2 hover:bg-hover"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={busy || !password || (mode.kind === 'create' && noScope)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white"
+                      className="px-3 py-1.5 rounded text-xs font-semibold bg-act hover:bg-act-hov disabled:opacity-50 text-act-ink"
                     >
                       {busy ? 'Checking…' : mode.kind === 'create' ? 'Create key' : 'Rotate key'}
                     </button>
@@ -267,51 +268,51 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                     setScopes({ read: true, organise: true, send: true });
                     setMode({ kind: 'create' });
                   }}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-sky-400 hover:bg-sky-950/40 border border-slate-800"
+                  className="flex items-center gap-2 px-3 py-2 rounded text-xs font-semibold text-sel-ink hover:bg-sel border border-line"
                 >
                   <Plus className="w-3.5 h-3.5" /> New key
                 </button>
               )}
 
               {loading ? (
-                <div className="text-xs text-slate-400">Loading…</div>
+                <div className="text-xs text-ink-3">Loading…</div>
               ) : keys.length === 0 ? (
-                <div className="text-xs text-slate-400">No keys yet.</div>
+                <div className="text-xs text-ink-3">No keys yet.</div>
               ) : (
                 <ul className="space-y-2">
                   {keys.map((k) => (
-                    <li key={k.id} className="border border-slate-800 rounded-xl px-3 py-2.5 flex items-start justify-between gap-3">
+                    <li key={k.id} className="border border-line rounded px-3 py-2.5 flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-semibold text-white truncate">{k.name}</span>
-                          <code className="text-[10px] text-slate-400">{k.prefix}…</code>
+                          <span className="text-xs font-semibold text-ink truncate">{k.name}</span>
+                          <code className="text-[11px] text-ink-3">{k.prefix}…</code>
                           {k.status !== 'active' && (
                             <span
-                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${k.status === 'revoked' ? 'bg-slate-800 text-slate-400' : 'bg-amber-950 text-amber-300'}`}
+                              className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${k.status === 'revoked' ? 'bg-hover text-ink-3' : 'bg-caution-bg text-caution'}`}
                             >
                               {k.status === 'revoked' ? 'Revoked' : 'Needs new password'}
                             </span>
                           )}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">{k.scopes.join(', ')}</div>
-                        <div className="text-[11px] text-slate-400">
+                        <div className="text-[11px] text-ink-3 mt-0.5">{k.scopes.join(', ')}</div>
+                        <div className="text-[11px] text-ink-3">
                           Created {when(k.created_at)} · Last used {when(k.last_used_at)}
                         </div>
                         {k.status === 'broken' && (
-                          <div className="text-[11px] text-amber-300 mt-0.5">
+                          <div className="text-[11px] text-caution mt-0.5">
                             Mailloom could not sign in with this key's password. Rotate it to enter the current password.
                           </div>
                         )}
                       </div>
                       {k.status !== 'revoked' && (
                         <div className="flex items-center gap-1 shrink-0">
-                          <button type="button" onClick={() => rename(k)} className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800" title="Rename" aria-label={`Rename ${k.name}`}>
+                          <button type="button" onClick={() => rename(k)} className="p-1.5 rounded text-ink-3 hover:text-ink hover:bg-hover" title="Rename" aria-label={`Rename ${k.name}`}>
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <button type="button" onClick={() => setMode({ kind: 'rotate', key: k })} className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800" title="Rotate" aria-label={`Rotate ${k.name}`}>
+                          <button type="button" onClick={() => setMode({ kind: 'rotate', key: k })} className="p-1.5 rounded text-ink-3 hover:text-ink hover:bg-hover" title="Rotate" aria-label={`Rotate ${k.name}`}>
                             <RotateCw className="w-3.5 h-3.5" />
                           </button>
-                          <button type="button" onClick={() => revoke(k)} className="p-1.5 rounded text-red-400 hover:bg-red-950/40" title="Revoke" aria-label={`Revoke ${k.name}`}>
+                          <button type="button" onClick={() => revoke(k)} className="p-1.5 rounded text-warn-ink hover:bg-warn-bg" title="Revoke" aria-label={`Revoke ${k.name}`}>
                             <Ban className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -325,22 +326,22 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
 
           {tab === 'activity' && (
             audit.length === 0 ? (
-              <div className="text-xs text-slate-400">Nothing yet. Every call Work OS makes with your keys appears here.</div>
+              <div className="text-xs text-ink-3">Nothing yet. Every call Work OS makes with your keys appears here.</div>
             ) : (
-              <ul className="divide-y divide-slate-800/80">
+              <ul className="divide-y divide-line">
                 {audit.map((e, i) => (
                   <li key={`${e.at}-${i}`} className="py-2 text-[11px]">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-slate-200">{e.tool.replace(/_/g, ' ')}</span>
-                      <span className="text-slate-400">{when(e.at)}</span>
+                      <span className="font-semibold text-ink">{e.tool.replace(/_/g, ' ')}</span>
+                      <span className="text-ink-3">{when(e.at)}</span>
                     </div>
-                    <div className="text-slate-400">
+                    <div className="text-ink-3">
                       <code>{e.key_prefix}…</code> · {e.result}
                       {e.workos_user ? ` · for ${e.workos_user}` : ''}
                     </div>
-                    {e.subject !== null && <div className="text-slate-300 truncate">Subject: {e.subject}</div>}
-                    {e.recipients && <div className="text-slate-300 truncate">To: {e.recipients.join(', ')}</div>}
-                    {!e.recipients && e.folder && <div className="text-slate-400 truncate">{e.folder}{e.message_id ? ` · ${e.message_id}` : ''}</div>}
+                    {e.subject !== null && <div className="text-ink-2 truncate">Subject: {e.subject}</div>}
+                    {e.recipients && <div className="text-ink-2 truncate">To: {e.recipients.join(', ')}</div>}
+                    {!e.recipients && e.folder && <div className="text-ink-3 truncate">{e.folder}{e.message_id ? ` · ${e.message_id}` : ''}</div>}
                   </li>
                 ))}
               </ul>

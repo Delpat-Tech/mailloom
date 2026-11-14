@@ -87,7 +87,6 @@ describe('every button has an accessible name', () => {
         onSelectMessage={() => {}} selectedUids={new Set([1])} onToggleSelectUid={() => {}}
         onSelectAll={() => {}} onToggleFlag={() => {}} onRefresh={() => {}} isLoading={false}
         searchTerm="" onSearchChange={() => {}} onBatchDelete={() => {}} onBatchMarkRead={() => {}}
-        page={1} limit={50} onPageChange={() => {}} onCompose={() => {}}
       />
     );
     expectAllButtonsNamed(container);

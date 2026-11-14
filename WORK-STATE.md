@@ -13,7 +13,7 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Work OS mail tools: branch mail-tools in Om/wos-mail, reviewed, 64 e2e checks + 36 live checks against real Mailloom;
   not merged into Work OS master (waits on Om).
 
-## Next
+1. Design (Sky rail) with filters, views, labels, snooze, threads, shortcuts, motion and optimistic undo is built on builder-b; waits on review and merge.
 1. Design: Om picked Slab in Delpat colours, Sky rail (mailloom-design/round-3/direction-A-sky-rail.html); apply it across the app and build everything it shows (Om: UX first, nothing left out). Builder B: look, filters,
    shortcuts, quick actions, composer, phone tab bar, and the client for labels, snooze, conversations, bounces.
    Builder A: server for labels (IMAP keywords), snooze (with wake-up), conversations, bounce parsing, starred view.

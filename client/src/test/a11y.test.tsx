@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConfirmDialog } from '../components/ConfirmDialog.js';
 import { ComposerModal } from '../components/ComposerModal.js';
@@ -50,7 +50,7 @@ describe('ConfirmDialog', () => {
 
     await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(document.activeElement).toBe(opener);
   });
 });
@@ -127,9 +127,6 @@ describe('MessageList keyboard', () => {
         onSearchChange={() => {}}
         onBatchDelete={() => {}}
         onBatchMarkRead={() => {}}
-        page={1}
-        limit={50}
-        onPageChange={() => {}}
         onCompose={onCompose}
       />
     );

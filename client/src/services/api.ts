@@ -1,3 +1,4 @@
+import { realUid } from './uidKey.js';
 import { friendlyError } from './errors.js';
 import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount, StoredAccountProfile } from '../types.js';
 
@@ -235,6 +236,8 @@ export interface SendEmailResponse {
   error?: string;
 }
 
+export type ListFilter = 'all' | 'unread' | 'starred' | 'attachments';
+
 export interface SearchFilterParams {
   search?: string;
   from?: string;
@@ -296,10 +299,12 @@ export const api = {
     page = 1,
     limit = 50,
     search = '',
-    filters?: SearchFilterParams
+    filters?: SearchFilterParams,
+    filter: ListFilter = 'all'
   ): Promise<{ messages: MessageHeader[]; total: number }> => {
     const encoded = encodeURIComponent(folderPath);
     const query = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (filter !== 'all') query.set('filter', filter);
     if (search.trim()) query.set('search', search.trim());
     if (filters?.from?.trim()) query.set('from', filters.from.trim());
     if (filters?.to?.trim()) query.set('to', filters.to.trim());
@@ -315,7 +320,7 @@ export const api = {
     junkFolder?: string
   ): Promise<{ success: boolean }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${uid}/spam`, {
+    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${realUid(uid)}/spam`, {
       method: 'POST',
       body: JSON.stringify({ junkFolder })
     });
@@ -324,11 +329,15 @@ export const api = {
   getMessageDetail: async (
     folderPath: string,
     uid: number,
-    options: { showImages?: boolean } = {}
+    options: { showImages?: boolean; peek?: boolean } = {}
   ): Promise<ParsedEmailMessage> => {
     const encoded = encodeURIComponent(folderPath);
-    const q = options.showImages ? '?images=1' : '';
-    return request<ParsedEmailMessage>(`/mailboxes/${encoded}/messages/${uid}${q}`);
+    const params = new URLSearchParams();
+    if (options.showImages) params.set('images', '1');
+    // peek: read without marking as read (prefetching neighbours).
+    if (options.peek) params.set('peek', '1');
+    const q = params.toString() ? `?${params}` : '';
+    return request<ParsedEmailMessage>(`/mailboxes/${encoded}/messages/${realUid(uid)}${q}`);
   },
 
   toggleFlag: async (
@@ -338,7 +347,7 @@ export const api = {
     value: boolean
   ): Promise<{ success: boolean }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${uid}/flags`, {
+    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${realUid(uid)}/flags`, {
       method: 'POST',
       body: JSON.stringify({ flag, value })
     });
@@ -350,7 +359,7 @@ export const api = {
     targetFolder: string
   ): Promise<{ success: boolean }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${uid}/move`, {
+    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${realUid(uid)}/move`, {
       method: 'POST',
       body: JSON.stringify({ targetFolder })
     });
@@ -362,19 +371,19 @@ export const api = {
     uid: number
   ): Promise<{ success: boolean; permanent?: boolean; movedTo?: string }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request(`/mailboxes/${encoded}/messages/${uid}`, { method: 'DELETE' });
+    return request(`/mailboxes/${encoded}/messages/${realUid(uid)}`, { method: 'DELETE' });
   },
 
   /** Trash -> Inbox */
   restoreMessage: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request(`/mailboxes/${encoded}/messages/${uid}/restore`, { method: 'POST' });
+    return request(`/mailboxes/${encoded}/messages/${realUid(uid)}/restore`, { method: 'POST' });
   },
 
   /** Junk -> Inbox */
   notSpam: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request(`/mailboxes/${encoded}/messages/${uid}/not-spam`, { method: 'POST' });
+    return request(`/mailboxes/${encoded}/messages/${realUid(uid)}/not-spam`, { method: 'POST' });
   },
 
   /** Permanently deletes everything in Trash or Junk. */
@@ -399,7 +408,7 @@ export const api = {
   },
 
   deleteDraft: async (uid: number): Promise<{ success: boolean }> => {
-    return request(`/drafts/${uid}`, { method: 'DELETE' });
+    return request(`/drafts/${realUid(uid)}`, { method: 'DELETE' });
   },
 
   sendEmail: async (payload: {
@@ -433,6 +442,6 @@ export const api = {
     // Links cannot send headers, so the account goes in the query (the server allows that for GET only).
     // Uses the account active when the message was rendered, not whichever signed in last.
     const account = activeHandle ? `?account=${encodeURIComponent(activeHandle)}` : '';
-    return `${API_BASE}/mailboxes/${encodeURIComponent(folderPath)}/messages/${uid}/attachments/${encodeURIComponent(partId)}${account}`;
+    return `${API_BASE}/mailboxes/${encodeURIComponent(folderPath)}/messages/${realUid(uid)}/attachments/${encodeURIComponent(partId)}${account}`;
   }
 };

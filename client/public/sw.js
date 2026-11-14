@@ -1,5 +1,5 @@
 // Mailloom Lightweight Service Worker for Instant Cold Startup & App Shell Caching
-const CACHE_NAME = 'mailloom-shell-v2';
+const CACHE_NAME = 'mailloom-shell-v3';
 const STATIC_ASSETS = [
   './',
   './index.html',

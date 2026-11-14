@@ -70,7 +70,7 @@ describe('composer with the rich editor', () => {
   it('sends rich mail as html (the picture stays in the text, no attachment files) and no separate text', async () => {
     saveSignatureForAccount('a@delpat.test', { enabled: true, html: `<p>Rahul</p><p><img src="${PNG}" alt="logo"></p>` });
     renderComposer();
-    await userEvent.setup().click(screen.getByRole('button', { name: /send message/i }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /^send/i }));
     await waitFor(() => expect(sendEmail).toHaveBeenCalled());
     const payload = sendEmail.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.text).toBeUndefined();
@@ -84,12 +84,13 @@ describe('composer with the rich editor', () => {
     const u = userEvent.setup();
     await u.click(screen.getByRole('textbox', { name: 'Message' }));
     await u.keyboard('just words');
-    await u.click(screen.getByRole('button', { name: 'Plain text' }));
+    await u.click(screen.getByRole('button', { name: 'More composer options' }));
+    await u.click(screen.getByRole('menuitem', { name: 'Plain text' }));
     expect(requestConfirm).not.toHaveBeenCalled();
     const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
     expect(box.tagName).toBe('TEXTAREA');
     expect(box.value).toBe('just words');
-    await u.click(screen.getByRole('button', { name: /send message/i }));
+    await u.click(screen.getByRole('button', { name: /^send/i }));
     await waitFor(() => expect(sendEmail).toHaveBeenCalled());
     const payload = sendEmail.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.html).toBeUndefined();
@@ -99,7 +100,9 @@ describe('composer with the rich editor', () => {
   it('Plain text switch asks first when pictures or formatting would be lost', async () => {
     saveSignatureForAccount('a@delpat.test', { enabled: true, html: `<p><img src="${PNG}" alt="logo"></p>` });
     const { requestConfirm } = renderComposer();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Plain text' }));
+    const u2 = userEvent.setup();
+    await u2.click(screen.getByRole('button', { name: 'More composer options' }));
+    await u2.click(screen.getByRole('menuitem', { name: 'Plain text' }));
     expect(requestConfirm).toHaveBeenCalledTimes(1);
     expect(requestConfirm.mock.calls[0][0].message).toMatch(/pictures will be removed/);
     expect(screen.getByRole('textbox', { name: 'Message' }).tagName).not.toBe('TEXTAREA');
@@ -120,8 +123,28 @@ describe('composer with the rich editor', () => {
   it('refuses to send when pictures and attachments exceed the limit', async () => {
     const big = 'A'.repeat(Math.ceil((11 * 1024 * 1024 * 4) / 3));
     renderComposer({ initialHtml: `<p>x</p><img src="data:image/png;base64,${big}">` });
-    await userEvent.setup().click(screen.getByRole('button', { name: /send message/i }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /^send/i }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/pictures and attachments together/);
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('composer footer and chips', () => {
+  it('recipient chips show the name and its initials, with the address on hover', () => {
+    renderComposer({ initialTo: ['priya@delpat.test'], replyMeta: { names: { 'priya@delpat.test': 'Priya Shah' } } });
+    const chip = screen.getByTitle('priya@delpat.test');
+    expect(chip.textContent).toContain('Priya Shah');
+    expect(chip.textContent).toContain('PS');
+  });
+
+  it('keeps Templates, Signature and Plain text in one menu and the bottom bar on one row', async () => {
+    renderComposer();
+    const send = screen.getByRole('button', { name: /^send/i });
+    expect(send.parentElement!.className).toMatch(/flex-nowrap/);
+    const u = userEvent.setup();
+    await u.click(screen.getByRole('button', { name: 'More composer options' }));
+    for (const n of ['Templates', 'Signature', 'Plain text']) {
+      expect(screen.getByRole('menuitem', { name: new RegExp(n) })).toBeTruthy();
+    }
   });
 });
