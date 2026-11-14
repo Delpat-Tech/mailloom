@@ -32,6 +32,9 @@ export interface MailboxFolder {
   specialUse?: SpecialUseFolder;
   unreadCount: number;
   totalCount: number;
+  /** 0 for top-level folders, 1 for a child, ... */
+  depth?: number;
+  parentPath?: string;
 }
 
 export interface MessageHeader {
@@ -78,6 +81,8 @@ export interface ParsedEmailMessage {
   html?: string;
   text?: string;
   attachments: EmailAttachment[];
+  /** Remote images that were blocked in this view (0 or missing: none). */
+  blockedImages?: number;
   headers?: Record<string, string | string[]>;
 }
 
@@ -104,6 +109,8 @@ export interface SendEmailPayload {
   forwardOf?: { folder: string; uid: number };
   /** Client-chosen key; a retry with the same key never sends twice. */
   idempotencyKey?: string;
+  /** Draft to delete once the mail is sent. */
+  draftUid?: number;
 }
 
 export interface SendResult {

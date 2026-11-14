@@ -1,7 +1,9 @@
-import { ImapFlow, SearchObject } from 'imapflow';
+import { ImapFlow, SearchObject, type FetchMessageObject } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import type { AccountConfig, MailboxFolder, MessageHeader, ParsedEmailMessage, SpecialUseFolder } from '../types.js';
-import { cleanEmailHtml } from '../utils/sanitize.js';
+import { renderEmail, findCidReferences } from '../utils/sanitize.js';
+import { classifyParts, findPart, isValidPartId, type LeafPart, type MessageParts } from './mailparts.js';
+import { cleanFilename, decodeCharset, decodeTransfer, htmlToText, makeSnippet } from '../utils/mime.js';
 
 export interface SearchFilters {
   search?: string;
@@ -12,25 +14,28 @@ export interface SearchFilters {
   before?: string;
 }
 
-function detectSpecialUse(name: string, specialUse?: string): SpecialUseFolder {
+const NAME_KINDS: Record<string, SpecialUseFolder> = {
+  sent: 'Sent', 'sent items': 'Sent', 'sent mail': 'Sent', 'sent messages': 'Sent',
+  drafts: 'Drafts', draft: 'Drafts',
+  trash: 'Trash', 'deleted items': 'Trash', 'deleted messages': 'Trash', bin: 'Trash',
+  junk: 'Junk', spam: 'Junk', 'junk e-mail': 'Junk', 'junk email': 'Junk',
+  archive: 'Archive', archives: 'Archive'
+};
+
+/** Which well-known folder this is. Unknown folders return undefined and keep their own name. */
+export function detectSpecialUse(name: string, specialUse?: string, path?: string): SpecialUseFolder | undefined {
+  if ((path || name).toUpperCase() === 'INBOX') return 'Inbox';
   if (specialUse) {
     const s = specialUse.replace(/^\\/, '').toLowerCase();
-    if (s.includes('inbox')) return 'Inbox';
-    if (s.includes('sent')) return 'Sent';
-    if (s.includes('draft')) return 'Drafts';
-    if (s.includes('trash')) return 'Trash';
-    if (s.includes('junk') || s.includes('spam')) return 'Junk';
-    if (s.includes('archive')) return 'Archive';
-    if (s.includes('all')) return 'All';
+    if (s === 'inbox') return 'Inbox';
+    if (s === 'sent') return 'Sent';
+    if (s === 'drafts') return 'Drafts';
+    if (s === 'trash') return 'Trash';
+    if (s === 'junk') return 'Junk';
+    if (s === 'archive') return 'Archive';
+    if (s === 'all') return 'All';
   }
-  const n = name.toLowerCase();
-  if (n === 'inbox') return 'Inbox';
-  if (n.includes('sent')) return 'Sent';
-  if (n.includes('draft')) return 'Drafts';
-  if (n.includes('trash') || n.includes('bin') || n.includes('deleted')) return 'Trash';
-  if (n.includes('spam') || n.includes('junk')) return 'Junk';
-  if (n.includes('archive')) return 'Archive';
-  return 'Inbox';
+  return NAME_KINDS[name.trim().toLowerCase()];
 }
 
 export function createImapClient(config: AccountConfig): ImapFlow {
@@ -135,6 +140,29 @@ export async function testImapConnection(config: AccountConfig): Promise<boolean
   }
 }
 
+// -------------------------------------------------------------
+// FOLDERS
+// -------------------------------------------------------------
+type ListedMailbox = Awaited<ReturnType<ImapFlow['list']>>[number];
+
+function kindOfMailbox(mb: ListedMailbox): SpecialUseFolder | undefined {
+  return detectSpecialUse(mb.name, mb.specialUse, mb.path);
+}
+
+/** Path of the folder of the given kind (Trash, Junk, Drafts, Inbox ...), if the server has one. */
+export async function findFolderPath(client: ImapFlow, kind: SpecialUseFolder): Promise<string | undefined> {
+  const list = await client.list();
+  const flagged = list.find((m) => m.specialUse && detectSpecialUse(m.name, m.specialUse, m.path) === kind);
+  if (flagged) return flagged.path;
+  return list.find((m) => kindOfMailbox(m) === kind)?.path;
+}
+
+export async function getFolderKind(client: ImapFlow, folderPath: string): Promise<SpecialUseFolder | undefined> {
+  const list = await client.list();
+  const mb = list.find((m) => m.path === folderPath);
+  return mb ? kindOfMailbox(mb) : detectSpecialUse(folderPath.split(/[./]/).pop() || folderPath, undefined, folderPath);
+}
+
 export async function getLiveMailboxes(config: AccountConfig): Promise<MailboxFolder[]> {
   const client = await getPooledImapClient(config);
   const folders: MailboxFolder[] = [];
@@ -160,18 +188,93 @@ export async function getLiveMailboxes(config: AccountConfig): Promise<MailboxFo
       }
     }
 
+    const delimiter = mb.delimiter || '/';
+    const segments = mb.path.split(delimiter);
     folders.push({
       path: mb.path,
       name: mb.name,
-      delimiter: mb.delimiter,
+      delimiter,
       flags: Array.from(mb.flags || []),
-      specialUse: detectSpecialUse(mb.name, mb.specialUse),
+      specialUse: kindOfMailbox(mb),
       unreadCount,
-      totalCount
+      totalCount,
+      depth: Math.max(0, segments.length - 1),
+      parentPath: segments.length > 1 ? segments.slice(0, -1).join(delimiter) : undefined
     });
   }
 
   return folders;
+}
+
+// -------------------------------------------------------------
+// MESSAGE LIST
+// -------------------------------------------------------------
+const LIST_FETCH = {
+  uid: true,
+  flags: true,
+  envelope: true,
+  internalDate: true,
+  size: true,
+  bodyStructure: true
+} as const;
+
+function toHeader(msg: FetchMessageObject): { header: MessageHeader; parts: MessageParts } {
+  const env = msg.envelope;
+  const fromAddr = env?.from?.[0] || { name: 'Unknown', address: 'unknown@example.com' };
+  const toAddrs = (env?.to || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
+  const ccAddrs = (env?.cc || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
+  const flagsArr = Array.from(msg.flags || []);
+  const parts = classifyParts(msg.bodyStructure);
+  return {
+    parts,
+    header: {
+      uid: msg.uid,
+      seq: msg.seq,
+      id: env?.messageId || String(msg.uid),
+      from: { name: fromAddr.name || fromAddr.address || 'Unknown', address: fromAddr.address || '' },
+      to: toAddrs,
+      cc: ccAddrs,
+      subject: env?.subject || '(No Subject)',
+      date: new Date(msg.internalDate || Date.now()).toISOString(),
+      flags: flagsArr,
+      isSeen: flagsArr.includes('\\Seen'),
+      isFlagged: flagsArr.includes('\\Flagged'),
+      hasAttachments: parts.attachments.length > 0,
+      size: msg.size || 0,
+      snippet: ''
+    }
+  };
+}
+
+/** Fill `snippet` (first ~140 characters of text) with one small partial fetch per distinct text part number. */
+async function addSnippets(
+  client: ImapFlow,
+  items: Array<{ header: MessageHeader; parts: MessageParts }>
+): Promise<void> {
+  const groups = new Map<string, { part: LeafPart; uids: number[] }>();
+  for (const it of items) {
+    const part = it.parts.text?.[0] || it.parts.html?.[0];
+    if (!part) continue;
+    const key = `${part.partId}|${part.type}|${part.encoding}|${part.charset}`;
+    const g = groups.get(key) || { part, uids: [] };
+    g.uids.push(it.header.uid);
+    groups.set(key, g);
+  }
+  const byUid = new Map(items.map((i) => [i.header.uid, i.header]));
+  for (const { part, uids } of groups.values()) {
+    try {
+      const gen = client.fetch(uids, { uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength: 4096 }] }, { uid: true });
+      for await (const m of gen) {
+        const raw = m.bodyParts?.get(part.partId) || m.bodyParts?.values().next().value;
+        const header = byUid.get(m.uid);
+        if (!raw || !header) continue;
+        const text = decodeCharset(decodeTransfer(raw, part.encoding), part.charset);
+        header.snippet = makeSnippet(part.type === 'text/html' ? htmlToText(text) : text);
+      }
+    } catch {
+      // A preview is a nicety; the list still works without it.
+    }
+  }
 }
 
 export async function getLiveMessages(
@@ -182,10 +285,13 @@ export async function getLiveMessages(
   filters?: SearchFilters
 ): Promise<{ messages: MessageHeader[]; total: number }> {
   const client = await getPooledImapClient(config);
-  const headers: MessageHeader[] = [];
 
   const lock = await client.getMailboxLock(folderPath, { readOnly: true });
   try {
+    // A pooled connection keeps the folder selected and may not know about mail that arrived since:
+    // select it afresh so the count and sequence numbers are current.
+    await client.mailboxClose();
+    await client.mailboxOpen(folderPath, { readOnly: true });
     const mailbox = client.mailbox;
     const mailboxTotal = mailbox ? (mailbox.exists || 0) : 0;
     if (mailboxTotal === 0) return { messages: [], total: 0 };
@@ -230,148 +336,165 @@ export async function getLiveMessages(
       const pagedUids = sortedUids.slice(startIdx, startIdx + limit);
       if (pagedUids.length === 0) return { messages: [], total };
 
-      const messagesGen = client.fetch(pagedUids, {
-        uid: true,
-        flags: true,
-        envelope: true,
-        internalDate: true,
-        size: true
-      }, { uid: true });
-
-      const uidToHeader = new Map<number, MessageHeader>();
-      for await (const msg of messagesGen) {
-        const env = msg.envelope;
-        const fromAddr = env?.from?.[0] || { name: 'Unknown', address: 'unknown@example.com' };
-        const toAddrs = (env?.to || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
-        const ccAddrs = (env?.cc || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
-        const flagsArr = Array.from(msg.flags || []);
-
-        uidToHeader.set(msg.uid, {
-          uid: msg.uid,
-          seq: msg.seq,
-          id: env?.messageId || String(msg.uid),
-          from: { name: fromAddr.name || fromAddr.address || 'Unknown', address: fromAddr.address || '' },
-          to: toAddrs,
-          cc: ccAddrs,
-          subject: env?.subject || '(No Subject)',
-          date: new Date(msg.internalDate || Date.now()).toISOString(),
-          flags: flagsArr,
-          isSeen: flagsArr.includes('\\Seen'),
-          isFlagged: flagsArr.includes('\\Flagged'),
-          hasAttachments: false,
-          size: msg.size || 0,
-          snippet: ''
-        });
+      const uidToItem = new Map<number, { header: MessageHeader; parts: MessageParts }>();
+      for await (const msg of client.fetch(pagedUids, LIST_FETCH, { uid: true })) {
+        uidToItem.set(msg.uid, toHeader(msg));
       }
-
-      const orderedHeaders = pagedUids.map((uid) => uidToHeader.get(uid)).filter(Boolean) as MessageHeader[];
-      return { messages: orderedHeaders, total };
+      const items = pagedUids.map((uid) => uidToItem.get(uid)).filter(Boolean) as Array<{
+        header: MessageHeader;
+        parts: MessageParts;
+      }>;
+      await addSnippets(client, items);
+      return { messages: items.map((i) => i.header), total };
     }
 
     // Fast range pagination for default view
     const total = mailboxTotal;
     const startSeq = Math.max(1, total - (page * limit) + 1);
     const endSeq = Math.max(1, total - ((page - 1) * limit));
+    if ((page - 1) * limit >= total) return { messages: [], total };
     const range = `${startSeq}:${endSeq}`;
 
-    const messagesGen = client.fetch(range, {
-      uid: true,
-      flags: true,
-      envelope: true,
-      internalDate: true,
-      size: true
-    });
-
-    for await (const msg of messagesGen) {
-      const env = msg.envelope;
-      const fromAddr = env?.from?.[0] || { name: 'Unknown', address: 'unknown@example.com' };
-      const toAddrs = (env?.to || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
-      const ccAddrs = (env?.cc || []).map((t) => ({ name: t.name || '', address: t.address || '' }));
-      const flagsArr = Array.from(msg.flags || []);
-
-      headers.push({
-        uid: msg.uid,
-        seq: msg.seq,
-        id: env?.messageId || String(msg.uid),
-        from: { name: fromAddr.name || fromAddr.address || 'Unknown', address: fromAddr.address || '' },
-        to: toAddrs,
-        cc: ccAddrs,
-        subject: env?.subject || '(No Subject)',
-        date: new Date(msg.internalDate || Date.now()).toISOString(),
-        flags: flagsArr,
-        isSeen: flagsArr.includes('\\Seen'),
-        isFlagged: flagsArr.includes('\\Flagged'),
-        hasAttachments: false,
-        size: msg.size || 0,
-        snippet: ''
-      });
+    const items: Array<{ header: MessageHeader; parts: MessageParts }> = [];
+    for await (const msg of client.fetch(range, LIST_FETCH)) {
+      items.push(toHeader(msg));
     }
-
-    headers.reverse();
-    return { messages: headers, total };
+    items.reverse();
+    await addSnippets(client, items);
+    return { messages: items.map((i) => i.header), total };
   } finally {
     lock.release();
   }
 }
 
+// -------------------------------------------------------------
+// MESSAGE DETAIL
+// -------------------------------------------------------------
+const MAX_TEXT_PART_BYTES = 8 * 1024 * 1024;
+const MAX_INLINE_IMAGE_BYTES = 1024 * 1024;
+const MAX_INLINE_TOTAL_BYTES = 4 * 1024 * 1024;
+
+/** One body part, transfer-decoded (base64 / quoted-printable). Charset is not applied. Null when absent or over the cap. */
+async function readPart(client: ImapFlow, uid: number, part: LeafPart, maxBytes: number): Promise<Buffer | null> {
+  const wire = Math.ceil(maxBytes * 1.4) + 1024;
+  const m = await client.fetchOne(
+    String(uid),
+    { uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength: wire }] },
+    { uid: true }
+  );
+  if (!m) return null;
+  const raw = m.bodyParts?.get(part.partId) || m.bodyParts?.values().next().value;
+  if (!raw) return null;
+  if (raw.length >= wire) return null; // too big to show inline
+  const decoded = m.binaryParts?.has(part.partId) ? raw : decodeTransfer(raw, part.encoding);
+  return decoded.length > maxBytes ? null : decoded;
+}
+
+function addrList(list: Array<{ name?: string; address?: string }> | undefined) {
+  return (list || []).map((v) => ({ name: v.name || '', address: v.address || '' }));
+}
+
+export interface DetailOptions {
+  /** Load remote images referenced by the message (default: blocked). */
+  allowRemoteImages?: boolean;
+}
+
 export async function getLiveMessageDetail(
   config: AccountConfig,
   folderPath: string,
-  uid: number
+  uid: number,
+  options: DetailOptions = {}
 ): Promise<ParsedEmailMessage | null> {
   const client = await getPooledImapClient(config);
 
   const lock = await client.getMailboxLock(folderPath);
   try {
-    // Mark as seen
-    await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
+    const msg = await client.fetchOne(
+      String(uid),
+      { uid: true, flags: true, envelope: true, internalDate: true, bodyStructure: true, headers: ['references'] },
+      { uid: true }
+    );
+    if (!msg) return null;
 
-    const rawMsg = await client.download(String(uid), undefined, { uid: true });
-    if (!rawMsg || !rawMsg.content) return null;
+    const flags = Array.from(msg.flags || []);
+    const wasFlagged = flags.includes('\\Flagged');
+    if (!flags.includes('\\Seen')) {
+      await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
+      flags.push('\\Seen');
+    }
 
-    const parsed = await simpleParser(rawMsg.content);
-    const flagsArr = ['\\Seen'];
+    const parts = classifyParts(msg.bodyStructure);
 
-    const attachments = (parsed.attachments || []).map((att, i) => ({
-      partId: String(i + 1),
-      filename: att.filename || `attachment-${i + 1}`,
-      contentType: att.contentType || 'application/octet-stream',
-      size: att.size || att.content?.length || 0,
-      contentId: att.cid,
-      isInline: Boolean(att.related)
+    // Only the text parts are fetched; attachments are never read here .
+    let text = '';
+    for (const p of parts.text || []) {
+      const buf = await readPart(client, uid, p, MAX_TEXT_PART_BYTES);
+      if (buf) text += (text ? '\n' : '') + decodeCharset(buf, p.charset);
+    }
+    let rawHtml = '';
+    for (const p of parts.html || []) {
+      const buf = await readPart(client, uid, p, MAX_TEXT_PART_BYTES);
+      if (buf) rawHtml += decodeCharset(buf, p.charset);
+    }
+    if (!text && rawHtml) text = htmlToText(rawHtml).replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
+
+    let html: string | undefined;
+    let blockedImages = 0;
+    if (rawHtml) {
+      const wanted = new Set(findCidReferences(rawHtml));
+      const cids = new Map<string, string>();
+      let budget = MAX_INLINE_TOTAL_BYTES;
+      for (const p of parts.inline) {
+        const key = p.cid?.toLowerCase();
+        if (!key || !wanted.has(key) || cids.has(key)) continue;
+        if (p.size > MAX_INLINE_IMAGE_BYTES * 1.4 || budget <= 0) continue;
+        try {
+          const buf = await readPart(client, uid, p, MAX_INLINE_IMAGE_BYTES);
+          if (!buf || buf.length === 0 || buf.length >= MAX_INLINE_IMAGE_BYTES) continue;
+          budget -= buf.length;
+          cids.set(key, `data:${p.type};base64,${buf.toString('base64')}`);
+        } catch {
+          // The image stays hidden; the rest of the mail is still shown.
+        }
+      }
+      const rendered = renderEmail(rawHtml, { cids, allowRemoteImages: options.allowRemoteImages });
+      html = rendered.html;
+      blockedImages = rendered.blockedImages;
+    }
+
+    const env = msg.envelope;
+    const fromFirst = env?.from?.[0] || { name: '', address: '' };
+    const refsHeader = msg.headers ? msg.headers.toString('utf8') : '';
+    const references = refsHeader.match(/<[^<>\s]+>/g) || [];
+
+    const attachments = parts.attachments.map((p, i) => ({
+      partId: p.partId,
+      filename: cleanFilename(p.filename, `attachment-${i + 1}`),
+      contentType: p.type,
+      size: p.encoding?.toLowerCase() === 'base64' ? Math.floor(p.size * 0.75) : p.size,
+      contentId: p.cid,
+      isInline: false
     }));
-
-    const fromFirst = parsed.from?.value?.[0] || { name: '', address: '' };
-    const toArr = (parsed.to ? (Array.isArray(parsed.to) ? parsed.to : [parsed.to]) : []).flatMap((t) =>
-      (t.value || []).map((v) => ({ name: v.name || '', address: v.address || '' }))
-    );
-    const ccArr = (parsed.cc ? (Array.isArray(parsed.cc) ? parsed.cc : [parsed.cc]) : []).flatMap((t) =>
-      (t.value || []).map((v) => ({ name: v.name || '', address: v.address || '' }))
-    );
-
-    const replyToArr = (parsed.replyTo?.value || []).map((v) => ({ name: v.name || '', address: v.address || '' }));
-    const refsRaw = parsed.references;
-    const referencesArr = refsRaw ? (Array.isArray(refsRaw) ? refsRaw : [refsRaw]) : [];
-
-    const htmlBody = parsed.html ? cleanEmailHtml(parsed.html) : parsed.textAsHtml ? cleanEmailHtml(parsed.textAsHtml) : undefined;
 
     return {
       uid,
-      id: parsed.messageId || String(uid),
-      subject: parsed.subject || '(No Subject)',
+      id: env?.messageId || String(uid),
+      subject: env?.subject || '(No Subject)',
       from: { name: fromFirst.name || fromFirst.address || 'Unknown', address: fromFirst.address || '' },
-      to: toArr,
-      cc: ccArr,
-      replyTo: replyToArr,
-      messageId: parsed.messageId,
-      references: referencesArr,
-      date: (parsed.date || new Date()).toISOString(),
-      flags: flagsArr,
+      to: addrList(env?.to),
+      cc: addrList(env?.cc),
+      bcc: addrList(env?.bcc),
+      replyTo: addrList(env?.replyTo),
+      messageId: env?.messageId,
+      references,
+      date: new Date(env?.date || msg.internalDate || Date.now()).toISOString(),
+      flags,
       isSeen: true,
-      isFlagged: false,
-      html: htmlBody,
-      text: parsed.text || '',
-      attachments
+      isFlagged: wasFlagged,
+      html,
+      text,
+      attachments,
+      blockedImages
     };
   } finally {
     lock.release();
@@ -409,18 +532,25 @@ export async function streamLiveAttachment(
   config: AccountConfig,
   folderPath: string,
   uid: number,
-  partId?: string
+  partId: string
 ): Promise<{ stream: NodeJS.ReadableStream; filename: string; contentType: string } | null> {
+  if (!isValidPartId(partId)) return null;
   const client = await getPooledImapClient(config);
   const lock = await client.getMailboxLock(folderPath, { readOnly: true });
   try {
-    const rawMsg = await client.download(String(uid), partId, { uid: true });
-    if (!rawMsg || !rawMsg.content) return null;
+    const msg = await client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true });
+    if (!msg) return null;
+    const part = findPart(msg.bodyStructure, partId);
+    if (!part) return null;
 
+    const dl = await client.download(String(uid), partId, { uid: true });
+    if (!dl || !dl.content) return null;
+
+    const ext = part.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
     return {
-      stream: rawMsg.content,
-      filename: rawMsg.meta?.filename || `attachment-${partId || uid}`,
-      contentType: rawMsg.meta?.contentType || 'application/octet-stream'
+      stream: dl.content,
+      filename: cleanFilename(part.filename, `attachment-${partId}.${ext}`),
+      contentType: part.type
     };
   } finally {
     lock.release();
@@ -439,14 +569,33 @@ export async function setLiveMessageFlags(
   const lock = await client.getMailboxLock(folderPath);
   try {
     const imapFlag = flag === 'isSeen' ? '\\Seen' : '\\Flagged';
+    let ok: boolean;
     if (value) {
-      await client.messageFlagsAdd(String(uid), [imapFlag], { uid: true });
+      ok = await client.messageFlagsAdd(String(uid), [imapFlag], { uid: true });
     } else {
-      await client.messageFlagsRemove(String(uid), [imapFlag], { uid: true });
+      ok = await client.messageFlagsRemove(String(uid), [imapFlag], { uid: true });
     }
+    if (!ok) throw new Error('The flag could not be changed.');
     return true;
   } finally {
     lock.release();
+  }
+}
+
+// -------------------------------------------------------------
+// ORGANISING: MOVE, DELETE, EMPTY (honest results: failure throws)
+// -------------------------------------------------------------
+async function requireMessage(client: ImapFlow, uid: number): Promise<void> {
+  const found = await client.search({ uid: String(uid) }, { uid: true });
+  if (!found || found.length === 0) throw new Error('The message was not found. It may already have been moved or deleted.');
+}
+
+/** Move one message and prove it moved; throws when nothing moved. Caller holds the lock on the source. */
+async function moveChecked(client: ImapFlow, uid: number, target: string): Promise<void> {
+  await requireMessage(client, uid);
+  const res = await client.messageMove(String(uid), target, { uid: true });
+  if (!res || (res.uidMap && res.uidMap.size === 0)) {
+    throw new Error(`The message could not be moved to "${target}".`);
   }
 }
 
@@ -457,27 +606,97 @@ export async function moveLiveMessage(
   targetFolder: string
 ): Promise<boolean> {
   const client = await getPooledImapClient(config);
+  if (folderPath === targetFolder) throw new Error('The message is already in that folder.');
 
   const lock = await client.getMailboxLock(folderPath);
   try {
-    await client.messageMove(String(uid), targetFolder, { uid: true });
+    await moveChecked(client, uid, targetFolder);
     return true;
   } finally {
     lock.release();
   }
 }
 
+export interface DeleteResult {
+  /** true when the message is gone for good (deleted inside Trash) */
+  permanent: boolean;
+  /** Where it went when it was moved to Trash */
+  movedTo?: string;
+}
+
+/** Delete = move to Trash. Inside Trash it is deleted permanently. */
 export async function deleteLiveMessage(
   config: AccountConfig,
   folderPath: string,
   uid: number
-): Promise<boolean> {
+): Promise<DeleteResult> {
   const client = await getPooledImapClient(config);
+  const kind = await getFolderKind(client, folderPath);
 
+  if (kind === 'Trash') {
+    const lock = await client.getMailboxLock(folderPath);
+    try {
+      await requireMessage(client, uid);
+      const ok = await client.messageDelete(String(uid), { uid: true });
+      if (!ok) throw new Error('The message could not be deleted.');
+      return { permanent: true };
+    } finally {
+      lock.release();
+    }
+  }
+
+  let trash = await findFolderPath(client, 'Trash');
+  if (!trash) {
+    await client.mailboxCreate('Trash');
+    trash = 'Trash';
+  }
   const lock = await client.getMailboxLock(folderPath);
   try {
-    await client.messageDelete(String(uid), { uid: true });
-    return true;
+    await moveChecked(client, uid, trash);
+    return { permanent: false, movedTo: trash };
+  } finally {
+    lock.release();
+  }
+}
+
+/** Permanently delete everything in Trash or Junk. Returns how many messages were removed. */
+export async function emptyLiveFolder(config: AccountConfig, folderPath: string): Promise<number> {
+  const client = await getPooledImapClient(config);
+  const kind = await getFolderKind(client, folderPath);
+  if (kind !== 'Trash' && kind !== 'Junk') {
+    throw new Error('Only the Trash and Junk folders can be emptied.');
+  }
+  const lock = await client.getMailboxLock(folderPath);
+  try {
+    const before = client.mailbox ? client.mailbox.exists || 0 : 0;
+    if (before === 0) return 0;
+    const ok = await client.messageDelete('1:*');
+    const status = await client.status(folderPath, { messages: true });
+    const left = status.messages || 0;
+    if (!ok || left > 0) {
+      throw new Error(`Only ${before - left} of ${before} messages could be deleted.`);
+    }
+    return before;
+  } finally {
+    lock.release();
+  }
+}
+
+/** Move a message out of Trash or Junk back to the Inbox. */
+export async function restoreLiveMessage(
+  config: AccountConfig,
+  folderPath: string,
+  uid: number,
+  from: 'Trash' | 'Junk'
+): Promise<string> {
+  const client = await getPooledImapClient(config);
+  const kind = await getFolderKind(client, folderPath);
+  if (kind !== from) throw new Error(from === 'Trash' ? 'Only messages in Trash can be restored.' : 'Only messages in Junk can be marked as not spam.');
+  const inbox = (await findFolderPath(client, 'Inbox')) || 'INBOX';
+  const lock = await client.getMailboxLock(folderPath);
+  try {
+    await moveChecked(client, uid, inbox);
+    return inbox;
   } finally {
     lock.release();
   }
@@ -493,25 +712,19 @@ export async function markLiveMessageSpam(
 
   let targetFolder = junkFolder;
   if (!targetFolder) {
-    const list = await client.list();
-    const junkMb = list.find(
-      (m) =>
-        m.specialUse === '\\Junk' ||
-        detectSpecialUse(m.name, m.specialUse) === 'Junk' ||
-        m.name.toLowerCase() === 'junk' ||
-        m.name.toLowerCase() === 'spam'
-    );
-    targetFolder = junkMb ? junkMb.path : 'Junk';
+    targetFolder = await findFolderPath(client, 'Junk');
+    if (!targetFolder) {
+      await client.mailboxCreate('Junk');
+      targetFolder = 'Junk';
+    }
   }
+  if (folderPath === targetFolder) throw new Error('The message is already in Junk.');
 
   const lock = await client.getMailboxLock(folderPath);
   try {
-    // 1. Mark as \Seen
+    await requireMessage(client, uid);
     await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
-    // 2. Move to junk folder if not already in junk
-    if (folderPath.toLowerCase() !== targetFolder.toLowerCase()) {
-      await client.messageMove(String(uid), targetFolder, { uid: true });
-    }
+    await moveChecked(client, uid, targetFolder);
     return true;
   } finally {
     lock.release();

@@ -123,3 +123,18 @@ export async function waitForMail(email: string, folder: string, n = 1, ms = 500
     await new Promise((r) => setTimeout(r, 150));
   }
 }
+
+/** Store a raw RFC 822 message directly in a folder (no SMTP); returns its UID. */
+export async function appendRaw(email: string, folder: string, raw: string | Buffer, flags: string[] = []): Promise<number> {
+  return withImap(email, async (c) => {
+    const r = await c.append(folder, raw, flags);
+    if (!r || !r.uid) throw new Error('append failed or gave no uid');
+    return r.uid;
+  });
+}
+
+/** Build a MIME message with nodemailer's composer (attachments, inline cids, alternatives). */
+export async function buildMime(opts: Record<string, unknown>): Promise<Buffer> {
+  const MailComposer = (await import('nodemailer/lib/mail-composer/index.js')).default;
+  return (await new MailComposer({ from: 'colleague@delpat.test', to: 'tester@delpat.test', ...opts } as never).compile().build()) as Buffer;
+}

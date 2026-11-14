@@ -12,8 +12,13 @@ import {
   markLiveMessageSpam,
   testImapConnection,
   streamLiveAttachment,
+  emptyLiveFolder,
+  restoreLiveMessage,
   closeUserSession
 } from '../services/imap.js';
+import { saveLiveDraft, deleteLiveDraft } from '../services/drafts.js';
+import { contentDisposition } from '../utils/mime.js';
+import { renderEmail } from '../utils/sanitize.js';
 import { sendLiveEmail, testSmtpConnection, SendError, getMaxMessageBytes } from '../services/smtp.js';
 
 interface AuthenticatedRequest extends FastifyRequest {
@@ -182,7 +187,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
 
       const pageNum = Math.max(1, parseInt(page, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
-      const folderPath = decodeURIComponent(path);
+      const folderPath = path;
 
       const filters = {
         search: search.trim() || undefined,
@@ -212,17 +217,20 @@ export async function mailRoutes(fastify: FastifyInstance) {
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
-      const folderPath = decodeURIComponent(path);
+      const folderPath = path;
       const messageUid = parseInt(uid, 10);
+      const images = ['1', 'true'].includes(String((req.query as { images?: string }).images || ''));
 
       if (config.isDemo) {
         const msg = demoMailService.getMessageDetail(folderPath, messageUid);
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
-        return msg;
+        if (!msg.html) return msg;
+        const shown = renderEmail(msg.html, { allowRemoteImages: images });
+        return { ...msg, html: shown.html, blockedImages: shown.blockedImages };
       }
 
       try {
-        const msg = await getLiveMessageDetail(config, folderPath, messageUid);
+        const msg = await getLiveMessageDetail(config, folderPath, messageUid, { allowRemoteImages: images });
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
         return msg;
       } catch (err) {
@@ -244,19 +252,23 @@ export async function mailRoutes(fastify: FastifyInstance) {
         const att = demoMailService.getAttachmentData(messageUid, partId);
         if (!att) return reply.status(404).send({ error: 'Attachment not found' });
         reply.header('Content-Type', att.contentType);
-        reply.header('Content-Disposition', `attachment; filename="${att.filename}"`);
+        reply.header('Content-Disposition', contentDisposition(att.filename));
         return reply.send(att.buffer);
       }
 
       // For real IMAP: stream attachment directly to HTTP response socket with zero RAM buffering
-      const folderPath = decodeURIComponent((req.params as { path: string }).path);
-      const attData = await streamLiveAttachment(config, folderPath, messageUid, partId);
-      if (!attData) return reply.status(404).send({ error: 'Attachment not found' });
+      const folderPath = (req.params as { path: string }).path;
+      try {
+        const attData = await streamLiveAttachment(config, folderPath, messageUid, partId);
+        if (!attData) return reply.status(404).send({ error: 'Attachment not found' });
 
-      reply.header('Content-Type', attData.contentType);
-      reply.header('Content-Disposition', `attachment; filename="${encodeURIComponent(attData.filename)}"`);
-      reply.header('Transfer-Encoding', 'chunked');
-      return reply.send(attData.stream);
+        reply.header('Content-Type', attData.contentType);
+        reply.header('Content-Disposition', contentDisposition(attData.filename));
+        reply.header('X-Content-Type-Options', 'nosniff');
+        return reply.send(attData.stream);
+      } catch (err) {
+        return reply.status(500).send({ error: `The attachment could not be downloaded: ${(err as Error).message}` });
+      }
     }
   );
 
@@ -269,7 +281,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const { path, uid } = req.params as { path: string; uid: string };
       const { flag, value } = req.body as { flag: 'isSeen' | 'isFlagged'; value: boolean };
       const messageUid = parseInt(uid, 10);
-      const folderPath = decodeURIComponent(path);
+      const folderPath = path;
 
       if (config.isDemo) {
         const success = demoMailService.toggleFlag(messageUid, flag, value);
@@ -294,10 +306,11 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const { path, uid } = req.params as { path: string; uid: string };
       const { targetFolder } = req.body as { targetFolder: string };
       const messageUid = parseInt(uid, 10);
-      const folderPath = decodeURIComponent(path);
+      const folderPath = path;
 
       if (config.isDemo) {
         const success = demoMailService.moveMessage(messageUid, targetFolder);
+        if (!success) return reply.status(404).send({ error: 'Message not found' });
         return { success };
       }
 
@@ -318,16 +331,17 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
       const messageUid = parseInt(uid, 10);
-      const folderPath = decodeURIComponent(path);
+      const folderPath = path;
 
       if (config.isDemo) {
         const success = demoMailService.deleteMessage(messageUid);
-        return { success };
+        if (!success) return reply.status(404).send({ error: 'Message not found' });
+        return { success, permanent: folderPath === 'Trash' };
       }
 
       try {
-        const success = await deleteLiveMessage(config, folderPath, messageUid);
-        return { success };
+        const r = await deleteLiveMessage(config, folderPath, messageUid);
+        return { success: true, permanent: r.permanent, movedTo: r.movedTo };
       } catch (err) {
         return reply.status(500).send({ error: (err as Error).message });
       }
@@ -343,7 +357,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const { path, uid } = req.params as { path: string; uid: string };
       const { junkFolder } = (req.body as { junkFolder?: string }) || {};
       const messageUid = parseInt(uid, 10);
-      const folderPath = decodeURIComponent(path);
+      const folderPath = path;
 
       if (config.isDemo) {
         const success = demoMailService.markAsSpam(messageUid, junkFolder || 'Junk');
@@ -358,6 +372,90 @@ export async function mailRoutes(fastify: FastifyInstance) {
       }
     }
   );
+
+  // 11b. Restore from Trash / Not spam (back to the Inbox)
+  for (const [suffix, from] of [['restore', 'Trash'], ['not-spam', 'Junk']] as const) {
+    fastify.post(
+      `/api/mailboxes/:path/messages/:uid/${suffix}`,
+      { preHandler: [requireAuth] },
+      async (req: AuthenticatedRequest, reply) => {
+        const config = req.accountConfig!;
+        const { path, uid } = req.params as { path: string; uid: string };
+        const messageUid = parseInt(uid, 10);
+        if (config.isDemo) {
+          const ok = demoMailService.moveMessage(messageUid, 'INBOX');
+          if (!ok) return reply.status(404).send({ error: 'Message not found' });
+          return { success: true, movedTo: 'INBOX' };
+        }
+        try {
+          const movedTo = await restoreLiveMessage(config, path, messageUid, from);
+          return { success: true, movedTo };
+        } catch (err) {
+          return reply.status(500).send({ error: (err as Error).message });
+        }
+      }
+    );
+  }
+
+  // 11c. Empty Trash / Junk (permanent)
+  fastify.post(
+    '/api/mailboxes/:path/empty',
+    { preHandler: [requireAuth] },
+    async (req: AuthenticatedRequest, reply) => {
+      const config = req.accountConfig!;
+      const { path } = req.params as { path: string };
+      if (config.isDemo) {
+        const deleted = demoMailService.emptyFolder(path);
+        return { success: true, deleted };
+      }
+      try {
+        const deleted = await emptyLiveFolder(config, path);
+        return { success: true, deleted };
+      } catch (err) {
+        return reply.status(500).send({ error: (err as Error).message });
+      }
+    }
+  );
+
+  // 11d. Drafts: save (create or replace) and delete
+  fastify.post('/api/drafts', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const config = req.accountConfig!;
+    const raw = (req.body as Record<string, unknown>) || {};
+    const strList = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [];
+    if (config.isDemo) return reply.status(400).send({ error: 'Drafts are not available in the demo.' });
+    try {
+      const saved = await saveLiveDraft(
+        config,
+        {
+          to: strList(raw.to),
+          cc: strList(raw.cc),
+          bcc: strList(raw.bcc),
+          subject: typeof raw.subject === 'string' ? raw.subject : '',
+          text: typeof raw.text === 'string' ? raw.text : '',
+          inReplyTo: typeof raw.inReplyTo === 'string' ? raw.inReplyTo : undefined,
+          references: strList(raw.references)
+        },
+        Number.isInteger(raw.replaceUid) ? (raw.replaceUid as number) : undefined
+      );
+      return { success: true, uid: saved.uid, folder: saved.folder };
+    } catch (err) {
+      return reply.status(500).send({ error: `The draft could not be saved: ${(err as Error).message}` });
+    }
+  });
+
+  fastify.delete('/api/drafts/:uid', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const config = req.accountConfig!;
+    const uid = parseInt((req.params as { uid: string }).uid, 10);
+    if (config.isDemo) return { success: true };
+    try {
+      const deleted = await deleteLiveDraft(config, uid);
+      if (!deleted) return reply.status(404).send({ error: 'Draft not found' });
+      return { success: true };
+    } catch (err) {
+      return reply.status(500).send({ error: (err as Error).message });
+    }
+  });
 
   // 12. Send Outgoing Message (multipart/form-data: JSON field "payload" + file parts, or plain JSON without files)
   fastify.post(
@@ -415,6 +513,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
           fo && typeof fo.folder === 'string' && Number.isInteger(fo.uid)
             ? { folder: fo.folder, uid: fo.uid as number }
             : undefined,
+        draftUid: Number.isInteger(raw.draftUid) ? (raw.draftUid as number) : undefined,
         idempotencyKey:
           (typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'] : undefined) ||
           (typeof raw.idempotencyKey === 'string' ? raw.idempotencyKey : undefined)
@@ -432,7 +531,12 @@ export async function mailRoutes(fastify: FastifyInstance) {
 
       try {
         const r = await sendLiveEmail(config, payload);
+        let draftDeleted: boolean | undefined;
+        if (payload.draftUid && r.accepted.length > 0) {
+          draftDeleted = await deleteLiveDraft(config, payload.draftUid).catch(() => false);
+        }
         return {
+          draftDeleted,
           success: r.rejected.length === 0,
           messageId: r.messageId,
           accepted: r.accepted,
