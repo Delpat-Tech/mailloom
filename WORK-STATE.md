@@ -22,7 +22,7 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 1. DONE, merged e226438, release v2026.11.15b (awaiting Om's server update): phone basics batch (Om found gaps on 15 Nov): sign-in alert glitch, password show/hide, pull-to-refresh,
    back button/history (opening a mail adds no history: back exits the app), offline banner, sign-in field hints,
    row swipe actions, composer with keyboard. Then review, release, update the live server.
-   Builder-a (server only, running): remember sessions slide 30 days; SSRF-safe image proxy (images on by default,
+   DONE, merged 252197d, release v2026.11.16 (awaiting Om's server update): Builder-a: remember sessions slide 30 days; SSRF-safe image proxy (images on by default,
    Junk always blocked); inline image/PDF view; recipient suggestions endpoint; search all folders; drop sample labels and
    fix label counts; batch actions and mark all read. Security review before merge (sessions, proxy, attachments).
    Then builder-b client batch 3 (from the Opus review, 15 Nov): wire the above (suggestions UI with Backspace removes
