@@ -349,6 +349,10 @@ export async function getLiveMessageDetail(
       (t.value || []).map((v) => ({ name: v.name || '', address: v.address || '' }))
     );
 
+    const replyToArr = (parsed.replyTo?.value || []).map((v) => ({ name: v.name || '', address: v.address || '' }));
+    const refsRaw = parsed.references;
+    const referencesArr = refsRaw ? (Array.isArray(refsRaw) ? refsRaw : [refsRaw]) : [];
+
     const htmlBody = parsed.html ? cleanEmailHtml(parsed.html) : parsed.textAsHtml ? cleanEmailHtml(parsed.textAsHtml) : undefined;
 
     return {
@@ -358,6 +362,9 @@ export async function getLiveMessageDetail(
       from: { name: fromFirst.name || fromFirst.address || 'Unknown', address: fromFirst.address || '' },
       to: toArr,
       cc: ccArr,
+      replyTo: replyToArr,
+      messageId: parsed.messageId,
+      references: referencesArr,
       date: (parsed.date || new Date()).toISOString(),
       flags: flagsArr,
       isSeen: true,
@@ -366,6 +373,30 @@ export async function getLiveMessageDetail(
       text: parsed.text || '',
       attachments
     };
+  } finally {
+    lock.release();
+  }
+}
+
+// Real (non-inline) attachments of a stored message, for forwarding.
+export async function getLiveMessageAttachments(
+  config: AccountConfig,
+  folderPath: string,
+  uid: number
+): Promise<Array<{ filename: string; content: Buffer; contentType: string }>> {
+  const client = await getPooledImapClient(config);
+  const lock = await client.getMailboxLock(folderPath, { readOnly: true });
+  try {
+    const rawMsg = await client.download(String(uid), undefined, { uid: true });
+    if (!rawMsg || !rawMsg.content) throw new Error('Original message not found');
+    const parsed = await simpleParser(rawMsg.content);
+    return (parsed.attachments || [])
+      .filter((a) => !a.related && a.contentDisposition !== 'inline')
+      .map((a, i) => ({
+        filename: a.filename || `attachment-${i + 1}`,
+        content: a.content,
+        contentType: a.contentType || 'application/octet-stream'
+      }));
   } finally {
     lock.release();
   }

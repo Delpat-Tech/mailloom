@@ -69,6 +69,8 @@ export interface ParsedEmailMessage {
   cc?: EmailAddress[];
   bcc?: EmailAddress[];
   replyTo?: EmailAddress[];
+  messageId?: string;
+  references?: string[];
   date: string;
   flags: string[];
   isSeen: boolean;
@@ -79,16 +81,35 @@ export interface ParsedEmailMessage {
   headers?: Record<string, string | string[]>;
 }
 
+export interface SendAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 export interface SendEmailPayload {
   to: string[];
   cc?: string[];
   bcc?: string[];
   subject: string;
   text?: string;
+  /** Ignored by the server when text is given: HTML is built from the escaped text. */
   html?: string;
-  attachments?: Array<{
-    filename: string;
-    content: string; // base64 encoded
-    contentType?: string;
-  }>;
+  attachments?: SendAttachment[];
+  /** Message-ID of the mail being answered (with or without angle brackets). */
+  inReplyTo?: string;
+  /** References header of the mail being answered. */
+  references?: string[];
+  /** Forward: attach the original attachments of this message. */
+  forwardOf?: { folder: string; uid: number };
+  /** Client-chosen key; a retry with the same key never sends twice. */
+  idempotencyKey?: string;
+}
+
+export interface SendResult {
+  messageId: string;
+  accepted: string[];
+  rejected: string[];
+  sentCopySaved: boolean;
+  sentCopyError?: string;
 }

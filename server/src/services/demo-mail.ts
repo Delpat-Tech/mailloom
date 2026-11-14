@@ -460,7 +460,7 @@ class DemoMailService {
       partId: `sent.${i}`,
       filename: att.filename,
       contentType: att.contentType || 'application/octet-stream',
-      size: Buffer.from(att.content, 'base64').length,
+      size: att.content.length,
       isInline: false
     }));
 

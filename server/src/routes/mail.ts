@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type { AccountConfig, SendEmailPayload } from '../types.js';
+import type { AccountConfig, SendEmailPayload, SendAttachment } from '../types.js';
 import { decryptSession, encryptSession } from '../utils/crypto.js';
 import { demoMailService } from '../services/demo-mail.js';
 import {
@@ -14,7 +14,7 @@ import {
   streamLiveAttachment,
   closeUserSession
 } from '../services/imap.js';
-import { sendLiveEmail, testSmtpConnection } from '../services/smtp.js';
+import { sendLiveEmail, testSmtpConnection, SendError, getMaxMessageBytes } from '../services/smtp.js';
 
 interface AuthenticatedRequest extends FastifyRequest {
   accountConfig?: AccountConfig;
@@ -359,19 +359,70 @@ export async function mailRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // 12. Send Outgoing Message
+  // 12. Send Outgoing Message (multipart/form-data: JSON field "payload" + file parts, or plain JSON without files)
   fastify.post(
     '/api/messages/send',
     { preHandler: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
-      const payload = req.body as SendEmailPayload;
+      const max = getMaxMessageBytes();
+      let raw: Record<string, unknown> = {};
+      const attachments: SendAttachment[] = [];
 
-      if (!payload.to || payload.to.length === 0) {
-        return reply.status(400).send({ error: 'At least one recipient (To) is required' });
+      try {
+        if (req.isMultipart()) {
+          let total = 0;
+          for await (const part of req.parts({ limits: { fileSize: max + 1, files: 30, fieldSize: 2 * 1024 * 1024 } })) {
+            if (part.type === 'file') {
+              const buf = await part.toBuffer();
+              if (part.file.truncated || buf.length > max) {
+                return reply.status(413).send({ error: `"${part.filename}" is larger than the allowed size.` });
+              }
+              total += buf.length;
+              if (total > max) {
+                return reply.status(413).send({ error: 'Attachments together are larger than the allowed size.' });
+              }
+              attachments.push({
+                filename: part.filename || 'attachment',
+                content: buf,
+                contentType: part.mimetype || 'application/octet-stream'
+              });
+            } else if (part.fieldname === 'payload' && typeof part.value === 'string') {
+              raw = JSON.parse(part.value);
+            }
+          }
+        } else {
+          raw = (req.body as Record<string, unknown>) || {};
+        }
+      } catch {
+        return reply.status(400).send({ error: 'The message could not be read.' });
       }
-      if (!payload.subject) {
-        payload.subject = '(No Subject)';
+
+      const strList = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [];
+      const fo = raw.forwardOf as { folder?: unknown; uid?: unknown } | undefined;
+      const payload: SendEmailPayload = {
+        to: strList(raw.to),
+        cc: strList(raw.cc),
+        bcc: strList(raw.bcc),
+        subject: typeof raw.subject === 'string' && raw.subject ? raw.subject : '(No Subject)',
+        text: typeof raw.text === 'string' ? raw.text : undefined,
+        html: typeof raw.html === 'string' ? raw.html : undefined,
+        attachments,
+        inReplyTo: typeof raw.inReplyTo === 'string' ? raw.inReplyTo : undefined,
+        references: strList(raw.references),
+        forwardOf:
+          fo && typeof fo.folder === 'string' && Number.isInteger(fo.uid)
+            ? { folder: fo.folder, uid: fo.uid as number }
+            : undefined,
+        idempotencyKey:
+          (typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'] : undefined) ||
+          (typeof raw.idempotencyKey === 'string' ? raw.idempotencyKey : undefined)
+      };
+      // A free-form "from" in the request is deliberately ignored: sendLiveEmail uses the signed-in account.
+
+      if (payload.to.length === 0) {
+        return reply.status(400).send({ error: 'At least one recipient (To) is required' });
       }
 
       if (config.isDemo) {
@@ -380,10 +431,23 @@ export async function mailRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        const info = await sendLiveEmail(config, payload);
-        return { success: true, info };
+        const r = await sendLiveEmail(config, payload);
+        return {
+          success: r.rejected.length === 0,
+          messageId: r.messageId,
+          accepted: r.accepted,
+          rejected: r.rejected,
+          sentCopySaved: r.sentCopySaved,
+          warning: r.sentCopyError,
+          ...(r.rejected.length > 0
+            ? { error: `Not delivered to: ${r.rejected.join(', ')}. The others were sent.` }
+            : {})
+        };
       } catch (err) {
-        return reply.status(500).send({ error: `Failed to send email: ${(err as Error).message}` });
+        if (err instanceof SendError) {
+          return reply.status(err.status).send({ error: err.message });
+        }
+        return reply.status(500).send({ error: 'The message could not be sent.' });
       }
     }
   );
