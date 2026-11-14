@@ -22,6 +22,10 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 1. Phone basics batch on builder-b (Om found gaps on 15 Nov): sign-in alert glitch, password show/hide, pull-to-refresh,
    back button/history (opening a mail adds no history: back exits the app), offline banner, sign-in field hints,
    row swipe actions, composer with keyboard. Then review, release, update the live server.
+   Queued for builder-a when a slot frees (max 2 helpers): recipient suggestions (from Sent and received senders);
+   remove the sample labels and fix label counts; print view; remote images on by default via a server image proxy
+   (SSRF-safe: no private/loopback addresses, image types only, size and time limits, no cookies or referrer;
+   still blocked in Spam/Junk; setting to turn off) with a security review before merge. Independent Opus review running.
 2. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
 ## Later
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
