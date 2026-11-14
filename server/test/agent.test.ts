@@ -378,7 +378,7 @@ describe('agent API on the mailbox', () => {
     assert.equal(m.images_removed, 1);
     assert.deepEqual(
       m.attachments.map((a: { filename: string; content_type: string; size: number }) => [a.filename, a.content_type, a.size]),
-      [['invoice.pdf', 'application/pdf', 13]]
+      [['invoice.pdf', 'application/pdf', 20]] // listed size is the base64-encoded size of the 13-byte file
     );
     assert.ok(!('html' in m) && !JSON.stringify(m.attachments).includes('content_base64'));
     assert.equal(m.unread, true);
@@ -572,6 +572,36 @@ describe('agent API on the mailbox', () => {
         assert.equal(res.status, 400, `${path} ${JSON.stringify(bad.slice(0, 10))}`);
       }
     }
+  });
+
+  test('get_attachment returns the right bytes for the second of two attachments', async () => {
+    const subject = uniq('Two attachments');
+    const first = crypto.randomBytes(1500);
+    const second = crypto.randomBytes(3000);
+    const id = await plant(TESTER, {
+      subject,
+      text: 'Two files.',
+      attachments: [
+        { filename: 'first.bin', content: first, contentType: 'application/octet-stream' },
+        { filename: 'second.bin', content: second, contentType: 'application/octet-stream' }
+      ]
+    });
+    const msg = await agent.get(`/message?message_id=${encodeURIComponent(id)}`);
+    assert.equal(msg.status, 200, JSON.stringify(msg.body));
+    assert.deepEqual(msg.body.attachments.map((a: { filename: string; part_id: string }) => [a.filename, a.part_id]), [
+      ['first.bin', '2'],
+      ['second.bin', '3']
+    ]);
+    const att = await agent.get(`/attachment?message_id=${encodeURIComponent(id)}&index=1`);
+    assert.equal(att.status, 200, JSON.stringify(att.body));
+    assert.equal(att.body.filename, 'second.bin');
+    assert.ok(Buffer.from(att.body.content_base64, 'base64').equals(second));
+    // Forward keeps both, in order.
+    const fwd = await agent.post('/forward', { message_id: id, to: [COLLEAGUE], idempotency_key: uniq('f2') });
+    assert.equal(fwd.status, 200, JSON.stringify(fwd.body));
+    const got = await findBySubject(COLLEAGUE, 'INBOX', `Fwd: ${subject}`);
+    assert.deepEqual(got[0]!.parsed.attachments.map((x) => x.filename), ['first.bin', 'second.bin']);
+    assert.ok(got[0]!.parsed.attachments[1]!.content.equals(second));
   });
 
   test('forward carries the original attachments', async () => {

@@ -7,12 +7,9 @@ import { getPooledImapClient } from '../services/imap.js';
 /**
  * The agent API's single way to send mail.
  *
- * MERGE NOTE: this is built on main's smtp.ts (createSmtpTransport) because the send logic on
- * builder-b (idempotency, threading headers, honest results) is not on main yet. After that
- * merge, this function can call builder-b's send function instead, as long as it still:
- *   - uses the Message-ID given here (so the idempotent result and the Sent copy match),
- *   - adds the extra headers (X-Mailloom-Agent),
- *   - reports accepted/rejected recipients and whether the Sent copy was saved.
+ * It mirrors sendLiveEmail in services/smtp.ts (same Message-ID in the delivered and Sent copies, Bcc
+ * kept out of delivered mail and only in the Sent copy) but takes {name,address} recipients, an
+ * explicit Message-ID, extra headers (X-Mailloom-Agent) and reports accepted/rejected and Sent-copy status.
  * Idempotency and rate limits for the agent API live in routes/agent.ts, not here.
  */
 

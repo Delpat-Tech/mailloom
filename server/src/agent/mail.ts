@@ -2,6 +2,7 @@ import type { ImapFlow, MessageStructureObject, SearchObject, FetchMessageObject
 import { simpleParser, type ParsedMail, type AddressObject } from 'mailparser';
 import type { AccountConfig } from '../types.js';
 import { getPooledImapClient } from '../services/imap.js';
+import { classifyParts, isValidPartId, type LeafPart } from '../services/mailparts.js';
 import { htmlToAgentText, plainToAgentText, stripInvisible, type AgentLink } from './text.js';
 
 /**
@@ -283,18 +284,20 @@ export interface LoadedMessage {
   uid: number;
   flags: Set<string>;
   parsed: ParsedMail;
+  /** Real attachments by IMAP part number: the same list and order the web app's attachment code uses. */
+  attachments: LeafPart[];
 }
 
 /** maxMessageBytes is the server's MAIL_MAX_MESSAGE_BYTES: bigger messages are refused before they are downloaded. */
 export async function loadMessage(account: AccountConfig, folder: string, uid: number, maxMessageBytes: number): Promise<LoadedMessage> {
   return inFolder(account, folder, true, async (c) => {
-    const meta = await c.fetchOne(String(uid), { uid: true, size: true, flags: true }, { uid: true });
+    const meta = await c.fetchOne(String(uid), { uid: true, size: true, flags: true, bodyStructure: true }, { uid: true });
     if (!meta) throw notFound();
     if ((meta.size || 0) > maxMessageBytes + RAW_OVERHEAD_BYTES) throw new AgentError(413, 'MESSAGE_TOO_LARGE', 'This message is too large to read through the agent API.');
     const full = await c.fetchOne(String(uid), { uid: true, source: true }, { uid: true });
     if (!full || !full.source) throw notFound();
     const parsed = await simpleParser(full.source, { skipImageLinks: true, skipTextToHtml: true });
-    return { folder, uid, flags: meta.flags || new Set<string>(), parsed };
+    return { folder, uid, flags: meta.flags || new Set<string>(), parsed, attachments: classifyParts(meta.bodyStructure).attachments };
   });
 }
 
@@ -310,14 +313,30 @@ export function referencesOf(parsed: ParsedMail): string[] {
   return refs.map(normaliseMessageId);
 }
 
-export function attachmentList(parsed: ParsedMail) {
-  return (parsed.attachments || []).map((a, i) => ({
+export function attachmentList(parts: LeafPart[]) {
+  return parts.map((a, i) => ({
     index: i,
+    part_id: a.partId,
     filename: cleanText(a.filename) || `attachment-${i + 1}`,
-    content_type: a.contentType || 'application/octet-stream',
-    size: a.size || a.content?.length || 0,
-    inline: a.contentDisposition === 'inline' || Boolean(a.related)
+    content_type: a.type || 'application/octet-stream',
+    size: a.size || 0,
+    inline: false
   }));
+}
+
+/**
+ * Downloads one attachment by real IMAP part number (transfer-decoded by the server library).
+ * The mailbox lock is held until the stream has been read, as in the web app's attachment code.
+ */
+export async function downloadAttachment(account: AccountConfig, folder: string, uid: number, partId: string): Promise<Buffer> {
+  if (!isValidPartId(partId)) throw new AgentError(404, 'ATTACHMENT_NOT_FOUND', 'No attachment with that part id.');
+  return inFolder(account, folder, true, async (c) => {
+    const dl = await c.download(String(uid), partId, { uid: true });
+    if (!dl || !dl.content) throw new AgentError(404, 'ATTACHMENT_NOT_FOUND', 'Attachment not found.');
+    const chunks: Buffer[] = [];
+    for await (const ch of dl.content) chunks.push(Buffer.isBuffer(ch) ? ch : Buffer.from(ch));
+    return Buffer.concat(chunks);
+  });
 }
 
 export function messageAddresses(parsed: ParsedMail) {
@@ -353,7 +372,7 @@ export function messageView(m: LoadedMessage, maxChars: number) {
     links,
     links_truncated: body.links.length > links.length,
     images_removed: body.imagesRemoved,
-    attachments: attachmentList(p)
+    attachments: attachmentList(m.attachments)
   };
 }
 

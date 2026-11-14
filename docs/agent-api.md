@@ -84,12 +84,13 @@ Query: `folder`+`uid` or `message_id`. Does **not** mark the message read.
   from, to, cc, reply_to, subject, date, unread, flagged, answered,
   text, text_truncated (cap AGENT_MAX_TEXT_CHARS, default 100 000),
   links: [{ n, text, url }], links_truncated, images_removed,
-  attachments: [{ index, filename, content_type, size, inline }] }
+  attachments: [{ index, part_id, filename, content_type, size, inline }] }
 ```
 
 ### GET /attachment (read)
 Query: message reference + `index` (from `attachments`). Cap `AGENT_MAX_ATTACHMENT_BYTES` (default 10 MB).
-`{ untrusted, source, index, filename, content_type, size, inline, content_base64 }`
+`{ untrusted, source, index, part_id, filename, content_type, size, inline, content_base64 }`
+`part_id` is the real IMAP part number. In `attachments`, `size` is the size as stored (base64 is about a third larger than the file); `get_attachment` returns the exact size. Inline images are not listed.
 
 ### POST /send, /reply, /forward (send)
 JSON body, all require `idempotency_key` (1-200 visible ASCII chars; or the `Idempotency-Key` header).

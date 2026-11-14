@@ -3,6 +3,7 @@
  * links replaced by "label [n]" with the addresses listed separately as plain strings.
  */
 
+import { renderEmail } from '../utils/sanitize.js';
 export interface AgentLink {
   n: number;
   text: string;
@@ -122,4 +123,14 @@ export function plainToAgentText(text: string): AgentText {
     links.push({ n: links.length + 1, text: '', url });
   }
   return { text: tidy(text), links, imagesRemoved: 0 };
+}
+
+/**
+ * Sanitises HTML the agent writes or forwards, using the same renderer as the reading view.
+ * Returns only the body fragment: remote and inline-cid images are dropped, links keep a safe target.
+ */
+export function safeHtmlFragment(html: string): string {
+  const doc = renderEmail(html, { allowRemoteImages: false }).html;
+  const m = /<body>([\s\S]*)<\/body><\/html>$/.exec(doc);
+  return m ? m[1] : '';
 }
