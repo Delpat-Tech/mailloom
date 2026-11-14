@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Minus,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
+import type { ConfirmRequest } from './ConfirmDialog.js';
 import {
   getSignatureForAccount,
   saveSignatureForAccount,
@@ -44,6 +45,8 @@ export interface ComposerReplyMeta {
   forwardOf?: { folder: string; uid: number };
   /** Names of original attachments the server will add to a forward. */
   forwardedAttachmentNames?: string[];
+  /** UID of the saved draft this composer was opened from. */
+  draftUid?: number;
 }
 
 interface ComposerModalProps {
@@ -56,6 +59,11 @@ interface ComposerModalProps {
    */
   initialTo?: string[];
   initialCc?: string[];
+  initialBcc?: string[];
+  /** Opened from the Drafts folder: the body is used as it is (no signature added). */
+  isDraft?: boolean;
+  /** Ask the user to confirm (discard / save draft). */
+  requestConfirm: (request: ConfirmRequest) => void;
   initialSubject?: string;
   initialBody?: string;
   replyMeta?: ComposerReplyMeta;
@@ -85,6 +93,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   onSentSuccess,
   initialTo,
   initialCc,
+  initialBcc,
+  isDraft = false,
+  requestConfirm,
   initialSubject = '',
   initialBody = '',
   replyMeta,
@@ -96,9 +107,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   const [showCc, setShowCc] = useState((initialCc ?? []).length > 0);
   const [ccInput, setCcInput] = useState('');
   const [ccList, setCcList] = useState<string[]>(() => initialCc ?? []);
-  const [showBcc, setShowBcc] = useState(false);
+  const [showBcc, setShowBcc] = useState((initialBcc ?? []).length > 0);
   const [bccInput, setBccInput] = useState('');
-  const [bccList, setBccList] = useState<string[]>([]);
+  const [bccList, setBccList] = useState<string[]>(() => initialBcc ?? []);
   const [subject, setSubject] = useState(initialSubject);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   // One key per composed message: a retried request never sends twice.
@@ -117,9 +128,128 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     getSignatureForAccount(accountEmail, accountName)
   );
   const [sigForm, setSigForm] = useState<AccountSignature>(signature);
-  const [body, setBody] = useState(() => buildInitialBody(initialBody, formatSignatureText(signature)));
+  const [body, setBody] = useState(() =>
+    isDraft ? initialBody : buildInitialBody(initialBody, formatSignatureText(signature))
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ---- Drafts: autosave every 10 s while there are changes ----
+  const draftUidRef = useRef<number | undefined>(replyMeta?.draftUid);
+  const [draftStatus, setDraftStatus] = useState<{ text: string; error: boolean } | null>(null);
+  const savingRef = useRef(false);
+  const sentRef = useRef(false);
+
+  const snapshot = () =>
+    JSON.stringify({
+      to: [...toList, toInput.trim()].filter(Boolean),
+      cc: [...ccList, ccInput.trim()].filter(Boolean),
+      bcc: [...bccList, bccInput.trim()].filter(Boolean),
+      subject,
+      body
+    });
+  const initialSnap = useRef<string | null>(null);
+  if (initialSnap.current === null) initialSnap.current = snapshot();
+  const lastSavedSnap = useRef<string>(initialSnap.current);
+  const hasContent = () => attachments.length > 0 || snapshot() !== initialSnap.current;
+
+  /** Saves the draft; returns true when it is stored (or there was nothing new to store). */
+  const saveDraftNow = async (): Promise<boolean> => {
+    if (sentRef.current || savingRef.current) return true;
+    const snap = snapshot();
+    if (snap === lastSavedSnap.current) return true;
+    const data = JSON.parse(snap) as { to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
+    savingRef.current = true;
+    try {
+      const res = await api.saveDraft({
+        to: data.to,
+        cc: data.cc,
+        bcc: data.bcc,
+        subject: data.subject,
+        text: data.body,
+        inReplyTo: replyMeta?.inReplyTo,
+        references: replyMeta?.references,
+        replaceUid: draftUidRef.current
+      });
+      if (!res.success) throw new Error('The draft could not be saved.');
+      draftUidRef.current = res.uid;
+      lastSavedSnap.current = snap;
+      setDraftStatus({ text: `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, error: false });
+      return true;
+    } catch (err: unknown) {
+      setDraftStatus({ text: `Draft not saved: ${err instanceof Error ? err.message : 'unknown error'}`, error: true });
+      return false;
+    } finally {
+      savingRef.current = false;
+    }
+  };
+  const saveDraftRef = useRef(saveDraftNow);
+  saveDraftRef.current = saveDraftNow;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const id = setInterval(() => {
+      void saveDraftRef.current();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [isOpen]);
+
+  /** Remove the saved draft (if any) and close. Stays open if the draft could not be removed. */
+  const discardAndClose = async () => {
+    sentRef.current = true; // no more autosaves
+    if (draftUidRef.current) {
+      try {
+        await api.deleteDraft(draftUidRef.current);
+      } catch (err: unknown) {
+        sentRef.current = false;
+        setErrorMsg(`The saved draft could not be deleted: ${err instanceof Error ? err.message : 'unknown error'}`);
+        return;
+      }
+    }
+    onClose();
+  };
+
+  // Trash icon: discard the message (and its saved draft), after confirming when there is something to lose.
+  const handleDiscard = () => {
+    if (!hasContent() && !draftUidRef.current) {
+      onClose();
+      return;
+    }
+    requestConfirm({
+      title: 'Discard this message?',
+      message: draftUidRef.current ? 'The message and its saved draft will be deleted.' : 'What you wrote will be lost.',
+      confirmLabel: 'Discard',
+      danger: true,
+      onConfirm: () => void discardAndClose()
+    });
+  };
+
+  // X button: keep as a draft, discard, or keep editing.
+  const handleCloseClick = () => {
+    const unsaved = snapshot() !== lastSavedSnap.current;
+    if (!unsaved && (draftUidRef.current || !hasContent())) {
+      sentRef.current = true;
+      onClose();
+      return;
+    }
+    requestConfirm({
+      title: 'Save this message as a draft?',
+      message: attachments.length > 0 ? 'Attachments are not kept in drafts.' : 'You can continue it later from the Drafts folder.',
+      confirmLabel: 'Save draft',
+      alternateLabel: 'Discard',
+      onConfirm: () => {
+        void saveDraftNow().then((ok) => {
+          if (ok) {
+            sentRef.current = true;
+            onClose();
+          } else {
+            setErrorMsg('The draft could not be saved, so the message is still open.');
+          }
+        });
+      },
+      onAlternate: () => void discardAndClose()
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -199,6 +329,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     }
 
     setIsSending(true);
+    sentRef.current = true; // no autosave while sending
+    const draftUidAtSend = draftUidRef.current;
     try {
       const res = await api.sendEmail({
         to: finalTo,
@@ -210,13 +342,18 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         references: replyMeta?.references,
         forwardOf: replyMeta?.forwardOf,
         idempotencyKey: idempotencyKey.current,
+        draftUid: draftUidRef.current,
         files: attachments.map((a) => a.file)
       });
 
       setIsSending(false);
+      if (draftUidRef.current && draftUidRef.current !== draftUidAtSend) {
+        void api.deleteDraft(draftUidRef.current).catch(() => {}); // a save that raced the send
+      }
       onSentSuccess({ warning: res.warning, error: res.success ? undefined : res.error });
       onClose();
     } catch (err: unknown) {
+      sentRef.current = false; // sending failed: the composer stays open and keeps autosaving
       setIsSending(false);
       setErrorMsg(err instanceof Error ? err.message : 'Failed to send message. Please check connection.');
     }
@@ -273,9 +410,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={onClose}
+            onClick={handleCloseClick}
             className="p-1 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
-            title="Discard & Close"
+            title="Close"
+            aria-label="Close"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -546,13 +684,25 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </button>
             </div>
 
+            <div className="flex items-center gap-2 min-w-0">
+            {(draftStatus || attachments.length > 0) && (
+              <span
+                className={`text-[11px] truncate ${draftStatus?.error ? 'text-red-600 font-semibold' : 'text-slate-400'}`}
+                role="status"
+              >
+                {draftStatus?.text}
+                {attachments.length > 0 ? `${draftStatus ? ' · ' : ''}Attachments are not saved in drafts` : ''}
+              </span>
+            )}
             <button
-              onClick={onClose}
+              onClick={handleDiscard}
               className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-              title="Discard draft"
+              title="Discard message"
+              aria-label="Discard message"
             >
               <Trash2 className="w-4 h-4" />
             </button>
+            </div>
           </div>
         </div>
       )}

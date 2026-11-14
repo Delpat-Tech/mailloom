@@ -40,6 +40,32 @@ interface SidebarProps {
   onCloseMobileSidebar?: () => void;
 }
 
+const KIND_ORDER = ['Inbox', 'Drafts', 'Sent', 'Archive', 'Junk', 'Trash'];
+
+/** Special folders first in a fixed order, the rest alphabetical; children follow their parent. */
+export function orderFolders(folders: MailboxFolder[]): MailboxFolder[] {
+  const rank = (f: MailboxFolder) => {
+    const i = f.specialUse ? KIND_ORDER.indexOf(f.specialUse) : -1;
+    return i === -1 ? KIND_ORDER.length : i;
+  };
+  const byParent = new Map<string, MailboxFolder[]>();
+  const paths = new Set(folders.map((f) => f.path));
+  for (const f of folders) {
+    const key = f.parentPath && paths.has(f.parentPath) ? f.parentPath : '';
+    byParent.set(key, [...(byParent.get(key) || []), f]);
+  }
+  const out: MailboxFolder[] = [];
+  const walk = (key: string) => {
+    const kids = (byParent.get(key) || []).slice().sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+    for (const k of kids) {
+      out.push(k);
+      walk(k.path);
+    }
+  };
+  walk('');
+  return out;
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({
   account,
   folders,
@@ -74,6 +100,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showAccountSwitcher]);
+
+  const orderedFolders = orderFolders(folders);
 
   const getFolderIcon = (f: MailboxFolder) => {
     switch (f.specialUse) {
@@ -143,13 +171,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
           Folders
         </div>
-        {folders.map((folder) => {
+        {orderedFolders.map((folder) => {
           const isSelected = selectedFolder.toLowerCase() === folder.path.toLowerCase();
           return (
             <button
               key={folder.path}
               onClick={() => onSelectFolder(folder.path)}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              style={{ paddingLeft: `${0.75 + (folder.depth || 0) * 1}rem` }}
+              title={folder.path}
+              className={`w-full flex items-center justify-between pr-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 isSelected
                   ? 'bg-sky-600/20 text-sky-400 font-semibold border-l-2 border-sky-500'
                   : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'

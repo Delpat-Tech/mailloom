@@ -15,10 +15,14 @@ import {
   ChevronDown,
   FolderInput,
   ShieldAlert,
-  ArrowLeft
+  ShieldCheck,
+  ArrowLeft,
+  Undo2,
+  Pencil,
+  ImageOff
 } from 'lucide-react';
 import { format } from 'date-fns';
-import type { ParsedEmailMessage, MailboxFolder, EmailAttachment } from '../types.js';
+import type { ParsedEmailMessage, MailboxFolder, EmailAttachment, SpecialUseFolder } from '../types.js';
 import { api } from '../services/api.js';
 
 interface MessageViewerProps {
@@ -29,6 +33,14 @@ interface MessageViewerProps {
   onDelete: (uid: number) => void;
   onMove: (uid: number, targetFolder: string) => void;
   onMarkSpam?: (uid: number) => void;
+  /** Kind of the open folder (Trash, Junk, Drafts ...) */
+  folderKind?: SpecialUseFolder;
+  onRestore?: (uid: number) => void;
+  onNotSpam?: (uid: number) => void;
+  onEditDraft?: (message: ParsedEmailMessage) => void;
+  /** Reload this message with remote images allowed. */
+  onShowImages?: (uid: number) => void;
+  isLoadingImages?: boolean;
   onReply: (message: ParsedEmailMessage, replyAll: boolean) => void;
   onForward: (message: ParsedEmailMessage) => void;
   folders: MailboxFolder[];
@@ -43,6 +55,12 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   onDelete,
   onMove,
   onMarkSpam,
+  folderKind,
+  onRestore,
+  onNotSpam,
+  onEditDraft,
+  onShowImages,
+  isLoadingImages,
   onReply,
   onForward,
   folders,
@@ -53,51 +71,40 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   const [viewMode, setViewMode] = useState<'html' | 'text'>('html');
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Resize iframe to fit content automatically
+  // The mail document carries its own styles (built on the server). The frame has no scripts; it is
+  // same-origin only so that we can read its height. Size it to the content: one page scroll, no inner box.
+  const fitFrame = React.useCallback(() => {
+    const iframe = iframeRef.current;
+    const doc = iframe?.contentDocument;
+    if (!iframe || !doc?.documentElement) return;
+    iframe.style.height = `${Math.max(60, doc.documentElement.scrollHeight)}px`;
+  }, []);
+
   useEffect(() => {
     if (!message || viewMode !== 'html') return;
     const iframe = iframeRef.current;
     if (!iframe) return;
-
-    const handleLoad = () => {
-      try {
-        if (iframe.contentWindow?.document?.body) {
-          const doc = iframe.contentWindow.document;
-          // Apply basic styling to ensure it looks modern and readable
-          const style = doc.createElement('style');
-          style.textContent = `
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-              color: #1e293b;
-              line-height: 1.6;
-              padding: 16px 8px;
-              margin: 0;
-              word-break: break-word;
-            }
-            img { max-width: 100%; height: auto; }
-            a { color: #0284c7; text-decoration: underline; }
-            table { max-width: 100% !important; }
-            blockquote {
-              border-left: 3px solid #cbd5e1;
-              margin: 0.5em 0;
-              padding-left: 12px;
-              color: #64748b;
-            }
-          `;
-          doc.head.appendChild(style);
-
-          // Adjust height
-          const newHeight = Math.max(300, doc.documentElement.scrollHeight);
-          iframe.style.height = `${newHeight}px`;
-        }
-      } catch {
-        // Cross-origin restriction if any
+    let observer: ResizeObserver | undefined;
+    const attach = () => {
+      fitFrame();
+      const doc = iframe.contentDocument;
+      if (!doc?.documentElement) return;
+      observer?.disconnect();
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(fitFrame);
+        observer.observe(doc.documentElement);
+        if (doc.body) observer.observe(doc.body);
       }
     };
-
-    iframe.addEventListener('load', handleLoad);
-    return () => iframe.removeEventListener('load', handleLoad);
-  }, [message, viewMode]);
+    iframe.addEventListener('load', attach);
+    window.addEventListener('resize', fitFrame);
+    if (iframe.contentDocument?.readyState === 'complete') attach();
+    return () => {
+      iframe.removeEventListener('load', attach);
+      window.removeEventListener('resize', fitFrame);
+      observer?.disconnect();
+    };
+  }, [message, viewMode, fitFrame]);
 
   const formatFileSize = (bytes: number): string => {
     if (!bytes || bytes <= 0) return '0 B';
@@ -262,12 +269,43 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           </button>
           <button
             onClick={() => onDelete(message.uid)}
-            title="Delete"
+            title={folderKind === 'Trash' ? 'Delete forever' : 'Move to Trash'}
+            aria-label={folderKind === 'Trash' ? 'Delete forever' : 'Move to Trash'}
             className="p-1.5 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
-          {onMarkSpam && (
+          {folderKind === 'Trash' && onRestore && (
+            <button
+              onClick={() => onRestore(message.uid)}
+              title="Restore to Inbox"
+              className="flex items-center gap-1 px-2 py-1 text-xs text-sky-700 hover:bg-sky-50 rounded-lg transition-colors border border-sky-200/60"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span className="hidden md:inline font-medium">Restore</span>
+            </button>
+          )}
+          {folderKind === 'Junk' && onNotSpam && (
+            <button
+              onClick={() => onNotSpam(message.uid)}
+              title="Not spam: move back to Inbox"
+              className="flex items-center gap-1 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors border border-emerald-200/60"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span className="hidden md:inline font-medium">Not spam</span>
+            </button>
+          )}
+          {folderKind === 'Drafts' && onEditDraft && (
+            <button
+              onClick={() => onEditDraft(message)}
+              title="Continue writing this draft"
+              className="flex items-center gap-1 px-2 py-1 text-xs text-sky-700 hover:bg-sky-50 rounded-lg transition-colors border border-sky-200/60"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              <span className="hidden md:inline font-medium">Edit draft</span>
+            </button>
+          )}
+          {onMarkSpam && folderKind !== 'Junk' && folderKind !== 'Drafts' && (
             <button
               onClick={() => onMarkSpam(message.uid)}
               title="Mark as Spam / Move to Junk"
@@ -391,7 +429,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
                   <a
                     key={att.partId}
                     href={downloadUrl}
-                    download={att.filename}
+                    download
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-sky-300 hover:shadow-sm transition-all group"
@@ -414,15 +452,30 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
         )}
 
         {/* Email Body */}
-        <div className="email-body min-h-[300px]">
+        <div className="email-body">
+          {viewMode === 'html' && message.html && (message.blockedImages || 0) > 0 && onShowImages && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <ImageOff className="w-4 h-4 shrink-0" />
+              <span className="flex-1">Images hidden to protect your privacy.</span>
+              <button
+                onClick={() => onShowImages(message.uid)}
+                disabled={isLoadingImages}
+                className="font-semibold text-sky-700 underline hover:text-sky-900 disabled:opacity-50"
+              >
+                {isLoadingImages ? 'Loading...' : 'Show images'}
+              </button>
+            </div>
+          )}
           {viewMode === 'html' && message.html ? (
             <iframe
+              key={`${message.uid}-${message.blockedImages || 0}`}
               ref={iframeRef}
               title="Email body"
               srcDoc={message.html}
-              sandbox="allow-popups allow-popups-to-escape-sandbox"
-              className="w-full border-0 rounded"
-              style={{ minHeight: '350px' }}
+              sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+              scrolling="no"
+              className="w-full border-0 block"
+              style={{ height: '120px' }}
             />
           ) : (
             <div className="whitespace-pre-wrap font-sans text-sm text-slate-800 leading-relaxed bg-slate-50/40 p-4 rounded-xl border border-slate-100">

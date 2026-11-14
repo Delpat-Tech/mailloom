@@ -201,9 +201,14 @@ export const api = {
     });
   },
 
-  getMessageDetail: async (folderPath: string, uid: number): Promise<ParsedEmailMessage> => {
+  getMessageDetail: async (
+    folderPath: string,
+    uid: number,
+    options: { showImages?: boolean } = {}
+  ): Promise<ParsedEmailMessage> => {
     const encoded = encodeURIComponent(folderPath);
-    return request<ParsedEmailMessage>(`/mailboxes/${encoded}/messages/${uid}`);
+    const q = options.showImages ? '?images=1' : '';
+    return request<ParsedEmailMessage>(`/mailboxes/${encoded}/messages/${uid}${q}`);
   },
 
   toggleFlag: async (
@@ -231,11 +236,48 @@ export const api = {
     });
   },
 
-  deleteMessage: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
+  /** Moves to Trash; inside Trash it deletes for good (permanent: true). */
+  deleteMessage: async (
+    folderPath: string,
+    uid: number
+  ): Promise<{ success: boolean; permanent?: boolean; movedTo?: string }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${uid}`, {
-      method: 'DELETE'
-    });
+    return request(`/mailboxes/${encoded}/messages/${uid}`, { method: 'DELETE' });
+  },
+
+  /** Trash -> Inbox */
+  restoreMessage: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
+    const encoded = encodeURIComponent(folderPath);
+    return request(`/mailboxes/${encoded}/messages/${uid}/restore`, { method: 'POST' });
+  },
+
+  /** Junk -> Inbox */
+  notSpam: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
+    const encoded = encodeURIComponent(folderPath);
+    return request(`/mailboxes/${encoded}/messages/${uid}/not-spam`, { method: 'POST' });
+  },
+
+  /** Permanently deletes everything in Trash or Junk. */
+  emptyFolder: async (folderPath: string): Promise<{ success: boolean; deleted: number }> => {
+    const encoded = encodeURIComponent(folderPath);
+    return request(`/mailboxes/${encoded}/empty`, { method: 'POST' });
+  },
+
+  saveDraft: async (draft: {
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject: string;
+    text: string;
+    inReplyTo?: string;
+    references?: string[];
+    replaceUid?: number;
+  }): Promise<{ success: boolean; uid: number; folder: string }> => {
+    return request('/drafts', { method: 'POST', body: JSON.stringify(draft) });
+  },
+
+  deleteDraft: async (uid: number): Promise<{ success: boolean }> => {
+    return request(`/drafts/${uid}`, { method: 'DELETE' });
   },
 
   sendEmail: async (payload: {
@@ -248,6 +290,7 @@ export const api = {
     references?: string[];
     forwardOf?: { folder: string; uid: number };
     idempotencyKey?: string;
+    draftUid?: number;
     files?: File[];
   }): Promise<SendEmailResponse> => {
     const { files = [], ...fields } = payload;

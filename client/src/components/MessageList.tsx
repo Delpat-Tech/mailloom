@@ -18,7 +18,7 @@ import {
   Menu
 } from 'lucide-react';
 import { format, isToday, isThisYear } from 'date-fns';
-import type { MessageHeader } from '../types.js';
+import type { MessageHeader, SpecialUseFolder } from '../types.js';
 import type { SearchFilterParams } from '../services/api.js';
 
 interface MessageListProps {
@@ -44,6 +44,9 @@ interface MessageListProps {
   limit: number;
   onPageChange: (page: number) => void;
   onOpenMobileSidebar?: () => void;
+  folderKind?: SpecialUseFolder;
+  /** Empty Trash / Junk (the caller asks for confirmation). */
+  onEmptyFolder?: () => void;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -68,7 +71,9 @@ export const MessageList: React.FC<MessageListProps> = ({
   page,
   limit,
   onPageChange,
-  onOpenMobileSidebar
+  onOpenMobileSidebar,
+  folderKind,
+  onEmptyFolder
 }) => {
   const [showFilters, setShowFilters] = useState(false);
   const allSelected = messages.length > 0 && messages.every((m) => selectedUids.has(m.uid));
@@ -116,6 +121,16 @@ export const MessageList: React.FC<MessageListProps> = ({
               {totalMessages}
             </span>
           </div>
+          <div className="flex items-center gap-1">
+          {(folderKind === 'Trash' || folderKind === 'Junk') && onEmptyFolder && totalMessages > 0 && (
+            <button
+              onClick={onEmptyFolder}
+              title={`Permanently delete everything in ${folderName}`}
+              className="px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              Empty {folderName}
+            </button>
+          )}
           <button
             onClick={onRefresh}
             disabled={isLoading}
@@ -124,6 +139,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           >
             <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-sky-600' : ''}`} />
           </button>
+          </div>
         </div>
 
         {/* Search Bar & Filter Toggle */}
@@ -279,12 +295,12 @@ export const MessageList: React.FC<MessageListProps> = ({
             </button>
             <button
               onClick={onBatchDelete}
-              title="Delete selected"
+              title={folderKind === 'Trash' ? 'Delete selected forever' : 'Move selected to Trash'}
               className="p-1 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
-            {onBatchSpam && (
+            {onBatchSpam && folderKind !== 'Junk' && (
               <button
                 onClick={onBatchSpam}
                 title="Mark as Spam / Move to Junk"
