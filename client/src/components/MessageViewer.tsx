@@ -28,7 +28,37 @@ import type { ParsedEmailMessage, MailboxFolder, EmailAttachment, SpecialUseFold
 import { api } from '../services/api.js';
 import { useDialog } from '../hooks/useDialog.js';
 
-const TOUCH = 'min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center';
+// Never below 32 px, never wrapping or shrinking: the toolbar moves actions into "More" instead.
+const TOUCH = 'min-h-[44px] min-w-[44px] sm:min-h-8 sm:min-w-8 flex items-center justify-center shrink-0 whitespace-nowrap';
+const SMALL_BTN = 'min-h-8 min-w-8 flex items-center justify-center shrink-0 whitespace-nowrap';
+
+export type ToolbarLevel = 'full' | 'mid' | 'tight';
+
+/**
+ * How much of the message toolbar fits in `width` px (the toolbar's own width, not the window's):
+ * full = everything, mid = labelled main actions with the rest under More, tight = icon-only main actions.
+ * An unknown width (0) counts as full.
+ */
+export function toolbarLevel(width: number): ToolbarLevel {
+  if (!width || width >= 800) return 'full';
+  if (width >= 520) return 'mid';
+  return 'tight';
+}
+
+function useToolbarLevel(ref: React.RefObject<HTMLElement | null>, active: boolean): ToolbarLevel {
+  const [level, setLevel] = useState<ToolbarLevel>('full');
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setLevel(toolbarLevel(el.getBoundingClientRect().width || el.clientWidth));
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, active]);
+  return level;
+}
 
 interface MenuItem {
   key: string;
@@ -38,7 +68,7 @@ interface MenuItem {
 }
 
 /** The "More" menu: the actions that do not fit on a phone toolbar. */
-const MoreMenu: React.FC<{ items: MenuItem[] }> = ({ items }) => {
+const MoreMenu: React.FC<{ items: MenuItem[]; always?: boolean }> = ({ items, always }) => {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -80,7 +110,7 @@ const MoreMenu: React.FC<{ items: MenuItem[] }> = ({ items }) => {
   }, [open]);
 
   return (
-    <div className="relative sm:hidden">
+    <div className={`relative shrink-0 ${always ? '' : 'sm:hidden'}`}>
       <button
         ref={btnRef}
         type="button"
@@ -219,6 +249,10 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   const [showDetails, setShowDetails] = useState(false);
   const [viewMode, setViewMode] = useState<'html' | 'text'>('html');
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const level = useToolbarLevel(toolbarRef, !!message && !isLoading);
+  const full = level === 'full';
+  const labels = level !== 'tight';
 
   // The mail document carries its own styles (built on the server). The frame has no scripts; it is
   // same-origin only so that we can read its height. Size it to the content: one page scroll, no inner box.
@@ -339,7 +373,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
     <button
       onClick={ctx.run}
       title={ctx.label}
-      className={`flex items-center gap-1 px-2 py-1 text-xs rounded-lg transition-colors border ${ctx.tone}`}
+      className={`flex items-center gap-1 px-2 py-1 min-h-8 text-xs rounded-lg transition-colors border shrink-0 whitespace-nowrap ${ctx.tone}`}
     >
       <ctx.icon className="w-3.5 h-3.5" />
       <span className="hidden md:inline font-medium">{ctx.short}</span>
@@ -400,11 +434,12 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
     <section aria-labelledby="message-subject" className="flex-1 min-w-0 bg-white flex flex-col h-full overflow-hidden">
       {/* Top Action Toolbar: on a phone only the main actions show; the rest are under "More" */}
       <div
+        ref={toolbarRef}
         role="toolbar"
         aria-label="Message actions"
         className="px-1 sm:px-6 py-1 sm:py-2.5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0"
       >
-        <div className="flex items-center gap-0 sm:gap-1 min-w-0">
+        <div className="flex items-center gap-0 sm:gap-1 min-w-0 flex-nowrap">
           {onBackToList && (
             <button
               onClick={onBackToList}
@@ -422,7 +457,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             className={`gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
           >
             <Reply className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            <span className="hidden sm:inline">Reply</span>
+            <span className={labels ? 'hidden sm:inline' : 'hidden'}>Reply</span>
           </button>
           <button
             onClick={() => onReply(message, true)}
@@ -431,7 +466,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             className={`gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
           >
             <ReplyAll className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            <span className="hidden sm:inline">Reply All</span>
+            <span className={labels ? 'hidden sm:inline' : 'hidden'}>Reply All</span>
           </button>
           <button
             onClick={() => onForward(message)}
@@ -440,10 +475,10 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             className={`gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
           >
             <Forward className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            <span className="hidden sm:inline">Forward</span>
+            <span className={labels ? 'hidden sm:inline' : 'hidden'}>Forward</span>
           </button>
 
-          <div className="hidden sm:block h-4 w-[1px] bg-slate-200 mx-1.5" />
+          <div className="hidden sm:block h-4 w-[1px] bg-slate-200 mx-1.5 shrink-0" />
 
           <button
             onClick={() => setShowMove(true)}
@@ -453,7 +488,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             aria-label="Move to folder"
           >
             <FolderInput className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            <ChevronDown className="w-3 h-3 text-slate-400 hidden sm:block" />
+            <ChevronDown className={`w-3 h-3 text-slate-400 ${labels ? 'hidden sm:block' : 'hidden'}`} />
           </button>
 
           <button
@@ -466,12 +501,12 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           </button>
 
           {/* Wider screens: the rest of the actions stay on the toolbar */}
-          <div className="hidden sm:contents">
+          <div className={full ? 'hidden sm:contents' : 'hidden'}>
             <button
               onClick={() => onToggleFlag(message.uid, 'isSeen')}
               title="Mark as unread"
               aria-label="Mark as unread"
-              className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className={`p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors ${SMALL_BTN}`}
             >
               <Mail className="w-3.5 h-3.5" />
             </button>
@@ -480,7 +515,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
               title={message.isFlagged ? 'Unstar' : 'Star'}
               aria-label={message.isFlagged ? 'Unstar' : 'Star'}
               aria-pressed={!!message.isFlagged}
-              className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className={`p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors ${SMALL_BTN}`}
             >
               <Star
                 className={`w-3.5 h-3.5 ${
@@ -493,7 +528,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
               <button
                 onClick={() => onMarkSpam(message.uid)}
                 title="Mark as Spam / Move to Junk"
-                className="flex items-center gap-1 px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded-lg transition-colors border border-amber-200/50"
+                className="flex items-center gap-1 px-2 py-1 min-h-8 text-xs text-amber-700 hover:bg-amber-50 rounded-lg transition-colors border border-amber-200/50 shrink-0 whitespace-nowrap"
               >
                 <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
                 <span className="hidden md:inline font-medium">Spam</span>
@@ -503,7 +538,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <div className="hidden sm:flex items-center gap-2">
+          <div className={full ? 'hidden sm:flex items-center gap-2' : 'hidden'}>
             {message.html && message.text && (
               <div role="group" aria-label="Message format" className="flex items-center bg-slate-100 p-0.5 rounded-lg text-[11px] font-medium text-slate-600">
                 <button
@@ -530,18 +565,18 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
               onClick={handlePrint}
               title="Print message"
               aria-label="Print message"
-              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className={`p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors ${SMALL_BTN}`}
             >
               <Printer className="w-3.5 h-3.5" />
             </button>
           </div>
-          <MoreMenu items={moreItems} />
+          <MoreMenu items={moreItems} always={!full} />
         </div>
       </div>
 
       {/* Phone: the one action this folder is mostly for (Restore, Not spam, Edit draft) */}
       {contextAction && (
-        <div className="sm:hidden px-3 py-1 border-b border-slate-100 flex items-center gap-2 bg-white shrink-0">
+        <div className={`${full ? 'sm:hidden' : ''} px-3 py-1 border-b border-slate-100 flex items-center gap-2 bg-white shrink-0`}>
           {contextActionWide}
         </div>
       )}
