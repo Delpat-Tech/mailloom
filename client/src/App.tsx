@@ -8,6 +8,7 @@ import { LabelsManager } from './components/LabelsManager.js';
 import { labelsApi, labelErrorText, type Label, type LabelColour } from './services/labels.js';
 import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
+import { useSwipeBack } from './hooks/useSwipeBack.js';
 import { Presence } from './components/Presence.js';
 import { realUid } from './services/uidKey.js';
 import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
@@ -118,6 +119,7 @@ export const App: React.FC = () => {
   const prevUnreadRef = useRef<number | null>(null);
 
   // Selected Message
+  const readerPaneRef = useRef<HTMLDivElement>(null);
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<ParsedEmailMessage | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
@@ -158,6 +160,7 @@ export const App: React.FC = () => {
   // Mobile responsive state
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [mobileView, setMobileView] = useState<'list' | 'message'>('list');
+  useSwipeBack(readerPaneRef, mobileView === 'message' && !!account, () => setMobileView('list'));
   const drawerRef = useRef<HTMLDivElement>(null);
   useDialog(drawerRef, { open: showMobileSidebar, onEscape: () => setShowMobileSidebar(false) });
 
@@ -1487,6 +1490,7 @@ export const App: React.FC = () => {
 
           {/* Right Pane: Message Viewer */}
           <div
+            ref={readerPaneRef}
             className="reader-pane flex-1 min-w-0 flex bg-sheet"
             data-open={mobileView === 'message'}
           >

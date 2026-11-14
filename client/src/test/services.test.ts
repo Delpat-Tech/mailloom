@@ -250,3 +250,26 @@ describe('views with the same uid in two folders', () => {
     expect(sent.mailbox).toBe('Work');
   });
 });
+
+describe('swipe back rules', () => {
+  it('closes past 35% or on a fast flick, otherwise snaps back', async () => {
+    const { shouldClose, startsAtEdge, insideHorizontalScroll } = await import('../services/swipe.js');
+    expect(shouldClose(150, 400, 800)).toBe(true); // 37.5%
+    expect(shouldClose(100, 400, 800)).toBe(false);
+    expect(shouldClose(60, 400, 60)).toBe(true); // flick
+    expect(shouldClose(20, 400, 10)).toBe(false); // too short to be a flick
+    expect(shouldClose(-200, 400, 100)).toBe(false);
+    expect(startsAtEdge(10)).toBe(true);
+    expect(startsAtEdge(16)).toBe(false);
+    const wide = document.createElement('div');
+    wide.style.overflowX = 'auto';
+    Object.defineProperty(wide, 'scrollWidth', { value: 900 });
+    Object.defineProperty(wide, 'clientWidth', { value: 300 });
+    const inner = document.createElement('span');
+    wide.appendChild(inner);
+    document.body.appendChild(wide);
+    expect(insideHorizontalScroll(inner)).toBe(true);
+    expect(insideHorizontalScroll(document.createElement('p'))).toBe(false);
+    wide.remove();
+  });
+});
