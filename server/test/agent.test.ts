@@ -546,6 +546,15 @@ describe('agent API on the mailbox', () => {
     }
   });
 
+  test('reply and forward validate message_id like the read endpoints do', async () => {
+    for (const path of ['/reply', '/forward']) {
+      for (const bad of ['<a b@x>', 'a\nb@x', 'x'.repeat(999)]) {
+        const res = await agent.post(path, { message_id: bad, to: [COLLEAGUE], text: 'x', idempotency_key: uniq('mid') });
+        assert.equal(res.status, 400, `${path} ${JSON.stringify(bad.slice(0, 10))}`);
+      }
+    }
+  });
+
   test('forward carries the original attachments', async () => {
     const subject = uniq('With attachment');
     const content = crypto.randomBytes(2048);
