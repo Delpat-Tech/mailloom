@@ -9,7 +9,7 @@
 
 ## 🌟 Why Mailloom?
 
-Mailloom is built to replace legacy PHP Roundcube on Delpat's production servers (`delpat.in`, `houseofhumanity.in`, `ydco.in`) with a blazing-fast, ultra-lightweight modern webmail interface.
+Mailloom is built to replace legacy PHP Roundcube on Delpat's production servers (`delpat.in`, `houseofhumanity.in`) with a blazing-fast, ultra-lightweight modern webmail interface.
 
 ### 🛡️ Strictly Engineered for Low-RAM EC2 Performance:
 1. **Ultra-Low Memory Footprint (Fastify + Vite)**:
@@ -110,7 +110,6 @@ The login screen includes one-click presets:
 - **Delpat Mail (Dovecot / Postfix)**: Pre-configures `127.0.0.1:993` (IMAP) and `127.0.0.1:587` (SMTP). Auto-detects emails ending in:
   - `@delpat.in`
   - `@houseofhumanity.in`
-  - `@ydco.in`
 - **Gmail / Google Workspace**: `imap.gmail.com:993` & `smtp.gmail.com:465`.
 - **Outlook / Office 365**: `outlook.office365.com:993` & `smtp.office365.com:587`.
 - **cPanel / Custom**: Custom host/port inputs.

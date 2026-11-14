@@ -25,6 +25,7 @@ export interface AccountConfig {
   tls?: {
     rejectUnauthorized: boolean;
     servername?: string;
+    ca?: string;
   };
   // Server-side session this config belongs to; keys the IMAP connection pool.
   sessionKey?: string;

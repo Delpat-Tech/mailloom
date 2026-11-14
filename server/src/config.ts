@@ -3,6 +3,8 @@
  * Nothing here has a fallback secret: missing or weak secrets stop the server.
  */
 
+import { readFileSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -22,6 +24,8 @@ export interface MailServerConfig {
   tls: {
     rejectUnauthorized: boolean;
     servername?: string;
+    /** PEM text of extra trusted CA certificate(s), from MAIL_TLS_CA_FILE. */
+    ca?: string;
   };
 }
 
@@ -129,6 +133,31 @@ function isLoopbackHost(host: string): boolean {
   return !!m && [m[1], m[2], m[3]].every((o) => Number(o) <= 255);
 }
 
+/** Read MAIL_TLS_CA_FILE once; it must hold at least one PEM certificate. */
+function readCaFile(env: Env): string | undefined {
+  const path = env.MAIL_TLS_CA_FILE?.trim();
+  if (!path) return undefined;
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    throw new ConfigError(`MAIL_TLS_CA_FILE (${path}) cannot be read (${(err as NodeJS.ErrnoException).code ?? 'error'}).`);
+  }
+  // Keep only certificate blocks (a private key in the same file is never passed on) and refuse corrupt ones.
+  const blocks = text.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+  if (blocks.length === 0) {
+    throw new ConfigError(`MAIL_TLS_CA_FILE (${path}) does not contain a PEM certificate (-----BEGIN CERTIFICATE-----).`);
+  }
+  for (const block of blocks) {
+    try {
+      new X509Certificate(block);
+    } catch {
+      throw new ConfigError(`MAIL_TLS_CA_FILE (${path}) contains a certificate that cannot be parsed.`);
+    }
+  }
+  return blocks.join('\n') + '\n';
+}
+
 export function loadConfig(env: Env): AppConfig {
   const problems: string[] = [];
   const collect = <T>(fn: () => T, fallback: T): T => {
@@ -174,6 +203,8 @@ export function loadConfig(env: Env): AppConfig {
     }
     return v;
   }, true);
+
+  const tlsCa = collect(() => readCaFile(env), undefined);
 
   const demoMode = collect(() => flag(env, 'DEMO_MODE', false), false);
   const cookieAlwaysSecure = collect(() => flag(env, 'COOKIE_SECURE', false), false);
@@ -257,7 +288,8 @@ export function loadConfig(env: Env): AppConfig {
       smtpAllowPlain,
       tls: {
         rejectUnauthorized,
-        servername: env.MAIL_TLS_SERVERNAME?.trim() || undefined
+        servername: env.MAIL_TLS_SERVERNAME?.trim() || undefined,
+        ...(tlsCa ? { ca: tlsCa } : {})
       }
     }
   };

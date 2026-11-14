@@ -22,7 +22,8 @@ export function createSmtpTransport(config: AccountConfig) {
     requireTLS: config.smtpRequireTLS ?? !config.smtpSecure,
     tls: {
       rejectUnauthorized: config.tls?.rejectUnauthorized ?? true,
-      ...(config.tls?.servername ? { servername: config.tls.servername } : {})
+      ...(config.tls?.servername ? { servername: config.tls.servername } : {}),
+      ...(config.tls?.ca ? { ca: config.tls.ca } : {})
     },
     connectionTimeout: 5000, // 5s connection timeout
     greetingTimeout: 5000,   // 5s greeting timeout
