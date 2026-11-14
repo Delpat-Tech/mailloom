@@ -126,8 +126,11 @@ export async function crossFolderView(
   const client = await getPooledImapClient(config);
   const hits: Array<{ folder: string; uid: number; date: number }> = [];
   for (const folder of folders) {
-    const lock = await client.getMailboxLock(folder, { readOnly: true });
+    // A KEYWORD search needs a read-write select: a read-only one reports no PERMANENTFLAGS, and the
+    // search library then silently drops the keyword term (every message would match).
+    const lock = await client.getMailboxLock(folder, { readOnly: !criteria.keyword });
     try {
+      if (criteria.keyword && !keywordSearchable(client, criteria.keyword)) continue;
       const uids = ((await client.search(criteria, { uid: true })) || []) as number[];
       if (uids.length === 0) continue;
       for await (const m of client.fetch(uids, { uid: true, internalDate: true }, { uid: true })) {
@@ -157,6 +160,19 @@ export async function crossFolderView(
     messages: pageHits.map((h) => out.get(`${h.folder}\u0000${h.uid}`)).filter((x): x is MessageHeader => Boolean(x)),
     total: hits.length
   };
+}
+
+/** One search over every selectable folder except Trash and Junk (Snoozed counts), merged newest first. */
+export async function searchAllFolders(
+  config: AccountConfig,
+  criteria: SearchObject,
+  page: number,
+  limit: number
+): Promise<{ messages: MessageHeader[]; total: number }> {
+  const client = await getPooledImapClient(config);
+  const folders = await resolveFolders(client);
+  const searched = [...folders.viewable, ...(folders.snoozed ? [folders.snoozed] : [])];
+  return crossFolderView(config, criteria, searched, page, limit);
 }
 
 // -------------------------------------------------------------
@@ -199,20 +215,48 @@ export async function changeLabels(config: AccountConfig, mailbox: string, uids:
   }
 }
 
-/** Unread messages in the Inbox carrying each label. */
-export async function unreadPerLabel(config: AccountConfig, ids: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+/**
+ * True when a KEYWORD search for this keyword is meaningful in the locked folder: the folder accepts
+ * custom keywords (PERMANENTFLAGS has \*) or already lists it. Otherwise nothing can carry it, and the
+ * caller must answer "none" rather than run a search whose keyword term would be dropped.
+ */
+export function keywordSearchable(client: ImapFlow, keyword: string): boolean {
+  const mb = client.mailbox;
+  if (!mb) return false;
+  return Boolean(mb.permanentFlags?.has('\\*') || mb.flags?.has(keyword));
+}
+
+export interface LabelCount {
+  unread: number;
+  total: number;
+}
+
+/**
+ * Messages carrying each label, counted over the folders a label view shows (everything except Trash,
+ * Junk and Snoozed): `total` all of them, `unread` those without \Seen.
+ */
+export async function labelCounts(config: AccountConfig, ids: string[]): Promise<Map<string, LabelCount>> {
+  const out = new Map<string, LabelCount>(ids.map((id) => [id, { unread: 0, total: 0 }]));
   if (ids.length === 0) return out;
   const client = await getPooledImapClient(config);
   const folders = await resolveFolders(client);
-  const lock = await client.getMailboxLock(folders.inbox, { readOnly: true });
-  try {
-    for (const id of ids) {
-      const uids = ((await client.search({ seen: false, keyword: keywordFor(id) }, { uid: true })) || []) as number[];
-      out.set(id, uids.length);
+  for (const folder of folders.viewable) {
+    // Read-write select (nothing is changed): see crossFolderView.
+    const lock = await client.getMailboxLock(folder);
+    try {
+      for (const id of ids) {
+        const keyword = keywordFor(id);
+        if (!keywordSearchable(client, keyword)) continue;
+        const all = ((await client.search({ keyword }, { uid: true })) || []) as number[];
+        if (all.length === 0) continue;
+        const unseen = ((await client.search({ seen: false, keyword }, { uid: true })) || []) as number[];
+        const c = out.get(id)!;
+        c.total += all.length;
+        c.unread += unseen.length;
+      }
+    } finally {
+      lock.release();
     }
-  } finally {
-    lock.release();
   }
   return out;
 }

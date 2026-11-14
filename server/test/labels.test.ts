@@ -57,28 +57,60 @@ after(async () => {
   await app.close();
 });
 
-test('first use seeds the five default labels in order', async () => {
+test('a new mailbox starts with no labels (no defaults are seeded)', async () => {
   const res = await req(t, 'GET', '/api/labels');
   assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.json(), []);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/labels' })).statusCode, 401);
+  // The labels the later tests use are made the way a person would make them.
+  for (const [name, colour] of [['Client', 'mint'], ['Finance', 'marigold'], ['Product', 'lilac'], ['People', 'coral'], ['Ops', 'blue']]) {
+    const made = await req(t, 'POST', '/api/labels', { name, colour });
+    assert.equal(made.statusCode, 201, made.body);
+    assert.match(made.json().id, /^[a-z0-9]{10}$/);
+  }
   assert.deepEqual(
-    res.json().map((l: any) => [l.name, l.colour, l.count]),
+    (await req(t, 'GET', '/api/labels')).json().map((l: any) => [l.name, l.colour, l.count, l.unread, l.total]),
     [
-      ['Client', 'mint', 0],
-      ['Finance', 'marigold', 0],
-      ['Product', 'lilac', 0],
-      ['People', 'coral', 0],
-      ['Ops', 'blue', 0]
+      ['Client', 'mint', 0, 0, 0],
+      ['Finance', 'marigold', 0, 0, 0],
+      ['Product', 'lilac', 0, 0, 0],
+      ['People', 'coral', 0, 0, 0],
+      ['Ops', 'blue', 0, 0, 0]
     ]
   );
-  for (const l of res.json()) assert.match(l.id, /^[a-z0-9]{10}$/);
-  assert.equal((await app.inject({ method: 'GET', url: '/api/labels' })).statusCode, 401);
+});
+
+test('old default labels that no message carries are removed once; used ones and own labels stay', async () => {
+  const db = app.mailloom.sessions.database;
+  const email = 'pruning@delpat.test';
+  // A mailbox seeded by an earlier version: five defaults plus its own label.
+  db.prepare('INSERT INTO label_seeded (email, seeded_at) VALUES (?, ?)').run(email, 1);
+  const defs: Array<[string, string, string]> = [
+    ['aaaaaaaaa1', 'Client', 'mint'], ['aaaaaaaaa2', 'Finance', 'marigold'], ['aaaaaaaaa3', 'Product', 'lilac'],
+    ['aaaaaaaaa4', 'People', 'coral'], ['aaaaaaaaa5', 'Ops', 'blue'], ['aaaaaaaaa6', 'Mine', 'mint']
+  ];
+  defs.forEach(([id, name, colour], i) => db.prepare('INSERT INTO labels (email, id, name, colour, ord, created_at) VALUES (?, ?, ?, ?, ?, 1)').run(email, id, name, colour, i));
+  const store = app.mailloomOrganise.store;
+  // Finance has two messages tagged, "Mine" none (not a default, so kept).
+  const totals = new Map(defs.map(([id]) => [id, id === 'aaaaaaaaa2' ? 2 : 0]));
+  const removed = store.pruneLegacyDefaults(email, totals);
+  assert.deepEqual(removed.sort(), ['aaaaaaaaa1', 'aaaaaaaaa3', 'aaaaaaaaa4', 'aaaaaaaaa5']);
+  assert.deepEqual(store.labels(email).map((l) => l.name), ['Finance', 'Mine']);
+  // Only once: a default-named label made later is not touched.
+  store.createLabel(email, 'Client', 'mint');
+  assert.deepEqual(store.pruneLegacyDefaults(email, new Map()), []);
+  assert.ok(store.labels(email).some((l) => l.name === 'Client'));
+  // A mailbox that never had defaults seeded is never pruned.
+  store.createLabel('fresh@delpat.test', 'Client', 'mint');
+  assert.deepEqual(store.pruneLegacyDefaults('fresh@delpat.test', new Map()), []);
+  assert.equal(store.labels('fresh@delpat.test').length, 1);
 });
 
 test('create, rename, recolour and validate labels', async () => {
   const made = await req(t, 'POST', '/api/labels', { name: '  Legal  ', colour: 'coral' });
   assert.equal(made.statusCode, 201, made.body);
   const legal = made.json();
-  assert.deepEqual({ ...legal, id: undefined }, { id: undefined, name: 'Legal', colour: 'coral', count: 0 });
+  assert.deepEqual({ ...legal, id: undefined }, { id: undefined, name: 'Legal', colour: 'coral', count: 0, unread: 0, total: 0 });
 
   assert.equal((await req(t, 'POST', '/api/labels', { name: 'legal', colour: 'mint' })).statusCode, 409);
   assert.equal((await req(t, 'POST', '/api/labels', { name: 'X', colour: 'pink' })).statusCode, 400);
@@ -116,8 +148,12 @@ test('label messages: keywords on the mailbox, unread count in Inbox, label view
   assert.ok(!inboxFlags.get('acme invoice')!.includes(`$label_${finance.id}`));
 
   const counts = new Map((await req(t, 'GET', '/api/labels')).json().map((l: any) => [l.id, l.count]));
-  assert.equal(counts.get(client.id), 1); // only the unread one in the Inbox
+  // count is the unread number over the folders a label view shows: the unread Inbox message and the unread Archive one.
+  assert.equal(counts.get(client.id), 2);
   assert.equal(counts.get(finance.id), 1);
+  const full = new Map((await req(t, 'GET', '/api/labels')).json().map((l: any) => [l.id, [l.unread, l.total]]));
+  assert.deepEqual(full.get(client.id), [2, 3]);
+  assert.deepEqual(full.get(finance.id), [1, 1]);
 
   const list = (await req(t, 'GET', '/api/mailboxes/INBOX/messages')).json();
   const order = list.messages.find((m: any) => m.subject === 'acme order');
@@ -152,8 +188,10 @@ test('labels on two mailboxes do not leak between accounts', async () => {
   const mine = (await req(t, 'GET', '/api/labels')).json();
   const made = (await req(t, 'POST', '/api/labels', { name: 'Tester only', colour: 'lilac' })).json();
 
+  assert.deepEqual((await req(c, 'GET', '/api/labels')).json(), [], 'the colleague has no labels of their own yet');
+  await req(c, 'POST', '/api/labels', { name: 'Client', colour: 'mint' });
   const theirs = (await req(c, 'GET', '/api/labels')).json();
-  assert.deepEqual(theirs.map((l: any) => l.name), ['Client', 'Finance', 'Product', 'People', 'Ops']);
+  assert.deepEqual(theirs.map((l: any) => l.name), ['Client']);
   const myIds = new Set([...mine.map((l: any) => l.id), made.id]);
   assert.ok(theirs.every((l: any) => !myIds.has(l.id)));
 

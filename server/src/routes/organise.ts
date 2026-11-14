@@ -16,7 +16,7 @@ import {
   snooze,
   snoozedView,
   stripLabelEverywhere,
-  unreadPerLabel,
+  labelCounts,
   unsnooze
 } from '../services/organise.js';
 import { getPooledImapClient } from '../services/imap.js';
@@ -116,15 +116,26 @@ export async function organiseRoutes(fastify: FastifyInstance) {
   });
 
   // ---------------- labels ----------------
-  const publicLabel = (l: { id: string; name: string; colour: string }, count = 0) => ({ id: l.id, name: l.name, colour: l.colour, count });
+  // count is the unread number (kept for older clients); unread and total cover the folders a label view shows.
+  const publicLabel = (l: { id: string; name: string; colour: string }, c: { unread: number; total: number } = { unread: 0, total: 0 }) => ({
+    id: l.id,
+    name: l.name,
+    colour: l.colour,
+    count: c.unread,
+    unread: c.unread,
+    total: c.total
+  });
 
   fastify.get('/api/labels', auth, async (req, reply) => {
     const config = req.accountConfig!;
-    const defs = ctx().store.labels(config.email);
+    let defs = ctx().store.labels(config.email);
     if (config.isDemo) return defs.map((l) => publicLabel(l));
     try {
-      const counts = await unreadPerLabel(config, defs.map((l) => l.id));
-      return defs.map((l) => publicLabel(l, counts.get(l.id) || 0));
+      const counts = await labelCounts(config, defs.map((l) => l.id));
+      // Mailboxes that were given the old default labels lose the ones nothing uses (once).
+      const removed = ctx().store.pruneLegacyDefaults(config.email, new Map([...counts].map(([id, c]) => [id, c.total])));
+      if (removed.length > 0) defs = defs.filter((l) => !removed.includes(l.id));
+      return defs.map((l) => publicLabel(l, counts.get(l.id)));
     } catch (err) {
       return fail(req, reply, err, 'Could not load labels');
     }

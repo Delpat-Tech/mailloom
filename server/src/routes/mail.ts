@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { SendEmailPayload, SendAttachment } from '../types.js';
 import { parseRecipientsLenient, parseRecipients, RecipientError, type Recipient } from '../utils/recipients.js';
@@ -16,17 +17,66 @@ import {
   restoreLiveMessage,
   isImapAuthError,
   LIST_FILTERS,
+  buildSearchCriteria,
   type ListFilter
 } from '../services/imap.js';
-import { enrichList } from '../services/organise.js';
+import { BATCH_ACTIONS, BatchError, MAX_BATCH_UIDS, markAllRead, runBatch, type BatchAction, type BatchSelection } from '../services/batch.js';
+import { enrichList, searchAllFolders } from '../services/organise.js';
 import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
+import { sniffImage } from '../services/richbody.js';
 import { renderEmail } from '../utils/sanitize.js';
+import { fetchRemoteImage, ImageProxyError, proxyImageUrl, verifyImageSignature, type ImageFetchOptions } from '../services/image-proxy.js';
 import { AgentError, locate } from '../agent/mail.js';
 import { sendLiveEmail, SendError, getMaxMessageBytes } from '../services/smtp.js';
 
 type AuthenticatedRequest = FastifyRequest;
+
+const CSP_ATTACHMENT = "default-src 'none'; sandbox";
+// Chrome's built-in PDF viewer does not start under a CSP `sandbox` directive, so PDFs shown inline get
+// `default-src 'none'` alone (still no scripts, frames or network from the document itself).
+const CSP_INLINE_PDF = "default-src 'none'";
+
+/** Reads the first bytes of a stream; `stream` is a replacement that still delivers every byte. */
+async function peekStream(source: NodeJS.ReadableStream, want = 16): Promise<{ head: Buffer; stream: Readable }> {
+  const s = source as Readable;
+  let head = Buffer.alloc(0);
+  while (head.length < want) {
+    const chunk = s.read() as Buffer | null;
+    if (chunk) {
+      head = Buffer.concat([head, chunk]);
+      continue;
+    }
+    const ended = await new Promise<boolean>((resolve) => {
+      const onReadable = () => done(false);
+      const onEnd = () => done(true);
+      const done = (v: boolean) => {
+        s.off('readable', onReadable);
+        s.off('end', onEnd);
+        s.off('close', onEnd);
+        resolve(v);
+      };
+      s.once('readable', onReadable);
+      s.once('end', onEnd);
+      s.once('close', onEnd);
+    });
+    if (ended) break;
+  }
+  async function* replay() {
+    if (head.length) yield head;
+    for await (const c of s) yield c;
+  }
+  return { head, stream: Readable.from(replay(), { objectMode: false }) };
+}
+
+/** What an attachment may be shown as inline: a real png/jpeg/gif/webp or PDF, judged by its bytes. */
+function inlineKind(head: Buffer): { type: string; csp: string } | undefined {
+  const image = sniffImage(head);
+  if (image) return { type: image, csp: CSP_ATTACHMENT };
+  if (head.length >= 5 && head.subarray(0, 5).toString('latin1') === '%PDF-') return { type: 'application/pdf', csp: CSP_INLINE_PDF };
+  return undefined;
+}
 
 /**
  * Answers a failed mail operation. If the mail server refused the session's stored credentials,
@@ -53,7 +103,10 @@ function parseUid(raw: string): number {
 
 // Mail routes. Sign-in, sign-out and session checks live in ./auth.ts; requireAuth
 // sets req.accountConfig (server-configured mail host plus the session's credentials).
-export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageBytes?: number } = {}) {
+export async function mailRoutes(
+  fastify: FastifyInstance,
+  opts: { maxMessageBytes?: number; sessionSecret?: string; imageFetch?: ImageFetchOptions } = {}
+) {
   const draftBodyLimit = Math.ceil((opts.maxMessageBytes || 10 * 1024 * 1024) * 1.4) + 256 * 1024;
   // 4. List Mailbox Folders
   fastify.get('/api/mailboxes', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
@@ -100,11 +153,17 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
         search = '',
         from = '',
         to = '',
+        cc = '',
+        body = '',
         subject = '',
         since = '',
         before = '',
-        filter = 'all'
+        filter = 'all',
+        scope = ''
       } = req.query as {
+        scope?: string;
+        cc?: string;
+        body?: string;
         filter?: string;
         page?: string;
         limit?: string;
@@ -129,10 +188,33 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
         search: search.trim() || undefined,
         from: from.trim() || undefined,
         to: to.trim() || undefined,
+        cc: cc.trim() || undefined,
+        body: body.trim() || undefined,
         subject: subject.trim() || undefined,
         since: since.trim() || undefined,
         before: before.trim() || undefined
       };
+
+      // scope=all: one search over every folder except Trash and Junk (Snoozed included), newest first.
+      // Each result carries its folder in `mailbox`. Anything else keeps the single-folder behaviour.
+      if (scope === 'all') {
+        if (listFilter === 'attachments') {
+          return reply.status(400).send({ code: 'INVALID_INPUT', error: 'The attachments filter cannot be combined with scope=all.' });
+        }
+        if (config.isDemo) {
+          const names = demoMailService.getMailboxes().map((f) => f.path).filter((n) => !['trash', 'junk', 'spam'].includes(n.toLowerCase()));
+          const merged = names.flatMap((n) => demoMailService.getMessages(n, 1, 10_000, search, filters).messages.map((m) => ({ ...m, mailbox: n })));
+          merged.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+          const slice = merged.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+          return { messages: await enrichList(store, indexer, config, slice), total: merged.length };
+        }
+        try {
+          const r = await searchAllFolders(config, buildSearchCriteria(filters, listFilter), pageNum, limitNum);
+          return { ...r, messages: await enrichList(store, indexer, config, r.messages, req.log) };
+        } catch (err) {
+          return failMail(req, reply, err, 'Could not search');
+        }
+      }
 
       if (config.isDemo) {
         const keep = (m: { isSeen: boolean; isFlagged: boolean; hasAttachments: boolean }) =>
@@ -162,7 +244,18 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       const folderPath = path;
       const messageUid = parseUid(uid);
       if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
-      const images = ['1', 'true'].includes(String((req.query as { images?: string }).images || ''));
+      // images=1: the reader chose "show images" (direct https). images=auto: through the signed proxy
+      // (never in Junk). Anything else, or nothing: blocked.
+      const imagesParam = String((req.query as { images?: string }).images || '');
+      const images = ['1', 'true'].includes(imagesParam);
+      const proxyImage =
+        imagesParam === 'auto' && opts.sessionSecret
+          ? (u: string) =>
+              proxyImageUrl(opts.sessionSecret!, u, {
+                prefix: req.url.startsWith('/mail/') ? '/mail' : '',
+                account: req.mailSession?.handle
+              })
+          : undefined;
       // peek=1: read without marking as read (the client prefetches neighbouring messages this way).
       const peek = ['1', 'true'].includes(String((req.query as { peek?: string }).peek || ''));
 
@@ -170,12 +263,15 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
         const msg = demoMailService.getMessageDetail(folderPath, messageUid);
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
         if (!msg.html) return msg;
-        const shown = renderEmail(msg.html, { allowRemoteImages: images });
+        const shown = renderEmail(msg.html, {
+          allowRemoteImages: images,
+          proxyImage: folderPath.toLowerCase() === 'junk' ? undefined : proxyImage
+        });
         return { ...msg, html: shown.html, blockedImages: shown.blockedImages };
       }
 
       try {
-        const msg = await getLiveMessageDetail(config, folderPath, messageUid, { allowRemoteImages: images, peek });
+        const msg = await getLiveMessageDetail(config, folderPath, messageUid, { allowRemoteImages: images, peek, proxyImage });
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
         return msg;
       } catch (err) {
@@ -183,6 +279,32 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       }
     }
   );
+
+  // 6b. Remote image proxy. Signed URLs only (see services/image-proxy.ts); needs a signed-in session.
+  fastify.get('/api/image-proxy', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const q = req.query as { u?: unknown; sig?: unknown };
+    const url = typeof q.u === 'string' ? q.u : '';
+    const sig = typeof q.sig === 'string' ? q.sig : '';
+    if (!url || url.length > 4096 || !opts.sessionSecret) return reply.status(400).send({ error: 'Invalid image address' });
+    if (!verifyImageSignature(opts.sessionSecret, url, sig)) return reply.status(403).send({ error: 'Image address not signed' });
+    const release = acquireSlot(`img|${req.mailSession!.key}`, 12);
+    if (!release) return reply.status(429).send({ error: 'Too many images at once' });
+    try {
+      const img = await fetchRemoteImage(url, opts.imageFetch);
+      reply.header('Content-Type', img.contentType);
+      reply.header('Content-Length', img.body.length);
+      reply.header('Content-Disposition', 'inline');
+      reply.header('Content-Security-Policy', "default-src 'none'");
+      reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('Cache-Control', 'private, max-age=86400');
+      return reply.send(img.body);
+    } catch (err) {
+      const e = err instanceof ImageProxyError ? err : new ImageProxyError('UPSTREAM_ERROR');
+      return reply.status(e.status).send({ code: e.code, error: 'The image could not be loaded' });
+    } finally {
+      release();
+    }
+  });
 
   // 7. Download Attachment
   fastify.get(
@@ -194,13 +316,17 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       const messageUid = parseUid(uid);
       if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
 
+      // ?inline=1 asks to show the file in the browser; only sniffed images and PDFs are allowed that.
+      const wantInline = ['1', 'true'].includes(String((req.query as { inline?: string }).inline || ''));
+
       if (config.isDemo) {
         const att = demoMailService.getAttachmentData(messageUid, partId);
         if (!att) return reply.status(404).send({ error: 'Attachment not found' });
-        reply.header('Content-Type', att.contentType);
-        reply.header('Content-Disposition', contentDisposition(att.filename));
+        const kind = wantInline ? inlineKind(att.buffer.subarray(0, 16)) : undefined;
+        reply.header('Content-Type', kind ? kind.type : att.contentType);
+        reply.header('Content-Disposition', contentDisposition(att.filename, kind ? 'inline' : 'attachment'));
         reply.header('X-Content-Type-Options', 'nosniff');
-        reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
+        reply.header('Content-Security-Policy', kind ? kind.csp : CSP_ATTACHMENT);
         return reply.send(att.buffer);
       }
 
@@ -214,11 +340,22 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       }
       if (!attData) return reply.status(404).send({ error: 'Attachment not found' });
 
-      reply.header('Content-Type', attData.contentType);
-      reply.header('Content-Disposition', contentDisposition(attData.filename));
+      let kind: { type: string; csp: string } | undefined;
+      let body: NodeJS.ReadableStream = attData.stream;
+      if (wantInline) {
+        try {
+          const peeked = await peekStream(attData.stream);
+          kind = inlineKind(peeked.head);
+          body = peeked.stream;
+        } catch (err) {
+          return failMail(req, reply, err, 'Could not download the attachment');
+        }
+      }
+      reply.header('Content-Type', kind ? kind.type : attData.contentType);
+      reply.header('Content-Disposition', contentDisposition(attData.filename, kind ? 'inline' : 'attachment'));
       reply.header('X-Content-Type-Options', 'nosniff');
-      reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
-      return reply.send(attData.stream);
+      reply.header('Content-Security-Policy', kind ? kind.csp : CSP_ATTACHMENT);
+      return reply.send(body);
     }
   );
 
@@ -372,6 +509,54 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
     }
   );
 
+  // 11e. Batch actions: many messages (or the whole folder) in one request, one IMAP command per action.
+  // Body: { action, uids?: number[], all?: true, targetFolder?, junkFolder? }.
+  fastify.post('/api/mailboxes/:path/batch', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const config = req.accountConfig!;
+    const { path } = req.params as { path: string };
+    const body = (req.body ?? {}) as { action?: unknown; uids?: unknown; all?: unknown; targetFolder?: unknown; junkFolder?: unknown };
+    const invalid = (error: string) => reply.status(400).send({ code: 'INVALID_INPUT', error });
+    if (typeof body.action !== 'string' || !(BATCH_ACTIONS as readonly string[]).includes(body.action)) {
+      return invalid(`action must be one of: ${BATCH_ACTIONS.join(', ')}`);
+    }
+    const wantsAll = body.all === true;
+    if (wantsAll === (body.uids !== undefined)) return invalid('Give either uids or all: true.');
+    let selection: BatchSelection;
+    if (wantsAll) {
+      selection = { all: true };
+    } else {
+      const u = body.uids;
+      if (!Array.isArray(u) || u.length === 0 || u.length > MAX_BATCH_UIDS || !u.every((x) => Number.isInteger(x) && x > 0 && x < 2 ** 32)) {
+        return invalid(`uids must be 1 to ${MAX_BATCH_UIDS} message ids.`);
+      }
+      selection = { uids: [...new Set(u as number[])] };
+    }
+    if (body.action === 'move' && (typeof body.targetFolder !== 'string' || !body.targetFolder)) return invalid('Give a targetFolder.');
+    if (config.isDemo) return reply.status(400).send({ code: 'DEMO_ACCOUNT', error: 'This is not available in the demo.' });
+    try {
+      const r = await runBatch(config, path, body.action as BatchAction, selection, {
+        targetFolder: typeof body.targetFolder === 'string' ? body.targetFolder : undefined,
+        junkFolder: typeof body.junkFolder === 'string' ? body.junkFolder : undefined
+      });
+      return { success: true, ...r };
+    } catch (err) {
+      if (err instanceof BatchError) return reply.status(err.status).send({ code: err.code, error: err.message });
+      return failMail(req, reply, err, 'Could not complete that action');
+    }
+  });
+
+  // 11f. Mark every message of a folder as read.
+  fastify.post('/api/mailboxes/:path/mark-all-read', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const config = req.accountConfig!;
+    const { path } = req.params as { path: string };
+    if (config.isDemo) return reply.status(400).send({ code: 'DEMO_ACCOUNT', error: 'This is not available in the demo.' });
+    try {
+      return { success: true, affected: await markAllRead(config, path) };
+    } catch (err) {
+      return failMail(req, reply, err, 'Could not mark the messages as read');
+    }
+  });
+
   // 11d. Drafts: save (create or replace) and delete
   fastify.post('/api/drafts', { onRequest: [requireAuth], bodyLimit: draftBodyLimit }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
@@ -518,6 +703,8 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
 
       try {
         const r = await sendLiveEmail(config, payload);
+        // The Sent copy is stored by now: refresh the recipient suggestions.
+        if (r.accepted.length > 0) fastify.mailloomContacts.indexer.kick(config, true);
         let draftDeleted: boolean | undefined;
         if (payload.draftUid && r.accepted.length > 0) {
           draftDeleted = await deleteLiveDraft(config, payload.draftUid).catch(() => false);

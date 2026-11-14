@@ -59,6 +59,8 @@ interface Row {
 
 // Writes for "last used" are throttled; idle expiry is accurate to this much.
 const TOUCH_INTERVAL_MS = 10_000;
+// Remember Me sessions slide a 30-day window; their expiry is only rewritten this often.
+const REMEMBER_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 
 export class SessionStore {
   private db: DatabaseSync;
@@ -105,7 +107,8 @@ export class SessionStore {
   }
 
   private expiryFor(remember: boolean, createdAt: number, lastUsedAt: number): number {
-    if (remember) return createdAt + this.lifetimes.rememberMs;
+    // Remember Me: a sliding window from last use; the idle limit does not apply.
+    if (remember) return lastUsedAt + this.lifetimes.rememberMs;
     return Math.min(createdAt + this.lifetimes.shortMaxMs, lastUsedAt + this.lifetimes.idleMs);
   }
 
@@ -187,16 +190,22 @@ export class SessionStore {
     };
   }
 
-  /** Records use of a session, sliding the idle timeout of short sessions. */
-  touch(session: Session): void {
+  /**
+   * Records use of a session. Short sessions slide their idle timeout; Remember Me sessions
+   * slide a window of rememberMs from now (written at most once an hour).
+   * Returns true when the expiry was rewritten.
+   */
+  touch(session: Session): boolean {
     const now = this.now();
-    if (now - session.lastUsedAt < TOUCH_INTERVAL_MS) return;
+    const interval = session.remember ? REMEMBER_TOUCH_INTERVAL_MS : TOUCH_INTERVAL_MS;
+    if (now - session.lastUsedAt < interval) return false;
     const expiresAt = this.expiryFor(session.remember, session.createdAt, now);
     this.db
       .prepare('UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE id_hash = ?')
       .run(now, expiresAt, session.key);
     session.lastUsedAt = now;
     session.expiresAt = expiresAt;
+    return true;
   }
 
   deleteByKey(key: string): boolean {

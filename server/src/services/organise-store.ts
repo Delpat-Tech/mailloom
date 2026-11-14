@@ -20,7 +20,11 @@ export interface LabelDef {
   order: number;
 }
 
-export const DEFAULT_LABELS: Array<{ name: string; colour: LabelColour }> = [
+/**
+ * The five labels earlier versions created for every new mailbox. They are no longer seeded; this list
+ * only identifies them so unused ones can be removed from mailboxes that already have them.
+ */
+export const LEGACY_DEFAULT_LABELS: Array<{ name: string; colour: LabelColour }> = [
   { name: 'Client', colour: 'mint' },
   { name: 'Finance', colour: 'marigold' },
   { name: 'Product', colour: 'lilac' },
@@ -98,6 +102,10 @@ export class OrganiseStore {
         email TEXT PRIMARY KEY,
         seeded_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS label_defaults_pruned (
+        email TEXT PRIMARY KEY,
+        pruned_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS snooze_items (
         email TEXT NOT NULL,
         message_id TEXT NOT NULL,
@@ -144,16 +152,9 @@ export class OrganiseStore {
 
   // ---------------- labels ----------------
 
-  /** The mailbox's labels in order. The defaults are created the first time a mailbox asks. */
+  /** The mailbox's labels in order. */
   labels(email: string): LabelDef[] {
     const e = lc(email);
-    if (!this.db.prepare('SELECT 1 FROM label_seeded WHERE email = ?').get(e)) {
-      this.tx(() => {
-        if (this.db.prepare('SELECT 1 FROM label_seeded WHERE email = ?').get(e)) return;
-        DEFAULT_LABELS.forEach((l, i) => this.insertLabel(e, l.name, l.colour, i));
-        this.db.prepare('INSERT INTO label_seeded (email, seeded_at) VALUES (?, ?)').run(e, this.now());
-      });
-    }
     const rows = this.db
       .prepare('SELECT id, name, colour, ord FROM labels WHERE email = ? ORDER BY ord, created_at')
       .all(e) as Array<{ id: string; name: string; colour: LabelColour; ord: number }>;
@@ -195,6 +196,30 @@ export class OrganiseStore {
       next.order = at;
     }
     return next;
+  }
+
+  /**
+   * One-time clean-up for mailboxes that were given the old default labels: removes each default label
+   * (by its original name and colour) that no message carries. `totals` maps label id to the number of
+   * messages tagged with it; a label missing from the map is kept. Mailboxes that never had defaults
+   * seeded are untouched, so labels a person made themselves are never removed. Returns the removed ids.
+   */
+  pruneLegacyDefaults(email: string, totals: Map<string, number>): string[] {
+    const e = lc(email);
+    if (!this.db.prepare('SELECT 1 FROM label_seeded WHERE email = ?').get(e)) return [];
+    if (this.db.prepare('SELECT 1 FROM label_defaults_pruned WHERE email = ?').get(e)) return [];
+    const removed: string[] = [];
+    this.tx(() => {
+      for (const l of this.labels(e)) {
+        const isDefault = LEGACY_DEFAULT_LABELS.some((d) => d.name === l.name && d.colour === l.colour);
+        if (isDefault && totals.get(l.id) === 0) {
+          this.db.prepare('DELETE FROM labels WHERE email = ? AND id = ?').run(e, l.id);
+          removed.push(l.id);
+        }
+      }
+      this.db.prepare('INSERT INTO label_defaults_pruned (email, pruned_at) VALUES (?, ?)').run(e, this.now());
+    });
+    return removed;
   }
 
   deleteLabel(email: string, id: string): boolean {
