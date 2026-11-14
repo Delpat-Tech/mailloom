@@ -1,6 +1,6 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type { AccountConfig, SendEmailPayload } from '../types.js';
-import { decryptSession, encryptSession } from '../utils/crypto.js';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { SendEmailPayload } from '../types.js';
+import { requireAuth } from './auth.js';
 import { demoMailService } from '../services/demo-mail.js';
 import {
   getLiveMailboxes,
@@ -10,139 +10,15 @@ import {
   moveLiveMessage,
   deleteLiveMessage,
   markLiveMessageSpam,
-  testImapConnection,
-  streamLiveAttachment,
-  closeUserSession
+  streamLiveAttachment
 } from '../services/imap.js';
-import { sendLiveEmail, testSmtpConnection } from '../services/smtp.js';
+import { sendLiveEmail } from '../services/smtp.js';
 
-interface AuthenticatedRequest extends FastifyRequest {
-  accountConfig?: AccountConfig;
-}
+type AuthenticatedRequest = FastifyRequest;
 
+// Mail routes. Sign-in, sign-out and session checks live in ./auth.ts; requireAuth
+// sets req.accountConfig (server-configured mail host plus the session's credentials).
 export async function mailRoutes(fastify: FastifyInstance) {
-  // Authentication middleware
-  const requireAuth = async (req: AuthenticatedRequest, reply: FastifyReply) => {
-    const authHeader = req.headers.authorization;
-    const cookieToken = req.cookies.session_token;
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : cookieToken;
-
-    if (!token) {
-      reply.status(401).send({ error: 'Unauthorized: No session token provided' });
-      return;
-    }
-
-    const config = decryptSession(token);
-    if (!config) {
-      reply.status(401).send({ error: 'Unauthorized: Invalid or expired session' });
-      return;
-    }
-
-    req.accountConfig = config;
-  };
-
-  // 1. Connect Account
-  fastify.post('/api/auth/connect', async (req, reply) => {
-    const body = req.body as Partial<AccountConfig> & { isDemo?: boolean };
-
-    if (body.isDemo) {
-      const demoConfig: AccountConfig = {
-        email: 'sales@poojafasteners.example',
-        name: 'Ramesh Dave (Pooja Fasteners)',
-        imapHost: 'demo.local',
-        imapPort: 993,
-        imapSecure: true,
-        imapUser: 'demo',
-        imapPass: 'demo',
-        smtpHost: 'demo.local',
-        smtpPort: 587,
-        smtpSecure: false,
-        isDemo: true
-      };
-      const token = encryptSession(demoConfig);
-      reply.setCookie('session_token', token, { path: '/', httpOnly: true, sameSite: 'lax' });
-      return { token, account: { email: demoConfig.email, name: demoConfig.name, isDemo: true } };
-    }
-
-    // Real IMAP/SMTP connection validation
-    const incomingPass = body.imapPass || (body as { password?: string }).password || '';
-    const config: AccountConfig = {
-      email: body.email || '',
-      name: body.name || body.email?.split('@')[0],
-      imapHost: body.imapHost || '',
-      imapPort: Number(body.imapPort || 993),
-      imapSecure: body.imapSecure !== false,
-      imapUser: body.imapUser || body.email || '',
-      imapPass: incomingPass,
-      smtpHost: body.smtpHost || '',
-      smtpPort: Number(body.smtpPort || 587),
-      smtpSecure: Boolean(body.smtpSecure),
-      smtpUser: body.smtpUser || body.imapUser || body.email || '',
-      smtpPass: body.smtpPass || incomingPass,
-      isDemo: false
-    };
-
-    if (!config.email || !config.imapHost || !config.imapPass) {
-      return reply.status(400).send({ error: 'Email, IMAP host, and password are required' });
-    }
-
-    try {
-      await testImapConnection(config);
-    } catch (err) {
-      return reply.status(400).send({ error: (err as Error).message });
-    }
-
-    // Test SMTP with non-blocking timeout fallback so login never hangs
-    if (config.smtpHost) {
-      try {
-        await Promise.race([
-          testSmtpConnection(config),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP connection timed out')), 5000))
-        ]);
-      } catch (smtpErr) {
-        fastify.log.warn(`[AUTH] SMTP verification notice for ${config.email}: ${(smtpErr as Error).message}`);
-        // Allow login to succeed even if SMTP port has an issue so user can access mail
-      }
-    }
-
-    const token = encryptSession(config);
-    reply.setCookie('session_token', token, { path: '/', httpOnly: true, sameSite: 'lax' });
-    return { token, account: { email: config.email, name: config.name, isDemo: false } };
-  });
-
-  // 2. Current Session User
-  fastify.get('/api/auth/me', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest) => {
-    const config = req.accountConfig!;
-    return {
-      account: {
-        email: config.email,
-        name: config.name,
-        imapHost: config.imapHost,
-        smtpHost: config.smtpHost,
-        isDemo: config.isDemo
-      }
-    };
-  });
-
-  // 3. Logout
-  fastify.post('/api/auth/logout', async (req, reply) => {
-    try {
-      const authHeader = req.headers.authorization;
-      const cookieToken = req.cookies.session_token;
-      const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : cookieToken;
-      if (token) {
-        const config = decryptSession(token);
-        if (config && !config.isDemo) {
-          await closeUserSession(config);
-        }
-      }
-    } catch {
-      // Ignore cleanup error
-    }
-    reply.clearCookie('session_token', { path: '/' });
-    return { success: true };
-  });
-
   // 4. List Mailbox Folders
   fastify.get('/api/mailboxes', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest) => {
     const config = req.accountConfig!;

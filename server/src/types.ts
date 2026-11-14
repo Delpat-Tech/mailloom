@@ -18,6 +18,13 @@ export interface AccountConfig {
   smtpSecure: boolean;
   smtpUser?: string;
   smtpPass?: string;
+  // TLS options for IMAP and SMTP, from server config (MAIL_TLS_*). Never from the browser.
+  tls?: {
+    rejectUnauthorized: boolean;
+    servername?: string;
+  };
+  // Server-side session this config belongs to; keys the IMAP connection pool.
+  sessionKey?: string;
   // Mode flag
   isDemo?: boolean;
 }

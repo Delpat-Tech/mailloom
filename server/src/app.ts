@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
@@ -6,6 +6,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mailRoutes } from './routes/mail.js';
+import { ACCOUNT_HEADER, authRoutes } from './routes/auth.js';
+import { loadConfig } from './config.js';
+import { SessionStore } from './services/sessions.js';
+import { LoginThrottle } from './services/login-throttle.js';
+import { closeAllPooledClients, closeSessionConnection } from './services/imap.js';
 
 export interface BuildAppOptions {
   /** Environment to read configuration from. Defaults to process.env. */
@@ -14,6 +19,21 @@ export interface BuildAppOptions {
   logger?: FastifyServerOptions['logger'];
   /** Folder with the built client. null disables static serving. */
   clientDist?: string | null;
+  /** Clock override for tests (session expiry, login throttle). */
+  now?: () => number;
+}
+
+function isApiUrl(url: string): boolean {
+  return url.startsWith('/api/') || url.startsWith('/mail/api/');
+}
+
+function isSameOrigin(origin: string, req: FastifyRequest): boolean {
+  try {
+    // req.host is the Host header (or X-Forwarded-Host when TRUST_PROXY is set), with port.
+    return new URL(origin).host.toLowerCase() === String(req.host || '').toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,15 +64,69 @@ function resolveClientDist(env: Record<string, string | undefined>): string {
 /** Builds the Fastify app without listening. Call app.listen() or app.inject(). */
 export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = opts.env ?? process.env;
-  const fastify = Fastify({ logger: opts.logger ?? false });
+  // Throws ConfigError (with every problem listed) when secrets or mail settings are missing.
+  const config = loadConfig(env);
+  const now = opts.now ?? Date.now;
 
-  await fastify.register(cors, {
-    origin: true,
-    credentials: true
+  const fastify = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy });
+
+  const sessions = new SessionStore(
+    config.sessionDbPath,
+    config.sessionSecret,
+    { idleMs: config.sessionIdleMs, shortMaxMs: config.sessionShortMaxMs, rememberMs: config.sessionRememberMs },
+    now
+  );
+  const throttle = new LoginThrottle(config.loginMaxFailures, config.loginWindowMs, now);
+  fastify.decorate('mailloom', { config, sessions, throttle });
+
+  if (!config.mail.tls.rejectUnauthorized) {
+    fastify.log.warn('MAIL_TLS_REJECT_UNAUTHORIZED=false: mail server certificates are NOT checked (local testing only).');
+  }
+
+  // Remove expired sessions and their IMAP connections every 10 minutes.
+  const sweeper = setInterval(() => {
+    for (const key of sessions.sweep()) void closeSessionConnection(key);
+    throttle.prune();
+  }, 10 * 60_000);
+  sweeper.unref();
+
+  fastify.addHook('onClose', async () => {
+    clearInterval(sweeper);
+    await closeAllPooledClients();
+    sessions.close();
   });
 
-  await fastify.register(cookie, {
-    secret: env.COOKIE_SECRET || 'mailloom-secret-cookie-sign-key-998811'
+  // Cross-origin requests to the API are refused unless the origin is listed in CORS_ORIGINS.
+  // Same-origin requests (the normal case) need no CORS at all.
+  const allowedOrigins = new Set(config.corsOrigins);
+  fastify.addHook('onRequest', async (req, reply) => {
+    const origin = req.headers.origin;
+    if (!origin || !isApiUrl(req.url)) return;
+    if (allowedOrigins.has(origin)) return;
+    if (isSameOrigin(origin, req)) return;
+    return reply.status(403).send({ code: 'ORIGIN_NOT_ALLOWED', error: 'This site is not allowed to use the Mailloom API.' });
+  });
+
+  await fastify.register(cors, {
+    origin: config.corsOrigins.length > 0 ? config.corsOrigins : false,
+    credentials: true,
+    allowedHeaders: ['Content-Type', ACCOUNT_HEADER]
+  });
+
+  // Session cookies hold 256-bit random ids looked up server-side, so they are not signed.
+  await fastify.register(cookie);
+
+  // An empty body sent as application/json (e.g. DELETE or sign-out from older clients)
+  // means "no body", not a 400. Non-empty bodies use Fastify's own safe JSON parser.
+  const defaultJsonParser = fastify.getDefaultJsonParser('error', 'error');
+  fastify.removeContentTypeParser('application/json');
+  fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    const text = typeof body === 'string' ? body : body.toString('utf8');
+    if (text.trim() === '') {
+      done(null, undefined);
+      return;
+    }
+    defaultJsonParser(req, text, done);
   });
 
   await fastify.register(multipart, {
@@ -61,9 +135,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }
   });
 
-  // Register Mail Routes (they have /api/... inside mailRoutes)
-  await fastify.register(mailRoutes);
-  await fastify.register(mailRoutes, { prefix: '/mail' });
+  // Register routes at / and behind the /mail subpath used by nginx.
+  for (const prefix of ['', '/mail']) {
+    await fastify.register(authRoutes, { prefix });
+    await fastify.register(mailRoutes, { prefix });
+  }
 
   const clientDist = opts.clientDist === undefined ? resolveClientDist(env) : opts.clientDist;
 
@@ -71,7 +147,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   if (clientDist && fs.existsSync(clientDist)) {
     fastify.setNotFoundHandler(async (req, reply) => {
       // If it's an API route that wasn't matched, return 404 JSON
-      if (req.url.startsWith('/api/') || req.url.startsWith('/mail/api/')) {
+      if (isApiUrl(req.url)) {
         return reply.status(404).send({ error: 'Endpoint not found' });
       }
 
