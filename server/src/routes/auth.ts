@@ -298,6 +298,8 @@ export async function authRoutes(fastify: FastifyInstance) {
     // Devices with notifications on follow the new session, so signing out of it removes them.
     for (const oldKey of replacedKeys) fastify.mailloomPush?.store.rebindSession(oldKey, session.key);
     setSessionCookie(req, reply, session, sessionId);
+    // Snoozed mail that came due while nobody was signed in returns to the Inbox now (in the background).
+    void fastify.mailloomOrganise?.snoozer.wakeFor(accountConfigFor(session, config));
     return { account: publicAccount(session) };
   });
 
