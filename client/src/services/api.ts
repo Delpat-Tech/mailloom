@@ -464,10 +464,13 @@ export const api = {
     });
   },
 
-  getAttachmentUrl: (folderPath: string, uid: number, partId: string): string => {
+  getAttachmentUrl: (folderPath: string, uid: number, partId: string, options: { inline?: boolean } = {}): string => {
     // Links cannot send headers, so the account goes in the query (the server allows that for GET only).
     // Uses the account active when the message was rendered, not whichever signed in last.
-    const account = activeHandle ? `?account=${encodeURIComponent(activeHandle)}` : '';
-    return `${API_BASE}/mailboxes/${encodeURIComponent(folderPath)}/messages/${realUid(uid)}/attachments/${encodeURIComponent(partId)}${account}`;
+    const q = new URLSearchParams();
+    if (activeHandle) q.set('account', activeHandle);
+    if (options.inline) q.set('inline', '1'); // pictures and PDF: shown in the page instead of downloaded
+    const query = q.toString() ? `?${q}` : '';
+    return `${API_BASE}/mailboxes/${encodeURIComponent(folderPath)}/messages/${realUid(uid)}/attachments/${encodeURIComponent(partId)}${query}`;
   }
 };

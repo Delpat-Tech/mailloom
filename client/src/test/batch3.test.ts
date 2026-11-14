@@ -85,3 +85,27 @@ describe('load pictures automatically', () => {
     setActiveHandle(null);
   });
 });
+
+import { viewerKind, pdfNeedsNewTab } from '../components/AttachmentViewer.js';
+
+describe('inline viewer', () => {
+  it('opens pictures and PDF, downloads everything else', () => {
+    expect(viewerKind('image/png')).toBe('image');
+    expect(viewerKind('image/jpeg; name=a.jpg')).toBe('image');
+    expect(viewerKind('application/pdf')).toBe('pdf');
+    expect(viewerKind('application/octet-stream', 'scan.PDF')).toBe('pdf');
+    expect(viewerKind('image/svg+xml')).toBeNull();
+    expect(viewerKind('application/zip', 'a.zip')).toBeNull();
+  });
+  it('sends PDF to its own tab on iPhone and iPad', () => {
+    expect(pdfNeedsNewTab('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)', 5)).toBe(true);
+    expect(pdfNeedsNewTab('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5)).toBe(true);
+    expect(pdfNeedsNewTab('Mozilla/5.0 (Windows NT 10.0)', 0)).toBe(false);
+  });
+  it('the inline address adds inline=1 next to the account', () => {
+    setActiveHandle('acct1');
+    expect(api.getAttachmentUrl('INBOX', 3, '2', { inline: true })).toMatch(/attachments\/2\?account=acct1&inline=1$/);
+    expect(api.getAttachmentUrl('INBOX', 3, '2')).toMatch(/attachments\/2\?account=acct1$/);
+    setActiveHandle(null);
+  });
+});

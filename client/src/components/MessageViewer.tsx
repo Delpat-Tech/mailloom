@@ -43,6 +43,7 @@ import { SnoozeMenu } from './SnoozeMenu.js';
 import { ThreadView } from './ThreadView.js';
 import { SkeletonReader } from './Skeleton.js';
 import { KeyHint } from './KeyHint.js';
+import { AttachmentViewer, viewerKind, pdfNeedsNewTab, type ViewerTarget } from './AttachmentViewer.js';
 
 // Never below 32 px, never wrapping or shrinking: the toolbar moves actions into "More" instead.
 const TOUCH = 'min-h-[44px] min-w-[44px] sm:min-h-8 sm:min-w-8 flex items-center justify-center shrink-0 whitespace-nowrap';
@@ -300,6 +301,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   myAddress
 }) => {
   const [showMove, setShowMove] = useState(false);
+  const [viewing, setViewing] = useState<ViewerTarget | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [viewMode, setViewMode] = useState<'html' | 'text'>('html');
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -652,6 +654,8 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
         </div>
       )}
 
+      {viewing && <AttachmentViewer target={viewing} onClose={() => setViewing(null)} />}
+
       <MoveDialog
         open={showMove}
         folders={folders}
@@ -806,6 +810,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             <div className="flex flex-wrap gap-2">
               {message.attachments.map((att) => {
                 const downloadUrl = api.getAttachmentUrl(folderPath, message.uid, att.partId);
+                const kind = viewerKind(att.contentType, att.filename);
                 return (
                   <a
                     key={att.partId}
@@ -813,6 +818,18 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
                     download
                     target="_blank"
                     rel="noreferrer"
+                    onClick={
+                      kind
+                        ? (e) => {
+                            // Pictures and PDF open in the viewer; Ctrl/Cmd/Shift-click keeps the browser's own behaviour.
+                            if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+                            e.preventDefault();
+                            const src = api.getAttachmentUrl(folderPath, message.uid, att.partId, { inline: true });
+                            if (kind === 'pdf' && pdfNeedsNewTab()) window.open(src, '_blank', 'noopener');
+                            else setViewing({ filename: att.filename, kind, src, downloadUrl });
+                          }
+                        : undefined
+                    }
                     aria-label={`Download ${att.filename}, ${formatFileSize(att.size)}`}
                     className="flex items-center gap-2.5 py-[7px] pl-[7px] pr-2.5 min-h-[44px] w-full sm:w-[244px] bg-surface rounded border border-line-2 hover:bg-hover text-ink-3 no-underline transition-colors"
                   >
