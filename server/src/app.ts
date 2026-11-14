@@ -280,5 +280,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     });
   }
 
+  if (!(clientDist && fs.existsSync(clientDist))) {
+    // No client build: answer 404 ourselves (Fastify's default handler logs the raw URL with its query).
+    fastify.setNotFoundHandler(async (_req, reply) =>
+      reply.status(404).send(isApiUrl(_req.url) ? { error: 'Endpoint not found' } : 'Not Found')
+    );
+  }
+
   return fastify;
 }

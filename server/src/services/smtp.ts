@@ -171,7 +171,7 @@ function asObjects(list: Array<string | Recipient>): Recipient[] {
   return list.map((r) => {
     const rec = typeof r === 'string' ? { name: '', address: r } : r;
     // Whatever the caller, only a single plain address ever reaches the envelope.
-    if (!isValidAddress(rec.address)) throw new SendError('The mail server rejected every recipient. Check the addresses.', 400);
+    if (!isValidAddress(rec.address)) throw new SendError(`Not a valid address: ${rec.address.slice(0, 100)}`, 400);
     return rec;
   });
 }

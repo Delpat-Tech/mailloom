@@ -43,3 +43,4 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Sign-in lockout by email (10/15 min) can be triggered by anyone; Dovecot sees all Mailloom logins from 127.0.0.1 — consider passing client IP via IMAP ID and login_trusted_networks (waits on real use).
 - nodemailer 7.0.13 still has audit advisories whose fixes are only in 8.x to 10.x (breaking major); revisit the upgrade (waits on a compatibility check). Draft-save recipients are not yet strictly parsed like send.
 - Inter font loads from Google Fonts (allowed in CSP); self-hosting would let the CSP drop the two Google hosts (waits on a decision).
+- Unicode (IDN) domains are refused in recipients; punycode works (waits on real use).

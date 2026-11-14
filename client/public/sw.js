@@ -30,16 +30,17 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Bypass service worker for all API endpoints or non-GET requests
-  if (event.request.method !== 'GET' || url.pathname.includes('/api/')) {
+  // Bypass the service worker for other sites (fonts, remote mail images: the page CSP forbids the
+  // worker's own fetch to them, the browser loads them directly), API endpoints and non-GET requests.
+  if (url.origin !== self.location.origin || event.request.method !== 'GET' || url.pathname.includes('/api/')) {
     return;
   }
 
   // Handle navigation requests (HTML shell)
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => {
-        return caches.match('./index.html') || caches.match('./');
+      fetch(event.request).catch(async () => {
+        return (await caches.match('./index.html')) || (await caches.match('./')) || Response.error();
       })
     );
     return;
@@ -58,7 +59,7 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         })
-        .catch(() => cachedResponse);
+        .catch(() => cachedResponse || Response.error());
 
       return cachedResponse || fetchPromise;
     })

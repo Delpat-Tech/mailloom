@@ -1,3 +1,4 @@
+import { splitRecipients, mergeRecipients } from '../services/recipients';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
@@ -306,16 +307,23 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     type: 'to' | 'cc' | 'bcc',
     value: string
   ) => {
-    const trimmed = value.trim().replace(/,/g, '');
-    if (!trimmed) return;
+    if (splitRecipients(value).length === 0) {
+      // Only separators typed: just clear the box.
+      if (value.trim()) {
+        if (type === 'to') setToInput('');
+        else if (type === 'cc') setCcInput('');
+        else setBccInput('');
+      }
+      return;
+    }
     if (type === 'to') {
-      if (!toList.includes(trimmed)) setToList([...toList, trimmed]);
+      setToList(mergeRecipients(toList, value));
       setToInput('');
     } else if (type === 'cc') {
-      if (!ccList.includes(trimmed)) setCcList([...ccList, trimmed]);
+      setCcList(mergeRecipients(ccList, value));
       setCcInput('');
     } else {
-      if (!bccList.includes(trimmed)) setBccList([...bccList, trimmed]);
+      setBccList(mergeRecipients(bccList, value));
       setBccInput('');
     }
   };
@@ -357,25 +365,16 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     setErrorMsg(null);
 
     // If user has typed an email without pressing enter, add it automatically
-    const finalTo = [...toList];
-    if (toInput.trim() && !finalTo.includes(toInput.trim())) {
-      finalTo.push(toInput.trim());
-    }
+    const finalTo = mergeRecipients(toList, toInput);
 
     if (finalTo.length === 0) {
       setErrorMsg('Please specify at least one recipient.');
       return;
     }
 
-    const finalCc = [...ccList];
-    if (ccInput.trim() && !finalCc.includes(ccInput.trim())) {
-      finalCc.push(ccInput.trim());
-    }
+    const finalCc = mergeRecipients(ccList, ccInput);
 
-    const finalBcc = [...bccList];
-    if (bccInput.trim() && !finalBcc.includes(bccInput.trim())) {
-      finalBcc.push(bccInput.trim());
-    }
+    const finalBcc = mergeRecipients(bccList, bccInput);
 
     if (!plainMode) {
       // Pictures in the text count toward the same limit as attachments (the server checks again).

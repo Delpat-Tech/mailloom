@@ -21,3 +21,21 @@ test('request logs drop the query string', async () => {
   assert.match(captured, /"url":"\/api\/mailboxes\/INBOX\/messages"/, 'the path is still logged');
   assert.doesNotMatch(captured, /topsecret|secret-id-123|search=/);
 });
+
+test('without a client build, 404 logs do not carry the query string', async () => {
+  let captured = '';
+  const stream = new Writable({
+    write(chunk, _enc, cb) {
+      captured += chunk.toString();
+      cb();
+    }
+  });
+  const app = await buildTestApp({}, { logger: { level: 'info', stream } });
+  try {
+    const res = await app.inject({ method: 'GET', url: '/nothing-here?q=hidden-term' });
+    assert.equal(res.statusCode, 404);
+  } finally {
+    await app.close();
+  }
+  assert.doesNotMatch(captured, /hidden-term|q=/);
+});

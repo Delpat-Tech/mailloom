@@ -154,6 +154,7 @@ test('a recipient the server rejects is never reported as accepted', async () =>
   }
   assert.equal(result, undefined, 'must not report success');
   assert.ok(error instanceof SendError);
+  assert.match((error as Error).message, /Not a valid address: nobody-without-domain/);
 });
 
 test('a rejected SMTP login is an auth error (ends the session) without transcript details', async () => {
