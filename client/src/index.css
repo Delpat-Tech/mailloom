@@ -61,7 +61,8 @@
 }
 
 @layer base {
-  html {
+  html, body {
+    overscroll-behavior-y: contain; /* the installed app must not reload on a pull-down */
     -webkit-text-size-adjust: 100%;
   }
   body {

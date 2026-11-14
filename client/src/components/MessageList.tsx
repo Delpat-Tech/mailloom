@@ -28,6 +28,7 @@ import type { SearchFilterParams, ListFilter } from '../services/api.js';
 import type { Label } from '../services/labels.js';
 import { LabelChip } from './LabelChip.js';
 import { SnoozeMenu } from './SnoozeMenu.js';
+import { usePullToRefresh } from '../hooks/usePullToRefresh.js';
 import { SkeletonRows, useAfterDelay } from './Skeleton.js';
 
 interface MessageListProps {
@@ -460,6 +461,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     return () => window.removeEventListener('mailloom:search', open);
   }, []);
   const scrollerRef = useRef<HTMLUListElement>(null);
+  const pull = usePullToRefresh(scrollerRef as React.RefObject<HTMLElement>, { enabled: isVisible, refreshing: isLoading, onRefresh });
   const savedScroll = useRef(0);
   // Roving focus: one row is in the Tab order; arrow keys move between rows.
   const [activeUid, setActiveUid] = useState<number | null>(null);
@@ -906,6 +908,23 @@ export const MessageList: React.FC<MessageListProps> = ({
           )}
         </div>
       ) : (
+        <>
+        <div
+          aria-hidden="true"
+          data-testid="pull-indicator"
+          className="lg:hidden shrink-0 overflow-hidden flex items-end justify-center bg-surface"
+          style={{
+            height: pull.offset,
+            transition: pull.dragging ? 'none' : 'height var(--dur-3) var(--ease-out)'
+          }}
+        >
+          {pull.offset > 0 && (
+            <RotateCw
+              className={`w-5 h-5 mb-2 text-ink-2 ${pull.holding ? 'animate-spin motion-reduce:animate-none' : ''}`}
+              style={pull.holding ? undefined : { opacity: pull.progress, transform: `rotate(${pull.progress * 270}deg)` }}
+            />
+          )}
+        </div>
         <ul
           ref={scrollerRef}
           aria-label={`${folderName} messages`}
@@ -913,7 +932,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           onScroll={(e) => {
             if (e.currentTarget.clientHeight > 0) savedScroll.current = e.currentTarget.scrollTop;
           }}
-          className="flex-1 overflow-y-auto list-none m-0 p-0"
+          className="flex-1 overflow-y-auto overscroll-y-contain list-none m-0 p-0"
         >
           {groups.map((g) => (
             <React.Fragment key={g.key}>
@@ -963,6 +982,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             </li>
           )}
         </ul>
+        </>
       )}
 
       {/* New Message: always reachable on small screens (the sidebar is hidden there) */}
