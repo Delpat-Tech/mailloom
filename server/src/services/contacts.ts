@@ -145,10 +145,12 @@ export class ContactStore {
     const rows = this.db
       .prepare('SELECT addr, name, out_count, in_count, last_out, last_in, own FROM contacts WHERE email = ?')
       .all(e) as unknown as ContactRow[];
-    const scored: Array<{ s: ContactSuggestion; score: number }> = [];
+    const scored: Array<{ s: ContactSuggestion; score: number; written: boolean }> = [];
     for (const r of rows) {
       if (r.own || r.addr === e) continue;
       if (!matches(r.addr, r.name, q)) continue;
+      // A sender the user never wrote to must have written at least twice (one-off lookalikes stay out).
+      if (Number(r.out_count) === 0 && Number(r.in_count) < 2) continue;
       const out = Number(r.out_count);
       const inn = Number(r.in_count);
       const last = Math.max(Number(r.last_out), Number(r.last_in));
@@ -156,9 +158,10 @@ export class ContactStore {
       // Frequency (writing to someone counts three times as much as hearing from them), scaled by a
       // recency factor that halves every 90 days (never below a quarter).
       const score = (OUT_WEIGHT * out + inn) * (0.25 + 0.75 * Math.pow(0.5, ageDays / 90)) + (out > 0 ? 0.5 : 0);
-      scored.push({ s: { name: r.name, email: r.addr, count: out + inn, lastUsed: new Date(last).toISOString() }, score });
+      scored.push({ s: { name: r.name, email: r.addr, count: out + inn, lastUsed: new Date(last).toISOString() }, score, written: out > 0 });
     }
-    scored.sort((a, b) => b.score - a.score || Date.parse(b.s.lastUsed) - Date.parse(a.s.lastUsed) || a.s.email.localeCompare(b.s.email));
+    // Addresses the user has written to always come before senders who only wrote in.
+    scored.sort((a, b) => Number(b.written) - Number(a.written) || b.score - a.score || Date.parse(b.s.lastUsed) - Date.parse(a.s.lastUsed) || a.s.email.localeCompare(b.s.email));
     return scored.slice(0, limit).map((x) => x.s);
   }
 }

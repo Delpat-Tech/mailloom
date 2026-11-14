@@ -35,7 +35,11 @@ describe('GET /api/contacts/suggest', () => {
     await appendRaw(TESTER, 'Sent', raw({ from: me, to: 'tester@delpat.test', bcc: 'Hidden Bcc <hidden@acme.test>' }));
     // Inbox: Pat In x5, Old Pat once long ago.
     for (let i = 0; i < 5; i++) await appendRaw(TESTER, 'INBOX', raw({ from: 'Pat In <pat.in@acme.test>', to: 'tester@delpat.test' }));
-    await appendRaw(TESTER, 'INBOX', raw({ from: 'Ünï Name <UNI@Acme.test>', to: 'tester@delpat.test' }));
+    for (let i = 0; i < 2; i++) await appendRaw(TESTER, 'INBOX', raw({ from: 'Ünï Name <UNI@Acme.test>', to: 'tester@delpat.test' }));
+    // One-off sender, and a heavy sender next to a single written-to address (same name word).
+    await appendRaw(TESTER, 'INBOX', raw({ from: 'Once Only <once@spoof.test>', to: 'tester@delpat.test' }));
+    for (let i = 0; i < 20; i++) await appendRaw(TESTER, 'INBOX', raw({ from: 'Rex Heavy <rex.heavy@acme.test>', to: 'tester@delpat.test' }));
+    await appendRaw(TESTER, 'Sent', raw({ from: me, to: 'Rex Light <rex.light@acme.test>' }));
   });
   after(() => app.close());
 
@@ -72,6 +76,12 @@ describe('GET /api/contacts/suggest', () => {
     assert.deepEqual((await suggest('ünï')).map((s) => s.email), ['uni@acme.test']);
     assert.deepEqual((await suggest('pat o')).map((s) => s.email), ['pat.out@acme.test']);
     assert.deepEqual(await suggest('ut'), [], 'not a prefix of any word');
+  });
+
+  test('inbox-only senders need two messages; people written to rank first', async () => {
+    assert.deepEqual(await suggest('once'), [], 'a single message from a stranger is not suggested');
+    const r = await suggest('rex');
+    assert.deepEqual(r.map((s) => s.email), ['rex.light@acme.test', 'rex.heavy@acme.test']);
   });
 
   test('Cc and Bcc recipients count as written-to', async () => {
