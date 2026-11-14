@@ -109,8 +109,14 @@ export interface SendEmailPayload {
   bcc?: string[];
   subject: string;
   text?: string;
-  /** Ignored by the server when text is given: HTML is built from the escaped text. */
+  /**
+   * Rich body from the composer. When given (and not empty) it is sanitised, its images become inline
+   * (cid) parts and the text alternative is generated from it; `text` is then ignored.
+   * When absent, `text` is sent and the HTML is built from the escaped text.
+   */
   html?: string;
+  /** Images the request carried itself, referenced from `html` as cid:<cid>. */
+  inlineImages?: { cid: string; filename: string; contentType: string; content: Buffer }[];
   attachments?: SendAttachment[];
   /** Message-ID of the mail being answered (with or without angle brackets). */
   inReplyTo?: string;

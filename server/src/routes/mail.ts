@@ -15,7 +15,7 @@ import {
   restoreLiveMessage,
   isImapAuthError
 } from '../services/imap.js';
-import { saveLiveDraft, deleteLiveDraft } from '../services/drafts.js';
+import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
 import { renderEmail } from '../utils/sanitize.js';
@@ -334,7 +334,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
   );
 
   // 11d. Drafts: save (create or replace) and delete
-  fastify.post('/api/drafts', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+  fastify.post('/api/drafts', { preHandler: [requireAuth], bodyLimit: 8 * 1024 * 1024 }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     const raw = (req.body as Record<string, unknown>) || {};
     const strList = (v: unknown): string[] =>
@@ -349,6 +349,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
           bcc: strList(raw.bcc),
           subject: typeof raw.subject === 'string' ? raw.subject : '',
           text: typeof raw.text === 'string' ? raw.text : '',
+          html: typeof raw.html === 'string' ? raw.html : undefined,
           inReplyTo: typeof raw.inReplyTo === 'string' ? raw.inReplyTo : undefined,
           references: strList(raw.references)
         },
@@ -356,6 +357,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       );
       return { success: true, uid: saved.uid, folder: saved.folder };
     } catch (err) {
+      if (err instanceof DraftError) return reply.status(err.status).send({ error: err.message });
       return failMail(req, reply, err, 'The draft could not be saved');
     }
   });
@@ -388,6 +390,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const max = getMaxMessageBytes(config);
       let raw: Record<string, unknown> = {};
       const attachments: SendAttachment[] = [];
+      const inlineImages: NonNullable<SendEmailPayload['inlineImages']> = [];
 
       // Too big: answer, then close the connection so the rest of the upload is discarded, not buffered.
       const tooLarge = (message: string) => {
@@ -399,7 +402,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       try {
         if (req.isMultipart()) {
           let total = 0;
-          for await (const part of req.parts({ limits: { fileSize: max + 1, files: 30, fieldSize: 2 * 1024 * 1024 } })) {
+          for await (const part of req.parts({ limits: { fileSize: max + 1, files: 30, fieldSize: Math.ceil(max * 1.4) + 256 * 1024 } })) {
             if (part.type === 'file') {
               const buf = await part.toBuffer();
               if (part.file.truncated || buf.length > max) {
@@ -408,6 +411,16 @@ export async function mailRoutes(fastify: FastifyInstance) {
               total += buf.length;
               if (total > max) {
                 return tooLarge('Attachments together are larger than the allowed size.');
+              }
+              if (part.fieldname.startsWith('cid:')) {
+                // A picture of the message body, referenced from the HTML as cid:<id>; never an attachment.
+                inlineImages.push({
+                  cid: part.fieldname.slice(4),
+                  filename: part.filename || 'image',
+                  contentType: part.mimetype || 'application/octet-stream',
+                  content: buf
+                });
+                continue;
               }
               attachments.push({
                 filename: part.filename || 'attachment',
@@ -439,6 +452,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
         subject: typeof raw.subject === 'string' && raw.subject ? raw.subject : '(No Subject)',
         text: typeof raw.text === 'string' ? raw.text : undefined,
         html: typeof raw.html === 'string' ? raw.html : undefined,
+        inlineImages,
         attachments,
         inReplyTo: typeof raw.inReplyTo === 'string' ? raw.inReplyTo : undefined,
         references: strList(raw.references),

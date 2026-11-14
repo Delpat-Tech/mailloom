@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AccountConfig } from '../types.js';
 import { getPooledImapClient, findFolderPath } from './imap.js';
+import { prepareRichBody, RichBodyError } from './richbody.js';
+import { getMaxMessageBytes } from './smtp.js';
 
 export interface DraftInput {
   to?: string[];
@@ -8,6 +10,8 @@ export interface DraftInput {
   bcc?: string[];
   subject?: string;
   text?: string;
+  /** Rich body (composer HTML): stored with its pictures as inline parts. Replaces `text`. */
+  html?: string;
   inReplyTo?: string;
   references?: string[];
 }
@@ -15,6 +19,17 @@ export interface DraftInput {
 export interface SavedDraft {
   uid: number;
   folder: string;
+}
+
+/** A draft problem whose message is safe to show (and its HTTP status). */
+export class DraftError extends Error {
+  constructor(
+    message: string,
+    public status = 400
+  ) {
+    super(message);
+    this.name = 'DraftError';
+  }
 }
 
 const bracket = (id: string) => (id.startsWith('<') ? id : `<${id}>`);
@@ -45,13 +60,33 @@ export async function saveLiveDraft(
   const MailComposer = (await import('nodemailer/lib/mail-composer/index.js')).default;
   const domain = config.email.split('@')[1] || 'mailloom.local';
   const messageId = `<${randomUUID()}@${domain}>`;
+  let body: { text: string; html?: string; attachments?: unknown[] } = { text: input.text ?? '' };
+  if (input.html && input.html.trim() !== '') {
+    try {
+      const rich = prepareRichBody(input.html, domain, { maxTotal: getMaxMessageBytes(config) });
+      body = {
+        text: rich.text,
+        html: rich.html,
+        attachments: rich.inline.map((i) => ({
+          filename: i.filename,
+          content: i.content,
+          contentType: i.contentType,
+          cid: i.cid,
+          contentDisposition: 'inline'
+        }))
+      };
+    } catch (err) {
+      if (err instanceof RichBodyError) throw new DraftError(err.message, err.status);
+      throw err;
+    }
+  }
   const node = new MailComposer({
     from: { name: config.name || '', address: config.email },
     to: input.to?.length ? input.to : undefined,
     cc: input.cc?.length ? input.cc : undefined,
     bcc: input.bcc?.length ? input.bcc : undefined,
     subject: input.subject || '',
-    text: input.text ?? '',
+    ...(body as object),
     messageId,
     date: new Date(),
     inReplyTo: input.inReplyTo ? bracket(input.inReplyTo) : undefined,
