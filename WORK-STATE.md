@@ -13,7 +13,7 @@ users tester@ and colleague@delpat.test). Never the live mail server.
   not merged into Work OS master (waits on Om).
 
 ## Next
-1. Design: round 2 sent to Om (mailloom-design/round-2); waits on Om's pick, then apply it across the app.
+1. Design: Om picked Slab in Delpat colours, Sky rail (mailloom-design/round-3/direction-A-sky-rail.html); apply it across the app (builder B).
 2. Full acceptance run in the browser (desktop and phone) after the design lands.
 3. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
