@@ -361,13 +361,18 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
     const strList = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [];
     if (config.isDemo) return reply.status(400).send({ error: 'Drafts are not available in the demo.' });
+    let draftRecipients: { to: Recipient[]; cc: Recipient[]; bcc: Recipient[] };
+    try {
+      draftRecipients = { to: parseRecipients(raw.to, 'To'), cc: parseRecipients(raw.cc, 'Cc'), bcc: parseRecipients(raw.bcc, 'Bcc') };
+    } catch (err) {
+      if (err instanceof RecipientError) return reply.status(400).send({ error: err.message });
+      throw err;
+    }
     try {
       const saved = await saveLiveDraft(
         config,
         {
-          to: strList(raw.to),
-          cc: strList(raw.cc),
-          bcc: strList(raw.bcc),
+          ...draftRecipients,
           subject: typeof raw.subject === 'string' ? raw.subject : '',
           text: typeof raw.text === 'string' ? raw.text : '',
           html: typeof raw.html === 'string' ? raw.html : undefined,

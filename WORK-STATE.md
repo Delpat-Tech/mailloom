@@ -8,15 +8,14 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - On main, reviewed and tested (server 177, client 68): sign-in and sessions, sending, organising, reading, drafts,
   live list, phone and keyboard basics, agent keys and API, push notifications, rich-text composer with inline images
   and signature logo, release build (`pnpm release`), deploy runbook (docs/deploy.md), message deep links,
-  whole-app security review fixes (auth before body, nodemailer 7, CSP and headers, log hygiene, cid image types).
+  whole-app security review fixes (auth before body, nodemailer 10, CSP and headers, log hygiene, cid image types).
 - Work OS mail tools: branch mail-tools in Om/wos-mail, reviewed, 64 e2e checks + 36 live checks against real Mailloom;
   not merged into Work OS master (waits on Om).
 
 ## Next
 1. Design: round 2 sent to Om (mailloom-design/round-2); waits on Om's pick, then apply it across the app.
-2. nodemailer 8+ upgrade to clear the remaining audit advisories, with a review (builder A).
-3. Full acceptance run in the browser (desktop and phone) after the design lands.
-4. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
+2. Full acceptance run in the browser (desktop and phone) after the design lands.
+3. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
 ## Later
 - Rich composer built on builder-b (TipTap): needs a browser check (typing, paste from Word/Gmail, picture paste/drop, signature logo, phone width).
@@ -42,6 +41,5 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Agent API and web composer use different outgoing HTML sanitisers; align them (next agent-API touch).
 - No sign-out-everywhere; a password change is the only way to end stolen sessions (waits on settings page).
 - Sign-in lockout by email (10/15 min) can be triggered by anyone; Dovecot sees all Mailloom logins from 127.0.0.1 — consider passing client IP via IMAP ID and login_trusted_networks (waits on real use).
-- nodemailer 7.0.13 still has audit advisories whose fixes are only in 8.x to 10.x (breaking major); revisit the upgrade (waits on a compatibility check). Draft-save recipients are not yet strictly parsed like send.
 - Inter font loads from Google Fonts (allowed in CSP); self-hosting would let the CSP drop the two Google hosts (waits on a decision).
 - Unicode (IDN) domains are refused in recipients; punycode works (waits on real use).

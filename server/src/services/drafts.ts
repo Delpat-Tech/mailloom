@@ -1,3 +1,4 @@
+import type { Recipient } from '../utils/recipients.js';
 import { randomUUID } from 'node:crypto';
 import type { AccountConfig } from '../types.js';
 import { getPooledImapClient, findFolderPath } from './imap.js';
@@ -5,9 +6,9 @@ import { prepareRichBody, RichBodyError } from './richbody.js';
 import { getMaxMessageBytes } from './smtp.js';
 
 export interface DraftInput {
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
+  to?: Array<string | Recipient>;
+  cc?: Array<string | Recipient>;
+  bcc?: Array<string | Recipient>;
   subject?: string;
   text?: string;
   /** Rich body (composer HTML): stored with its pictures as inline parts. Replaces `text`. */
@@ -57,7 +58,7 @@ export async function saveLiveDraft(
   const client = await getPooledImapClient(config);
   const folder = (await draftsPath(config, true))!;
 
-  const MailComposer = (await import('nodemailer/lib/mail-composer/index.js')).default;
+  const MailComposer = (await import('nodemailer/lib/mail-composer')).default;
   const domain = config.email.split('@')[1] || 'mailloom.local';
   const messageId = `<${randomUUID()}@${domain}>`;
   let body: { text: string; html?: string; attachments?: unknown[] } = { text: input.text ?? '' };

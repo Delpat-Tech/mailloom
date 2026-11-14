@@ -169,11 +169,13 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   const statusText = [draftStatus?.text, attachments.length > 0 ? 'Attachments are not saved in drafts' : ''].filter(Boolean).join(' · ');
 
+  // A half-typed address (no @ yet) is not saved into the draft; it stays in the box.
+  const draftList = (list: string[], typed: string) => mergeRecipients(list, splitRecipients(typed).filter((r) => r.includes('@')).join(','));
   const snapshot = () =>
     JSON.stringify({
-      to: [...toList, toInput.trim()].filter(Boolean),
-      cc: [...ccList, ccInput.trim()].filter(Boolean),
-      bcc: [...bccList, bccInput.trim()].filter(Boolean),
+      to: draftList(toList, toInput),
+      cc: draftList(ccList, ccInput),
+      bcc: draftList(bccList, bccInput),
       subject,
       plain: plainMode,
       body: plainMode ? bodyText : bodyHtml

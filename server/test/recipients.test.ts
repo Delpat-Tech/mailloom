@@ -44,3 +44,18 @@ test('session send refuses a Cc string that hides a second address', async () =>
     await app.close();
   }
 });
+
+test('draft save refuses a recipient string that hides a second address', async () => {
+  const { buildTestApp, signIn, TESTER, resetAccount } = await import('./helpers.js');
+  await resetAccount(TESTER);
+  const app = await buildTestApp();
+  try {
+    const s = await signIn(app, TESTER);
+    const bad = await app.inject({ method: 'POST', url: '/api/drafts', headers: s.headers, payload: { to: ['a@delpat.test, evil@example.test'], subject: 'd', text: 't' } });
+    assert.equal(bad.statusCode, 400);
+    const ok = await app.inject({ method: 'POST', url: '/api/drafts', headers: s.headers, payload: { to: ['Ann <a@delpat.test>'], subject: 'd', text: 't' } });
+    assert.equal(ok.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});

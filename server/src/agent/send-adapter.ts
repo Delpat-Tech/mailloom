@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type nodemailer from 'nodemailer';
+import type { SendMailOptions } from 'nodemailer';
 import type { AccountConfig } from '../types.js';
 import { createSmtpTransport } from '../services/smtp.js';
 import { getPooledImapClient } from '../services/imap.js';
@@ -105,7 +105,7 @@ async function saveToSent(account: AccountConfig, raw: Buffer): Promise<{ saved:
 export async function sendForAgent(account: AccountConfig, mail: OutgoingMail, messageId?: string): Promise<AgentSendResult> {
   const id = messageId ?? newMessageId(account.email);
   const from = account.name ? { name: account.name, address: account.email } : account.email;
-  const options: nodemailer.SendMailOptions = {
+  const options: SendMailOptions = {
     from,
     to: mail.to.map(asObject),
     cc: mail.cc.length ? mail.cc.map(asObject) : undefined,
@@ -146,7 +146,7 @@ export async function sendForAgent(account: AccountConfig, mail: OutgoingMail, m
   // The mail is already sent here: nothing below may throw.
   let sent: { saved: boolean; folder: string | null } = { saved: false, folder: null };
   try {
-    const MailComposer = (await import('nodemailer/lib/mail-composer/index.js')).default;
+    const MailComposer = (await import('nodemailer/lib/mail-composer')).default;
     const node = new MailComposer(options).compile();
     (node as unknown as { keepBcc: boolean }).keepBcc = true;
     const raw = await node.build();

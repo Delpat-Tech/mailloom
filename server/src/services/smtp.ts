@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import nodemailer from 'nodemailer';
+import nodemailer, { type SendMailOptions } from 'nodemailer';
 import type { AccountConfig, SendEmailPayload, SendResult } from '../types.js';
 import { isValidAddress, type Recipient } from '../utils/recipients.js';
 import { prepareRichBody, RichBodyError } from './richbody.js';
@@ -226,7 +226,7 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
 
   const messageId = `<${randomUUID()}@${domain}>`;
 
-  const mailOptions: nodemailer.SendMailOptions = {
+  const mailOptions: SendMailOptions = {
     // Always the signed-in account, never a value from the request.
     from: { name: config.name || '', address: config.email },
     to: asObjects(payload.to),
@@ -248,7 +248,7 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
     mailOptions.html = rich.html;
     mailOptions.text = rich.text;
     mailOptions.attachments = [
-      ...(mailOptions.attachments as nodemailer.SendMailOptions['attachments'] & unknown[]),
+      ...(mailOptions.attachments as SendMailOptions['attachments'] & unknown[]),
       ...rich.inline.map((i) => ({
         filename: i.filename,
         content: i.content,
@@ -294,7 +294,7 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
       await imapClient.mailboxCreate('Sent');
       targetPath = 'Sent';
     }
-    const MailComposer = (await import('nodemailer/lib/mail-composer/index.js')).default;
+    const MailComposer = (await import('nodemailer/lib/mail-composer')).default;
     const node = new MailComposer(mailOptions).compile();
     node.keepBcc = true;
     const raw = await node.build();
