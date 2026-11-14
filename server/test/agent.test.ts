@@ -477,6 +477,45 @@ describe('agent API on the mailbox', () => {
     assert.equal(latest.parsed.cc, undefined);
   });
 
+  test('a hostile display name in an incoming mail cannot add recipients on reply, reply-all or forward', async () => {
+    const subject = uniq('Hostile name');
+    const id = await plant(TESTER, { subject, from: `"spy@evil.test, Bob" <${COLLEAGUE}>`, text: 'hello' });
+    for (const [label, extra] of [['plain', {}], ['all', { reply_all: true }]] as const) {
+      const res = await agent.post('/reply', { message_id: id, text: label, idempotency_key: uniq('hr'), ...extra });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.deepEqual(res.body.accepted, [COLLEAGUE]);
+    }
+    const fwd = await agent.post('/forward', { message_id: id, to: [COLLEAGUE], text: 'fyi', idempotency_key: uniq('hf') });
+    assert.equal(fwd.status, 200, JSON.stringify(fwd.body));
+    const got = await findBySubject(COLLEAGUE, 'INBOX', `Re: ${subject}`, 2);
+    assert.equal(got.length, 2);
+    for (const m of got) {
+      const addrs = ['to', 'cc', 'bcc'].flatMap((h) => {
+        const v = m.parsed[h as 'to'];
+        return (Array.isArray(v) ? v : v ? [v] : []).flatMap((x) => x.value.map((a) => a.address));
+      });
+      assert.deepEqual(addrs, [COLLEAGUE]);
+    }
+    const audit = (await app.inject({ method: 'GET', url: '/api/connections/audit', headers: tester.headers })).json().entries as Array<{ subject: string; tool: string; recipients: string[] | null }>;
+    const mine = audit.filter((e) => e.subject?.includes(subject) && e.recipients);
+    assert.ok(mine.length >= 3);
+    for (const e of mine) assert.deepEqual(e.recipients, [COLLEAGUE]);
+  });
+
+  test('recipients supplied by the caller: commas or semicolons cannot add recipients', async () => {
+    const subject = uniq('Caller names');
+    const ok = await agent.post('/send', { to: [`"spy@evil.test, Bob" <${COLLEAGUE}>`], subject, text: 'x', idempotency_key: uniq('cn') });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.deepEqual(ok.body.accepted, [COLLEAGUE]);
+    const got = await findBySubject(COLLEAGUE, 'INBOX', subject);
+    const to = (Array.isArray(got[0]!.parsed.to) ? got[0]!.parsed.to : [got[0]!.parsed.to]).flatMap((x) => x!.value.map((v) => v.address));
+    assert.deepEqual(to, [COLLEAGUE]);
+    for (const bad of [`${COLLEAGUE};spy@evil.test`, `${COLLEAGUE}, spy@evil.test`]) {
+      const res = await agent.post('/send', { to: [bad], subject: uniq('Bad'), text: 'x', idempotency_key: uniq('cb') });
+      assert.equal(res.status, 400, bad);
+    }
+  });
+
   test('forward carries the original attachments', async () => {
     const subject = uniq('With attachment');
     const content = crypto.randomBytes(2048);

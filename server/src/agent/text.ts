@@ -58,7 +58,7 @@ function attr(tag: string, name: string): string | null {
 }
 
 /** Removes zero-width and bidi control characters often used to hide text. */
-function stripInvisible(s: string): string {
+export function stripInvisible(s: string): string {
   return s.replace(/[​-‏‪-‮⁠-⁤⁦-⁩﻿­]/g, '');
 }
 

@@ -16,10 +16,16 @@ import { getPooledImapClient } from '../services/imap.js';
  * Idempotency and rate limits for the agent API live in routes/agent.ts, not here.
  */
 
+/** One recipient. Always passed to nodemailer as an object, so a display name can never add recipients. */
+export interface MailAddress {
+  name: string;
+  address: string;
+}
+
 export interface OutgoingMail {
-  to: string[];
-  cc: string[];
-  bcc: string[];
+  to: MailAddress[];
+  cc: MailAddress[];
+  bcc: MailAddress[];
   subject: string;
   text: string;
   html?: string;
@@ -59,6 +65,10 @@ function addressList(list: Array<string | { address?: string }> | undefined): st
   return (list || []).map((a) => (typeof a === 'string' ? a : a.address || '')).filter(Boolean);
 }
 
+function asObject(a: MailAddress): { name: string; address: string } {
+  return { name: a.name, address: a.address };
+}
+
 async function saveToSent(account: AccountConfig, raw: Buffer): Promise<{ saved: boolean; folder: string | null }> {
   try {
     const client = await getPooledImapClient(account);
@@ -84,9 +94,9 @@ export async function sendForAgent(account: AccountConfig, mail: OutgoingMail, m
   const from = account.name ? { name: account.name, address: account.email } : account.email;
   const options: nodemailer.SendMailOptions = {
     from,
-    to: mail.to,
-    cc: mail.cc.length ? mail.cc : undefined,
-    bcc: mail.bcc.length ? mail.bcc : undefined,
+    to: mail.to.map(asObject),
+    cc: mail.cc.length ? mail.cc.map(asObject) : undefined,
+    bcc: mail.bcc.length ? mail.bcc.map(asObject) : undefined,
     subject: mail.subject,
     text: mail.text,
     html: mail.html,
