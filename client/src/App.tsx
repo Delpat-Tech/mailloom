@@ -9,6 +9,8 @@ import { labelsApi, labelErrorText, type Label, type LabelColour } from './servi
 import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
 import { useSwipeBack } from './hooks/useSwipeBack.js';
+import { folderLabel } from './services/folderName.js';
+import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
 import { realUid } from './services/uidKey.js';
 import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
@@ -110,6 +112,8 @@ export const App: React.FC = () => {
   visibleRef.current = visibleMessages;
   const [totalMessages, setTotalMessages] = useState(0);
   const [page, setPage] = useState(1);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [starredCount, setStarredCount] = useState(0);
   // What the user typed (searchInput/filterInput) is applied 300 ms after typing stops.
   const [searchInput, setSearchInput] = useState('');
   const [filterInput, setFilterInput] = useState<SearchFilterParams>({});
@@ -268,6 +272,7 @@ export const App: React.FC = () => {
       const res = await api.getMailboxes();
       setFolders(res.folders);
       setSyncedAt(new Date());
+      loadView({ kind: 'starred' }, 1, 1).then((r) => setStarredCount(r.total)).catch(() => undefined);
 
       // Compute total unread for account badge
       const totalUnread = res.folders.reduce((acc, f) => acc + (f.unreadCount || 0), 0);
@@ -323,29 +328,50 @@ export const App: React.FC = () => {
       if (!account || !selectedFolder) return;
       const seq = ++loadSeq.current;
       const key = `${account.handle}|${selectedFolder}|${page}|${filter}|${searchTerm}|${JSON.stringify(searchFilters)}`;
-      const cached = listCache.get(key);
+      const more = page > 1 && !silent; // the next page is added under the rows already shown
+      const cached = page === 1 ? listCache.get(key) : undefined;
       if (cached && !silent) {
         setMessages(cached.messages);
         setTotalMessages(cached.total);
       }
-      const showLoading = !silent && !cached;
+      const showLoading = !silent && !cached && !more;
       if (showLoading) setIsMessagesLoading(true);
+      if (more) setIsLoadingMore(true);
       try {
         const view = parseViewPath(selectedFolder);
-        const res = view
-          ? await loadView(view, page, 50)
-          : await api.getMessages(selectedFolder, page, 50, searchTerm, searchFilters, filter);
-        if (seq !== loadSeq.current) return; // a newer request replaced this one
-        listCache.set(key, res);
-        setMessages(res.messages);
-        setTotalMessages(res.total);
+        const fetchPage = (p: number) =>
+          view ? loadView(view, p, 50) : api.getMessages(selectedFolder, p, 50, searchTerm, searchFilters, filter);
+        if (more) {
+          const res = await fetchPage(page);
+          if (seq !== loadSeq.current) return;
+          setMessages((prev) => {
+            const seen = new Set(prev.map((m) => `${m.mailbox ?? ''}:${m.uid}`));
+            return [...prev, ...res.messages.filter((m) => !seen.has(`${m.mailbox ?? ''}:${m.uid}`))];
+          });
+          setTotalMessages(res.total);
+        } else {
+          // A quiet refresh of a list that has been scrolled further fetches every page shown.
+          let res = await fetchPage(1);
+          if (silent && page > 1) {
+            for (let p = 2; p <= page; p++) {
+              const next = await fetchPage(p);
+              res = { messages: [...res.messages, ...next.messages], total: next.total };
+            }
+          }
+          if (seq !== loadSeq.current) return; // a newer request replaced this one
+          if (page === 1) listCache.set(key, res);
+          setMessages(res.messages);
+          setTotalMessages(res.total);
+        }
         setSyncedAt(new Date());
       } catch (err: unknown) {
         if (!silent && seq === loadSeq.current) {
+          if (more) setPage((p) => Math.max(1, p - 1)); // the next page failed: the button tries again
           showToast(friendlyError(err, 'The messages could not be loaded. Try again.'), 'error');
         }
       } finally {
         if (showLoading && seq === loadSeq.current) setIsMessagesLoading(false);
+        if (more && seq === loadSeq.current) setIsLoadingMore(false);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -531,6 +557,17 @@ export const App: React.FC = () => {
   }, []);
 
   const selectedFolderKind = folders.find((f) => f.path === selectedFolder)?.specialUse;
+  const inboxLike = folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase());
+  const viewRef = parseViewPath(selectedFolder);
+  const headerName = viewRef
+    ? viewRef.kind === 'starred'
+      ? 'Starred'
+      : viewRef.kind === 'snoozed'
+        ? 'Snoozed'
+        : labels.find((l) => l.id === viewRef.id)?.name ?? 'Label'
+    : inboxLike
+      ? folderLabel(inboxLike)
+      : folderTitle(selectedFolder);
 
   const clearSelectionIf = (uids: number[]) => {
     if (selectedUid !== null && uids.includes(selectedUid)) {
@@ -825,14 +862,23 @@ export const App: React.FC = () => {
   };
 
   // 8. Batch Operations. Each message is tried; the result says exactly what happened.
-  const handleToggleSelectUid = (uid: number, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const lastChecked = useRef<number | null>(null);
+  const handleToggleSelectUid = (uid: number, e?: { shiftKey?: boolean; stopPropagation?: () => void }) => {
+    e?.stopPropagation?.();
+    const list = visibleRef.current;
     setSelectedUids((prev) => {
       const next = new Set(prev);
-      if (next.has(uid)) next.delete(uid);
+      const from = lastChecked.current !== null ? list.findIndex((m) => m.uid === lastChecked.current) : -1;
+      const to = list.findIndex((m) => m.uid === uid);
+      if (e?.shiftKey && from >= 0 && to >= 0) {
+        // Shift: everything between the last tick and this one.
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        for (let i = lo; i <= hi; i++) next.add(list[i].uid);
+      } else if (next.has(uid)) next.delete(uid);
       else next.add(uid);
       return next;
     });
+    lastChecked.current = uid;
   };
 
   const handleSelectAll = () => {
@@ -976,14 +1022,14 @@ export const App: React.FC = () => {
       subject: plan.subject,
       body: quote,
       html:
-        `<p>${escapeHtml(`On ${dateStr}, ${message.from.name || message.from.address} wrote:`)}</p>` +
+        `<p>${escapeHtml(quoteLine(message.date, message.from.name || message.from.address))}</p>` +
         quoteHtml(message.text || ''),
       meta: { inReplyTo: plan.inReplyTo, references: plan.references }
     });
   };
 
   const handleForward = (message: ParsedEmailMessage) => {
-    const dateStr = new Date(message.date).toLocaleString();
+    const dateStr = fullDate(message.date);
     const forwardHeader = `\n\n---------- Forwarded message ---------\nFrom: ${message.from.name || ''} <${
       message.from.address
     }>\nDate: ${dateStr}\nSubject: ${message.subject}\nTo: ${message.to
@@ -1301,7 +1347,7 @@ export const App: React.FC = () => {
         break;
       case 'search':
         setMobileView('list');
-        document.querySelector<HTMLInputElement>('[data-search-input]')?.focus();
+        window.dispatchEvent(new Event('mailloom:search'));
         break;
       case 'help':
         setShowShortcuts((v) => !v);
@@ -1394,6 +1440,7 @@ export const App: React.FC = () => {
             `}
           >
             <Sidebar
+              starredCount={starredCount}
               labels={labels}
               onManageLabels={() => {
                 setShowLabelsManager(true);
@@ -1438,10 +1485,7 @@ export const App: React.FC = () => {
             data-covered={mobileView === 'message'}
           >
             <MessageList
-              folderName={
-                folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.name ||
-                selectedFolder
-              }
+              folderName={headerName}
               messages={visibleMessages}
               leavingUids={leaving}
               labels={labels}
@@ -1454,7 +1498,7 @@ export const App: React.FC = () => {
                       setPage(1);
                     }
               }
-              unreadCount={folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.unreadCount ?? 0}
+              unreadCount={inboxLike?.unreadCount ?? 0}
               onArchive={archiveFolder && !inStarredView ? handleArchive : undefined}
               onSnooze={handleSnooze}
               totalMessages={totalMessages}
@@ -1465,7 +1509,8 @@ export const App: React.FC = () => {
               onSelectAll={handleSelectAll}
               onToggleFlag={handleToggleFlag}
               onRefresh={() => {
-                loadMessages();
+                if (page > 1) setPage(1); // the list is reloaded from the top
+                else loadMessages();
                 loadFolders();
               }}
               folderKind={selectedFolderKind}
@@ -1481,10 +1526,12 @@ export const App: React.FC = () => {
               onBatchRestore={handleBatchRestore}
               onBatchNotSpam={handleBatchNotSpam}
               isVisible={mobileView === 'list'}
-              page={page}
-              limit={50}
-              onPageChange={setPage}
+              hasMore={messages.length < totalMessages}
+              isLoadingMore={isLoadingMore}
+              onLoadMore={() => setPage((p) => p + 1)}
               onOpenMobileSidebar={() => setShowMobileSidebar(true)}
+              accountLabel={account?.name || account?.email}
+              onClearSelection={() => setSelectedUids(new Set())}
             />
           </div>
 
@@ -1522,7 +1569,7 @@ export const App: React.FC = () => {
               onMenuChange={setMenu}
               position={(() => {
                 const i = visibleMessages.findIndex((m) => m.uid === selectedUid);
-                return i < 0 ? null : { index: (page - 1) * 50 + i + 1, total: Math.max(totalMessages, (page - 1) * 50 + visibleMessages.length) };
+                return i < 0 ? null : { index: i + 1, total: Math.max(totalMessages, visibleMessages.length) };
               })()}
               onNewer={() => {
                 const i = visibleMessages.findIndex((m) => m.uid === selectedUid);
@@ -1556,7 +1603,7 @@ export const App: React.FC = () => {
             else if (tab === 'inbox') handleSelectFolder(folders.find((f) => f.specialUse === 'Inbox')?.path ?? 'INBOX');
             else if (tab === 'starred') handleSelectFolder(STARRED_PATH);
             else if (tab === 'folders') setShowMobileSidebar(true);
-            else document.querySelector<HTMLInputElement>('[data-search-input]')?.focus();
+            else window.dispatchEvent(new Event('mailloom:search'));
           }}
         />
       )}

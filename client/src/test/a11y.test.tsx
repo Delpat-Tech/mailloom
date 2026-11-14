@@ -127,9 +127,6 @@ describe('MessageList keyboard', () => {
         onSearchChange={() => {}}
         onBatchDelete={() => {}}
         onBatchMarkRead={() => {}}
-        page={1}
-        limit={50}
-        onPageChange={() => {}}
         onCompose={onCompose}
       />
     );

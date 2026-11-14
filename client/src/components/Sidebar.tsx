@@ -1,3 +1,4 @@
+import { folderLabel } from '../services/folderName.js';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Inbox,
@@ -55,6 +56,8 @@ interface SidebarProps {
   onManageLabels?: () => void;
   /** When the folder list and messages were last refreshed. */
   syncedAt?: Date | null;
+  /** How many starred messages there are (shown beside Starred). */
+  starredCount?: number;
 }
 
 const KIND_ORDER = ['Inbox', 'Drafts', 'Sent', 'Archive', 'Junk', 'Trash'];
@@ -89,7 +92,8 @@ const ViewButton: React.FC<{
   icon: React.ReactNode;
   selected: string;
   onSelect: (path: string) => void;
-}> = ({ path, label, icon, selected, onSelect }) => {
+  count?: number;
+}> = ({ path, label, icon, selected, onSelect, count }) => {
   const on = selected === path;
   return (
     <button
@@ -101,7 +105,8 @@ const ViewButton: React.FC<{
       }`}
     >
       {icon}
-      <span className="truncate">{label}</span>
+      <span className="truncate flex-1 text-left">{label}</span>
+      {!!count && <span className="text-xs tabular-nums font-bold">{count}</span>}
     </button>
   );
 };
@@ -110,6 +115,7 @@ const UTILITY =
   'w-full flex items-center gap-3 px-3 min-h-[44px] lg:min-h-[32px] rounded text-[13.5px] font-semibold hover:bg-rail-hi hover:text-rail-hov-ink transition-colors';
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  starredCount,
   account,
   folders,
   selectedFolder,
@@ -221,7 +227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               style={{ paddingLeft: `${0.75 + (folder.depth || 0) * 1}rem` }}
               title={folder.path}
               aria-current={isSelected ? 'page' : undefined}
-              aria-label={folder.unreadCount > 0 ? `${folder.name}, ${folder.unreadCount} unread` : folder.name}
+              aria-label={folder.unreadCount > 0 ? `${folderLabel(folder)}, ${folder.unreadCount} unread` : folderLabel(folder)}
               className={`w-full flex items-center justify-between pr-3 min-h-[44px] lg:min-h-[36px] rounded text-sm transition-colors ${
                 isSelected
                   ? 'bg-rail-on text-rail-on-ink font-extrabold'
@@ -230,21 +236,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-3 truncate">
                 {getFolderIcon(folder)}
-                <span className="truncate">{folder.name}</span>
+                <span className="truncate">{folderLabel(folder)}</span>
               </div>
-              {folder.unreadCount > 0 && (
-                <span
-                  className={`text-xs tabular-nums font-bold ${
-                    isSelected ? 'bg-pill text-pill-ink px-[7px] py-px rounded-[3px]' : ''
-                  }`}
-                >
-                  {folder.unreadCount}
-                </span>
-              )}
+              {(() => {
+                // Inbox and others: unread. Drafts and Spam: how many there are, as in the design.
+                const n = folder.specialUse === 'Drafts' || folder.specialUse === 'Junk' ? folder.totalCount : folder.unreadCount;
+                return n > 0 ? (
+                  <span
+                    className={`text-xs tabular-nums font-bold ${
+                      isSelected && folder.unreadCount > 0 ? 'bg-pill text-pill-ink px-[7px] py-px rounded-[3px]' : ''
+                    }`}
+                  >
+                    {n}
+                  </span>
+                ) : null;
+              })()}
             </button>
             {folder.specialUse === 'Inbox' && (
               <>
-                <ViewButton path={STARRED_PATH} label="Starred" icon={<Star className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} />
+                <ViewButton path={STARRED_PATH} label="Starred" icon={<Star className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} count={starredCount} />
                 <ViewButton path={SNOOZED_PATH} label="Snoozed" icon={<Clock className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} />
               </>
             )}

@@ -44,9 +44,6 @@ function list(props: Partial<React.ComponentProps<typeof MessageList>> = {}, mes
       onSearchChange={() => {}}
       onBatchDelete={() => {}}
       onBatchMarkRead={() => {}}
-      page={1}
-      limit={50}
-      onPageChange={() => {}}
       {...props}
     />
   );

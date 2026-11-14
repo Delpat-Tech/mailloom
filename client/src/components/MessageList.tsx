@@ -5,14 +5,11 @@ import {
   RotateCw,
   Star,
   Paperclip,
-  CheckSquare,
-  Square,
-  MinusSquare,
+  Check,
+  X,
   Trash2,
   Mail,
   MailOpen,
-  ChevronLeft,
-  ChevronRight,
   Inbox,
   SlidersHorizontal,
   ShieldAlert,
@@ -20,12 +17,11 @@ import {
   Undo2,
   PenSquare,
   Pencil,
-  Menu,
   Archive,
   Clock,
   AlertTriangle
 } from 'lucide-react';
-import { format, isToday, isThisYear } from 'date-fns';
+import { rowTime, dayBucket, groupHeader, fullDate } from '../services/time.js';
 import { avatarClass, initialsOf } from '../services/avatar.js';
 import type { MessageHeader, SpecialUseFolder } from '../types.js';
 import type { SearchFilterParams, ListFilter } from '../services/api.js';
@@ -41,7 +37,7 @@ interface MessageListProps {
   selectedUid: number | null;
   onSelectMessage: (uid: number) => void;
   selectedUids: Set<number>;
-  onToggleSelectUid: (uid: number, e: React.MouseEvent) => void;
+  onToggleSelectUid: (uid: number, e?: { shiftKey?: boolean; stopPropagation?: () => void }) => void;
   onSelectAll: () => void;
   onToggleFlag: (uid: number, flag: 'isSeen' | 'isFlagged', e?: React.MouseEvent) => void;
   onRefresh: () => void;
@@ -61,10 +57,14 @@ interface MessageListProps {
   onCompose?: () => void;
   /** False while the list is hidden behind the message on a phone; its scroll position is kept. */
   isVisible?: boolean;
-  page: number;
-  limit: number;
-  onPageChange: (page: number) => void;
+  /** More messages exist than are shown: the list loads the next ones as you scroll. */
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
+  /** Phone: the account avatar in the top bar opens the folder drawer. */
   onOpenMobileSidebar?: () => void;
+  accountLabel?: string;
+  onClearSelection?: () => void;
   folderKind?: SpecialUseFolder;
   /** Empty Trash / Junk (the caller asks for confirmation). */
   onEmptyFolder?: () => void;
@@ -102,7 +102,7 @@ const FILTER_TABS: { key: ListFilter; label: string }[] = [
 ];
 
 interface RowController {
-  check: (uid: number, e: React.MouseEvent) => void;
+  check: (uid: number, e?: { shiftKey?: boolean; stopPropagation?: () => void }) => void;
   open: (uid: number) => void;
   focus: (uid: number) => void;
   flag: (uid: number, flag: 'isSeen' | 'isFlagged', e?: React.MouseEvent) => void;
@@ -140,6 +140,8 @@ const MessageRow = React.memo(function MessageRow({
   const rowLabels = (msg.labels ?? []).map((id) => labelMap.get(id)).filter((l): l is Label => !!l);
   const shownLabels = rowLabels.slice(0, 2);
   const snoozeBtn = useRef<HTMLButtonElement>(null);
+  const pressed = useRef(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout>>();
   return (
     <li className="row-wrap list-none" data-leaving={leaving || undefined}>
       <div className="row-inner">
@@ -154,40 +156,72 @@ const MessageRow = React.memo(function MessageRow({
               aria-hidden="true"
             />
           )}
+          {/* The avatar is the select control: click it to tick (Shift for a range). */}
           <button
             type="button"
             tabIndex={tab}
             onClick={(e) => ctl.check(msg.uid, e)}
             aria-pressed={isChecked}
             aria-label={`Select message from ${who}`}
-            className="w-10 sm:w-8 shrink-0 flex items-center justify-center text-ink-3 hover:text-ink-2"
+            className="pl-4 pr-3 pt-[13px] shrink-0 self-start"
           >
-            {isChecked ? <CheckSquare className="w-3.5 h-3.5 text-act" /> : <Square className="w-3.5 h-3.5" />}
+            <span
+              className={`cut-av w-9 h-9 grid place-items-center text-[13px] font-extrabold tracking-wide text-white ${
+                isChecked
+                  ? 'bg-act !text-act-ink'
+                  : bounce
+                    ? 'bg-warn-bg !text-warn-ink'
+                    : isDraft
+                      ? 'bg-sheet !text-draft shadow-[inset_0_0_0_1px_var(--line-2)]'
+                      : avatarClass(msg.from.address || who)
+              }`}
+              aria-hidden="true"
+            >
+              {isChecked ? (
+                <Check className="w-4 h-4" strokeWidth={3} />
+              ) : bounce ? (
+                <AlertTriangle className="w-4 h-4" />
+              ) : isDraft ? (
+                <Pencil className="w-4 h-4" />
+              ) : (
+                initialsOf(who)
+              )}
+            </span>
           </button>
 
-          {/* The whole summary is one button: Enter opens the message. */}
+          {/* The whole summary is one button: Enter opens the message. A long press on a phone selects. */}
           <button
             type="button"
             data-row-open={msg.uid}
             tabIndex={tab}
-            onClick={() => ctl.open(msg.uid)}
+            onClick={() => {
+              if (pressed.current) {
+                pressed.current = false;
+                return;
+              }
+              ctl.open(msg.uid);
+            }}
+            onPointerDown={(e) => {
+              if (e.pointerType !== 'touch') return;
+              pressed.current = false;
+              clearTimeout(pressTimer.current);
+              pressTimer.current = setTimeout(() => {
+                pressed.current = true;
+                ctl.check(msg.uid);
+                navigator.vibrate?.(8);
+              }, 500);
+            }}
+            onPointerUp={() => clearTimeout(pressTimer.current)}
+            onPointerLeave={() => clearTimeout(pressTimer.current)}
+            onPointerCancel={() => clearTimeout(pressTimer.current)}
+            onContextMenu={(e) => {
+              if (pressed.current) e.preventDefault();
+            }}
             onFocus={() => ctl.focus(msg.uid)}
             aria-label={rowLabel(msg, dateText)}
             aria-current={isSelected ? 'true' : undefined}
-            className="flex-1 min-w-0 py-[11px] pr-1 text-left flex gap-3"
+            className="flex-1 min-w-0 py-[11px] max-lg:py-[9px] pr-1 text-left block"
           >
-            <span
-              className={`cut-av mt-0.5 w-9 h-9 shrink-0 grid place-items-center text-[13px] font-extrabold tracking-wide text-white ${
-                bounce
-                  ? 'bg-warn-bg !text-warn-ink'
-                  : isDraft
-                    ? 'bg-sheet !text-draft shadow-[inset_0_0_0_1px_var(--line-2)]'
-                    : avatarClass(msg.from.address || who)
-              }`}
-              aria-hidden="true"
-            >
-              {bounce ? <AlertTriangle className="w-4 h-4" /> : isDraft ? <Pencil className="w-4 h-4" /> : initialsOf(who)}
-            </span>
             <span className="min-w-0 flex-1 block">
               <span className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5 min-w-0">
@@ -214,7 +248,8 @@ const MessageRow = React.memo(function MessageRow({
                   )}
                 </span>
                 <span
-                  className={`row-time text-xs shrink-0 tabular-nums ${
+                  title={fullDate(msg.date)}
+                  className={`row-time text-xs shrink-0 tabular-nums text-right [@media(hover:hover)]:min-w-[88px] ${
                     isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-3'
                   } ${bounce ? '!text-warn-ink' : ''}`}
                 >
@@ -265,13 +300,13 @@ const MessageRow = React.memo(function MessageRow({
             onClick={(e) => ctl.flag(msg.uid, 'isFlagged', e)}
             aria-pressed={!!msg.isFlagged}
             aria-label={msg.isFlagged ? `Unstar message from ${who}` : `Star message from ${who}`}
-            className="t-fast w-10 sm:w-8 shrink-0 flex items-start pt-[13px] justify-center text-ink-3 hover:text-star-line"
+            className="t-fast w-10 sm:w-8 shrink-0 flex items-start pt-[12px] justify-center text-ink-3 hover:text-star-line"
           >
             <Star className={`w-4 h-4 ${msg.isFlagged ? 'text-star-line fill-star' : 'stroke-[1.5]'}`} />
           </button>
 
           {/* Quick actions: fade in on hover or keyboard focus; the space is reserved by the time. */}
-          <div className="row-quick absolute right-10 sm:right-8 top-[9px] flex gap-0.5" data-open={snoozeOpen || undefined}>
+          <div className="row-quick absolute right-[44px] sm:right-[36px] top-[9px] max-lg:top-[7px] w-[88px] justify-end flex gap-0.5" data-open={snoozeOpen || undefined}>
             {canArchive && (
               <button
                 type="button"
@@ -351,10 +386,12 @@ export const MessageList: React.FC<MessageListProps> = ({
   onBatchNotSpam,
   onCompose,
   isVisible = true,
-  page,
-  limit,
-  onPageChange,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
   onOpenMobileSidebar,
+  accountLabel,
+  onClearSelection,
   folderKind,
   onEmptyFolder,
   filter = 'all',
@@ -366,6 +403,17 @@ export const MessageList: React.FC<MessageListProps> = ({
   onSnooze
 }) => {
   const [showFilters, setShowFilters] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const sentinelRef = useRef<HTMLLIElement>(null);
+  // The Search tab and the "/" key ask for the search box (open on a phone, then focus).
+  useEffect(() => {
+    const open = () => {
+      setSearchOpen(true);
+      setTimeout(() => document.querySelector<HTMLInputElement>('[data-search-input]')?.focus(), 30);
+    };
+    window.addEventListener('mailloom:search', open);
+    return () => window.removeEventListener('mailloom:search', open);
+  }, []);
   const scrollerRef = useRef<HTMLUListElement>(null);
   const savedScroll = useRef(0);
   // Roving focus: one row is in the Tab order; arrow keys move between rows.
@@ -406,30 +454,48 @@ export const MessageList: React.FC<MessageListProps> = ({
     setActiveUid(Number(el.getAttribute('data-row-open')));
   };
 
+  // Rows under day headers: Today, Yesterday, This week, Earlier.
+  const groups = useMemo(() => {
+    const now = new Date();
+    const out: { key: string; title: string; sub: string; items: MessageHeader[] }[] = [];
+    let cur: { bucket: string; items: MessageHeader[] } | null = null;
+    const raw: { bucket: ReturnType<typeof dayBucket>; items: MessageHeader[] }[] = [];
+    for (const m of messages) {
+      const b = dayBucket(m.date, now);
+      if (!cur || cur.bucket !== b) {
+        cur = { bucket: b, items: [] };
+        raw.push(cur as { bucket: ReturnType<typeof dayBucket>; items: MessageHeader[] });
+      }
+      cur.items.push(m);
+    }
+    raw.forEach((g, i) => {
+      const h = groupHeader(g.bucket, g.items.map((m) => new Date(m.date)));
+      out.push({ key: `${g.bucket}-${i}`, ...h, items: g.items });
+    });
+    return out;
+  }, [messages]);
+
+  // Scrolling near the end loads the next page.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || isLoadingMore || isLoading || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onLoadMore?.();
+      },
+      { root: scrollerRef.current, rootMargin: '300px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, isLoadingMore, isLoading, messages.length, onLoadMore]);
+
   const allSelected = messages.length > 0 && messages.every((m) => selectedUids.has(m.uid));
-  const someSelected = messages.some((m) => selectedUids.has(m.uid)) && !allSelected;
 
   const hasActiveFilters = Boolean(
     filters.from || filters.to || filters.subject || filters.since || filters.before
   );
 
-  const totalPages = Math.max(1, Math.ceil(totalMessages / limit));
-
-  const formatMessageDate = (dateString: string) => {
-    try {
-      const d = new Date(dateString);
-      if (isNaN(d.getTime())) return '';
-      if (isToday(d)) {
-        return format(d, 'h:mm a');
-      }
-      if (isThisYear(d)) {
-        return format(d, 'MMM d');
-      }
-      return format(d, 'MM/dd/yy');
-    } catch {
-      return '';
-    }
-  };
+  const formatMessageDate = (dateString: string) => rowTime(dateString);
 
   const latest = useRef({ onToggleSelectUid, onSelectMessage, onToggleFlag, onArchive, onSnooze });
   latest.current = { onToggleSelectUid, onSelectMessage, onToggleFlag, onArchive, onSnooze };
@@ -466,25 +532,12 @@ export const MessageList: React.FC<MessageListProps> = ({
       className="w-full flex-shrink-0 bg-surface md:border-r border-line flex flex-col h-full select-none relative"
     >
       {/* Header & Search */}
-      <div className="px-4 pt-3 pb-3 border-b border-line flex flex-col gap-2.5 max-lg:bg-rail max-lg:cut-phone max-lg:pb-6">
+      <div className="px-4 pt-3 pb-3 border-b border-line flex flex-col gap-2.5 max-lg:bg-rail max-lg:cut-phone max-lg:pt-2 max-lg:pb-5 max-lg:gap-2">
         <div className="flex items-center justify-between gap-1">
-          <div className="flex items-center gap-2 min-w-0">
-            {onOpenMobileSidebar && (
-              <button
-                onClick={onOpenMobileSidebar}
-                className={`p-1.5 text-rail-ink hover:bg-rail-hi rounded transition-colors lg:hidden ${TOUCH}`}
-                title="Open folders"
-                aria-label="Open folders"
-              >
-                <Menu className="w-5 h-5" />
-              </button>
-            )}
-            <h1 className="text-2xl font-extrabold text-ink max-lg:text-rail-ink tracking-tight truncate">{folderName}</h1>
-            <span
-              className="text-[13px] font-semibold text-ink-3 max-lg:text-rail-2 shrink-0 mt-1"
-              aria-label={`${totalMessages} messages`}
-            >
-              {totalMessages}
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h1 className="text-2xl max-lg:text-[22px] font-extrabold text-ink max-lg:text-rail-ink tracking-tight truncate">{folderName}</h1>
+            <span className="text-[13px] font-semibold text-ink-3 max-lg:text-rail-2 shrink-0">
+              {unreadCount > 0 ? `${unreadCount} unread` : `${totalMessages} ${totalMessages === 1 ? 'message' : 'messages'}`}
             </span>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -506,11 +559,36 @@ export const MessageList: React.FC<MessageListProps> = ({
             >
               <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin motion-reduce:animate-none' : ''}`} />
             </button>
+            <button
+              type="button"
+              onClick={() => setSearchOpen((o) => !o)}
+              aria-label="Search messages"
+              aria-expanded={searchOpen}
+              className={`lg:hidden p-1.5 text-rail-ink hover:bg-rail-hi rounded ${TOUCH}`}
+            >
+              <Search className="w-4 h-4" />
+            </button>
+            {onOpenMobileSidebar && (
+              <button
+                type="button"
+                onClick={onOpenMobileSidebar}
+                aria-label="Open folders and account"
+                title="Folders and account"
+                className={`lg:hidden ${TOUCH}`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`cut-av w-8 h-8 grid place-items-center text-[12px] font-extrabold text-white ${avatarClass(accountLabel || 'me')}`}
+                >
+                  {initialsOf(accountLabel || '?')}
+                </span>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Search Bar & Filter Toggle */}
-        <div role="search" className="relative flex items-center">
+        <div role="search" className={`relative flex items-center ${searchOpen || searchTerm ? '' : 'max-lg:hidden'}`}>
           <Search className="w-4 h-4 text-ink-3 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
           <input
             type="text"
@@ -518,7 +596,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             data-search-input
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search sender, subject or snippet..."
+            placeholder="Search mail"
             className="w-full bg-sheet border border-line text-ink placeholder:text-ink-3 text-base sm:text-[13px] rounded pl-9 pr-24 sm:pr-16 py-2 min-h-[44px] sm:min-h-[34px] focus:outline-none focus:border-focus focus:ring-1 focus:ring-focus transition-colors"
           />
           <div className="absolute right-0 sm:right-2 top-1/2 -translate-y-1/2 flex items-center gap-0 sm:gap-1">
@@ -633,7 +711,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         )}
 
         {onFilterChange && (
-          <div role="group" aria-label="Show" className="flex gap-1 flex-wrap">
+          <div role="group" aria-label="Show" className="flex gap-1 flex-nowrap overflow-x-auto max-lg:-mx-1 max-lg:px-1">
             {FILTER_TABS.map((t) => {
               const on = (filter ?? 'all') === t.key;
               return (
@@ -641,14 +719,22 @@ export const MessageList: React.FC<MessageListProps> = ({
                   key={t.key}
                   type="button"
                   aria-pressed={on}
+                  aria-label={t.key === 'attachments' ? 'With files' : undefined}
                   onClick={() => onFilterChange(t.key)}
-                  className={`t-fast min-h-[44px] sm:min-h-[28px] px-2.5 rounded-[3px] text-[12.5px] font-bold ${
+                  className={`t-fast shrink-0 min-h-[36px] sm:min-h-[28px] px-2.5 rounded-[3px] text-[12.5px] font-bold ${
                     on
-                      ? 'bg-act text-act-ink max-lg:bg-ph-on max-lg:text-ph-on-ink'
+                      ? 'bg-ink text-surface max-lg:bg-ph-on max-lg:text-ph-on-ink'
                       : 'text-ink-2 max-lg:text-rail-2 hover:bg-hover max-lg:hover:bg-rail-hi'
                   }`}
                 >
-                  {t.label}
+                  {t.key === 'attachments' ? (
+                    <>
+                      <span aria-hidden="true" className="lg:hidden">Files</span>
+                      <span aria-hidden="true" className="max-lg:hidden">With files</span>
+                    </>
+                  ) : (
+                    t.label
+                  )}
                   {t.key === 'unread' && unreadCount > 0 && (
                     <span className="ml-1.5 inline-block bg-pill text-pill-ink px-1.5 rounded-[3px] text-[11.5px] leading-4">
                       {unreadCount}
@@ -662,10 +748,11 @@ export const MessageList: React.FC<MessageListProps> = ({
       </div>
 
       {/* Batch Actions Toolbar */}
+      {selectedUids.size > 0 && (
       <div
         role="toolbar"
         aria-label="Actions for selected messages"
-        className="px-4 py-1 border-b border-line bg-sheet flex flex-wrap items-center justify-between gap-x-2 text-xs text-ink-2"
+        className="anim-rise px-4 py-1 border-b border-line bg-sel flex flex-wrap items-center justify-between gap-x-2 text-xs text-sel-ink"
       >
         <div className="flex items-center gap-1">
           <button
@@ -675,21 +762,23 @@ export const MessageList: React.FC<MessageListProps> = ({
             aria-label={allSelected ? 'Deselect all messages' : 'Select all messages'}
             aria-pressed={allSelected}
           >
-            {allSelected ? (
-              <CheckSquare className="w-4 h-4 text-act" />
-            ) : someSelected ? (
-              <MinusSquare className="w-4 h-4 text-act" />
-            ) : (
-              <Square className="w-4 h-4 text-ink-3" />
-            )}
+            <Check className={`w-4 h-4 ${allSelected ? 'text-act' : ''}`} strokeWidth={allSelected ? 3 : 2} />
           </button>
-          <span className="font-semibold text-ink-3" aria-live="polite">
-            {selectedUids.size > 0 ? `${selectedUids.size} selected` : 'Select'}
+          <span className="font-bold" aria-live="polite">
+            {selectedUids.size} selected
           </span>
+          <button
+            type="button"
+            onClick={onClearSelection}
+            title="Clear selection"
+            aria-label="Clear selection"
+            className={`p-1 rounded hover:bg-hover ${TOUCH}`}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
 
-        {selectedUids.size > 0 && (
-          <div className="flex flex-wrap items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
             <button
               onClick={() => onBatchMarkRead(true)}
               title="Mark as read"
@@ -744,9 +833,9 @@ export const MessageList: React.FC<MessageListProps> = ({
                 <ShieldAlert className="w-3.5 h-3.5" />
               </button>
             )}
-          </div>
-        )}
+        </div>
       </div>
+      )}
 
       {/* Message List Stream */}
       {isLoading && messages.length === 0 ? (
@@ -767,61 +856,55 @@ export const MessageList: React.FC<MessageListProps> = ({
           }}
           className="flex-1 overflow-y-auto list-none m-0 p-0"
         >
-          {messages.map((msg) => {
-            const isSelected = selectedUid === msg.uid;
-            const isChecked = selectedUids.has(msg.uid);
-            const isUnread = !msg.isSeen;
-            const tab = rowUid === msg.uid ? 0 : -1;
-            const dateText = formatMessageDate(msg.date);
-            const who = msg.from.name || msg.from.address;
-            const isDraft = folderKind === 'Drafts';
+          {groups.map((g) => (
+            <React.Fragment key={g.key}>
+              <li role="presentation" className="flex items-baseline gap-2 pt-4 pb-1.5 pl-16 pr-5 bg-surface list-none">
+                <b className="text-[13px] font-extrabold text-ink">{g.title}</b>
+                {g.sub && <span className="text-xs font-medium text-ink-3">{g.sub}</span>}
+              </li>
+              {g.items.map((msg) => {
+                const isSelected = selectedUid === msg.uid;
+                const isChecked = selectedUids.has(msg.uid);
+                const isUnread = !msg.isSeen;
+                const tab = rowUid === msg.uid ? 0 : -1;
+                const dateText = formatMessageDate(msg.date);
+                const who = msg.from.name || msg.from.address;
+                const isDraft = folderKind === 'Drafts';
 
-            return (
-              <MessageRow
-                key={`${msg.mailbox ?? ''}:${msg.uid}`}
-                msg={msg}
-                who={who}
-                dateText={dateText}
-                isSelected={isSelected}
-                isChecked={isChecked}
-                isUnread={isUnread}
-                tab={tab}
-                isDraft={isDraft}
-                leaving={!!leavingUids?.has(msg.uid)}
-                canArchive={canArchive}
-                labelMap={labelMap}
-                snoozeOpen={snoozeUid === msg.uid}
-                ctl={ctl}
-              />
-            );
-          })}
+                return (
+                  <MessageRow
+                    key={`${msg.mailbox ?? ''}:${msg.uid}`}
+                    msg={msg}
+                    who={who}
+                    dateText={dateText}
+                    isSelected={isSelected}
+                    isChecked={isChecked}
+                    isUnread={isUnread}
+                    tab={tab}
+                    isDraft={isDraft}
+                    leaving={!!leavingUids?.has(msg.uid)}
+                    canArchive={canArchive}
+                    labelMap={labelMap}
+                    snoozeOpen={snoozeUid === msg.uid}
+                    ctl={ctl}
+                  />
+                );
+              })}
+            </React.Fragment>
+          ))}
+          {(hasMore || isLoadingMore) && (
+            <li ref={sentinelRef} className="list-none px-4 py-3 text-center text-xs font-semibold text-ink-3">
+              {isLoadingMore ? (
+                'Loading more...'
+              ) : (
+                <button type="button" onClick={onLoadMore} className="t-fast min-h-[44px] px-3 rounded hover:bg-hover text-ink-2 font-bold">
+                  Load more
+                </button>
+              )}
+            </li>
+          )}
         </ul>
       )}
-
-      {/* Pagination Footer */}
-      <div className="px-4 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] border-t border-line bg-surface flex items-center justify-between text-xs text-ink-3 font-semibold">
-        <span>
-          Page {page} of {totalPages}
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => onPageChange(page - 1)}
-            disabled={page <= 1 || isLoading}
-            aria-label="Previous page"
-            className={`p-1 hover:bg-hover rounded disabled:opacity-40 disabled:hover:bg-transparent ${TOUCH}`}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => onPageChange(page + 1)}
-            disabled={page >= totalPages || isLoading}
-            aria-label="Next page"
-            className={`p-1 hover:bg-hover rounded disabled:opacity-40 disabled:hover:bg-transparent ${TOUCH}`}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
 
       {/* New Message: always reachable on small screens (the sidebar is hidden there) */}
       {onCompose && (
