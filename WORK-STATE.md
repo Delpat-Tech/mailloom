@@ -22,10 +22,16 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 1. Phone basics batch on builder-b (Om found gaps on 15 Nov): sign-in alert glitch, password show/hide, pull-to-refresh,
    back button/history (opening a mail adds no history: back exits the app), offline banner, sign-in field hints,
    row swipe actions, composer with keyboard. Then review, release, update the live server.
-   Queued for builder-a when a slot frees (max 2 helpers): recipient suggestions (from Sent and received senders);
-   remove the sample labels and fix label counts; print view; remote images on by default via a server image proxy
-   (SSRF-safe: no private/loopback addresses, image types only, size and time limits, no cookies or referrer;
-   still blocked in Spam/Junk; setting to turn off) with a security review before merge. Independent Opus review running.
+   Builder-a (server only, running): remember sessions slide 30 days; SSRF-safe image proxy (images on by default,
+   Junk always blocked); inline image/PDF view; recipient suggestions endpoint; search all folders; drop sample labels and
+   fix label counts; batch actions and mark all read. Security review before merge (sessions, proxy, attachments).
+   Then builder-b client batch 3 (from the Opus review, 15 Nov): wire the above (suggestions UI with Backspace removes
+   last chip, image setting, inline viewer, search everywhere incl. from the reader and in views, mark all read);
+   refresh on reopen (visibilitychange/online); print view; templates with no made-up data and insert at cursor
+   (block send while {{...}} remains); remember-me on by default in the installed app; composer fields 16px on phones;
+   flush pending undo actions on hide; 20 s request timeouts with retry; label counts refreshed and consistent
+   (unread vs total, aria text); search enterkeyhint; drafts saved on hide; no example.com placeholder; manifest
+   Compose shortcut and mailto: handling.
 2. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
 ## Later
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
