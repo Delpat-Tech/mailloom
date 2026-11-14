@@ -136,6 +136,11 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
               ref={emailRef}
               type="email"
               required
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="next"
               autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -150,6 +155,10 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
               id="connect-password"
               ref={passwordRef}
               resetSignal={attempts}
+              enterKeyHint="go"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
               autoComplete="current-password"
               value={password}
@@ -161,14 +170,16 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
 
           {/* Remember Me Checkbox */}
           <div className="flex items-center justify-between pt-1">
-            <label className="flex items-center gap-2 text-ink-2 cursor-pointer">
+            <label htmlFor="connect-remember" className="flex items-center gap-2 text-ink-2 cursor-pointer">
               <input
+                id="connect-remember"
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
                 className="rounded accent-act w-4 h-4"
+                aria-label="Keep me signed in for 30 days (not on a shared computer)"
               />
-              <span className="font-medium text-xs">Keep me signed in for 30 days (not on a shared computer)</span>
+              <span aria-hidden="true" className="font-medium text-xs">Keep me signed in for 30 days (not on a shared computer)</span>
             </label>
           </div>
 

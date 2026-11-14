@@ -14,6 +14,9 @@ const TECHNICAL = [
 export function friendlyError(err: unknown, fallback = 'Something went wrong. Please try again.'): string {
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
   const msg = raw.trim();
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return "You're offline. Try again when you're back online.";
+  }
   if (!msg) return fallback;
   if (NETWORK.test(msg)) {
     return "Couldn't reach the mail server. Check your connection and try again.";

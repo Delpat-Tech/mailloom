@@ -1,4 +1,5 @@
 import { useBackLayer } from '../hooks/useBackLayer.js';
+import { useOnline } from '../hooks/useOnline.js';
 import { usePresence, LEAVE_COMPOSER_MS, Presence } from './Presence.js';
 import { AnchoredPanel } from './AnchoredPanel.js';
 import { usePopover } from '../hooks/usePopover.js';
@@ -187,6 +188,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   const [isSending, setIsSending] = useState(false);
+  const online = useOnline();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -456,6 +458,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   const handleSend = async () => {
     setErrorMsg(null);
+    if (!online) {
+      setErrorMsg("You're offline, so the message can't be sent yet. It is kept here.");
+      return;
+    }
 
     // If user has typed an email without pressing enter, add it automatically
     const finalTo = mergeRecipients(toList, toInput);
@@ -644,6 +650,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             </div>
           )}
 
+          {/* Phone, keyboard open: To, Subject and the body scroll together above a fixed Send bar. */}
+          <div className="flex-1 min-h-0 flex flex-col max-sm:overflow-y-auto">
           {/* Recipients & Subject Fields */}
           <div className="px-4 py-2 border-b border-line flex flex-col divide-y divide-line text-xs">
             {/* To Line */}
@@ -816,7 +824,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           </div>
 
           {/* Email Body Area */}
-          <div className="flex-1 p-4 flex flex-col overflow-hidden">
+          <div className="flex-1 p-4 flex flex-col overflow-hidden max-sm:min-h-[12rem]">
             {plainMode ? (
               <textarea
                 ref={bodyRef}
@@ -872,6 +880,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </div>
             )}
           </div>
+          </div>
 
           {/* Hidden File Input */}
           <input
@@ -903,10 +912,17 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               }
             }}
           />
+          {!online && (
+            <p id="send-offline" role="status" className="px-4 py-1.5 text-xs font-semibold text-warn-ink bg-warn-bg border-t border-warn-line">
+              You're offline. Your message is kept; Send works again when you're back online.
+            </p>
+          )}
           <div className="px-3 sm:px-4 py-2.5 border-t border-line bg-sheet flex flex-nowrap items-center gap-1 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
             <button
               onClick={handleSend}
-              disabled={isSending}
+              disabled={isSending || !online}
+              aria-describedby={online ? undefined : 'send-offline'}
+              title={online ? undefined : "You're offline. Send works again when you're back online."}
               aria-keyshortcuts="Control+Enter"
               className="cut-tr shrink-0 whitespace-nowrap flex items-center gap-2 bg-act hover:bg-act-hov text-act-ink font-extrabold text-[13.5px] pl-3 pr-3.5 mr-1 min-h-[44px] sm:min-h-[36px] transition-colors disabled:opacity-50"
             >

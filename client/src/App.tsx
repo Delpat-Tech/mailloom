@@ -10,6 +10,7 @@ import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
 import { useSwipeBack } from './hooks/useSwipeBack.js';
 import { useBackLayer } from './hooks/useBackLayer.js';
+import { useOnline } from './hooks/useOnline.js';
 import { folderLabel } from './services/folderName.js';
 import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
@@ -173,7 +174,8 @@ export const App: React.FC = () => {
   const [composeId, setComposeId] = useState(0);
 
   // Toast feedback
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; retry?: () => void } | null>(null);
+  const online = useOnline();
 
   // Mobile responsive state
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
@@ -240,10 +242,10 @@ export const App: React.FC = () => {
   };
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
+  const showToast = (message: string, type: 'success' | 'error' = 'success', retry?: () => void) => {
+    setToast({ message, type, retry });
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), type === 'error' ? 7000 : 3500);
+    toastTimer.current = setTimeout(() => setToast(null), retry ? 12000 : type === 'error' ? 7000 : 3500);
   };
 
   // 1. Initial Authentication Check: ask the server which accounts this browser is signed in to.
@@ -395,7 +397,7 @@ export const App: React.FC = () => {
       } catch (err: unknown) {
         if (!silent && seq === loadSeq.current) {
           if (more) setPage((p) => Math.max(1, p - 1)); // the next page failed: the button tries again
-          showToast(friendlyError(err, 'The messages could not be loaded. Try again.'), 'error');
+          showToast(friendlyError(err, 'The messages could not be loaded. Try again.'), 'error', () => refreshListRef.current());
         }
       } finally {
         if (showLoading && seq === loadSeq.current) setIsMessagesLoading(false);
@@ -512,7 +514,7 @@ export const App: React.FC = () => {
       prefetchAround(uid);
     } catch (err: unknown) {
       if (seq === detailSeq.current) {
-        showToast(friendlyError(err, 'This message could not be opened. Try again.'), 'error');
+        showToast(friendlyError(err, 'This message could not be opened. Try again.'), 'error', () => void handleSelectMessageRef.current(uid));
       }
     } finally {
       if (seq === detailSeq.current) setIsDetailLoading(false);
@@ -534,6 +536,21 @@ export const App: React.FC = () => {
   }, [selectedMessage?.uid, selectedUid, account]);
 
   const handleEditDraftRef = useRef<(m: ParsedEmailMessage) => void>(() => undefined);
+  // The same refresh the Refresh button, pull-to-refresh, Retry and coming back online use.
+  const refreshList = () => {
+    if (page > 1) setPage(1); // the list is reloaded from the top
+    else loadMessages();
+    loadFolders();
+  };
+  const refreshListRef = useRef(refreshList);
+  refreshListRef.current = refreshList;
+  // Back online: refresh once.
+  const wasOnline = useRef(true);
+  useEffect(() => {
+    if (online && !wasOnline.current && account) refreshListRef.current();
+    wasOnline.current = online;
+  }, [online, account]);
+
   const handleSelectMessageRef = useRef(handleSelectMessage);
   handleSelectMessageRef.current = handleSelectMessage;
 
@@ -1492,6 +1509,11 @@ export const App: React.FC = () => {
       className="h-screen w-screen flex flex-col overflow-hidden bg-surface text-ink font-sans"
       style={{ height: '100dvh' }}
     >
+      {account && !online && (
+        <div role="status" className="shrink-0 bg-warn-bg border-b border-warn-line text-warn-ink text-xs font-semibold px-4 py-1.5 text-center pt-[max(0.375rem,env(safe-area-inset-top))]">
+          You're offline. Showing what was loaded.
+        </div>
+      )}
       {!account ? (
         <ConnectModal
           onConnected={handleConnected}
@@ -1592,11 +1614,7 @@ export const App: React.FC = () => {
               onToggleSelectUid={handleToggleSelectUid}
               onSelectAll={handleSelectAll}
               onToggleFlag={handleToggleFlag}
-              onRefresh={() => {
-                if (page > 1) setPage(1); // the list is reloaded from the top
-                else loadMessages();
-                loadFolders();
-              }}
+              onRefresh={refreshList}
               folderKind={selectedFolderKind}
               onEmptyFolder={handleEmptyFolder}
               isLoading={isMessagesLoading}
@@ -1795,7 +1813,7 @@ export const App: React.FC = () => {
       <div className="fixed z-[70] flex flex-col gap-2 items-start bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-3 right-3 md:bottom-5 md:left-4 lg:left-[15rem] md:right-auto md:max-w-[min(26rem,calc(100vw-2rem))] pointer-events-none">
         {toast && (
           <div
-            aria-hidden="true"
+            aria-hidden={toast.retry ? undefined : 'true'}
             className={`anim-toast pointer-events-auto w-full px-4 py-3 rounded shadow-xl text-[13.5px] font-bold flex items-start gap-3 ${
               toast.type === 'error'
                 ? 'bg-warn-bg text-ink border border-warn-line'
@@ -1807,7 +1825,20 @@ export const App: React.FC = () => {
             ) : (
               <Check className="w-5 h-5 shrink-0 text-ok-ink" />
             )}
-            <span>{toast.message}</span>
+            <span className="flex-1">{toast.message}</span>
+            {toast.retry && (
+              <button
+                type="button"
+                onClick={() => {
+                  const r = toast.retry;
+                  setToast(null);
+                  r?.();
+                }}
+                className="t-fast min-h-[44px] -my-2 px-2 font-extrabold text-ink underline"
+              >
+                Retry
+              </button>
+            )}
           </div>
         )}
         {undoLatest && (
