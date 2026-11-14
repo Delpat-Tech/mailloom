@@ -18,7 +18,8 @@ import {
   X,
   Download,
   Bell,
-  BellRing
+  BellRing,
+  KeyRound
 } from 'lucide-react';
 import type { MailboxFolder, UserAccount, StoredAccountProfile } from '../types.js';
 
@@ -38,6 +39,7 @@ interface SidebarProps {
   notificationPermission?: NotificationPermission;
   onRequestNotifications?: () => void;
   onCloseMobileSidebar?: () => void;
+  onOpenConnections?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -55,7 +57,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onInstallApp,
   notificationPermission = 'default',
   onRequestNotifications,
-  onCloseMobileSidebar
+  onCloseMobileSidebar,
+  onOpenConnections
 }) => {
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -296,6 +299,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <UserPlus className="w-3.5 h-3.5" />
                   <span>Add Another Mailbox</span>
+                </button>
+              )}
+              {onOpenConnections && !account.isDemo && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAccountSwitcher(false);
+                    onOpenConnections();
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-slate-800 hover:text-white font-medium transition-colors"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Connections</span>
                 </button>
               )}
               <button

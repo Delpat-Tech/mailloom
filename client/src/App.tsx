@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar.js';
+import { ConnectionsPanel } from './components/ConnectionsPanel.js';
 import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
 import { ComposerModal } from './components/ComposerModal.js';
@@ -71,6 +72,7 @@ export const App: React.FC = () => {
 
   // Composer
   const [isComposerOpen, setIsComposerOpen] = useState(false);
+  const [showConnections, setShowConnections] = useState(false);
   const [composerInitial, setComposerInitial] = useState<{
     to?: string[];
     cc?: string[];
@@ -672,6 +674,10 @@ export const App: React.FC = () => {
               notificationPermission={notificationPerm}
               onRequestNotifications={handleRequestNotifications}
               onCloseMobileSidebar={() => setShowMobileSidebar(false)}
+              onOpenConnections={() => {
+                setShowConnections(true);
+                setShowMobileSidebar(false);
+              }}
             />
           </div>
 
@@ -759,6 +765,10 @@ export const App: React.FC = () => {
           onConnected={handleConnected}
           onCancel={handleCancelReauth}
         />
+      )}
+
+      {showConnections && account && (
+        <ConnectionsPanel key={account.handle} email={account.email} onClose={() => setShowConnections(false)} />
       )}
 
       {/* Floating Composer Modal */}

@@ -165,7 +165,7 @@ interface RequestOptions extends RequestInit {
   account?: string | null;
 }
 
-async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+export async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const { account, ...init } = options;
   const handle = account === undefined ? activeHandle : account;
   const headers = new Headers(init.headers || {});
