@@ -74,7 +74,9 @@
   .t-fast { transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), opacity var(--dur-1) var(--ease-out); }
 
 /* Composer: minimise slides it down to its title bar (transform only). */
-.cmp-panel { transition: transform var(--dur-3) var(--ease-out); }
+.cmp-panel { transition: transform var(--dur-3) var(--ease-out); will-change: transform, opacity; isolation: isolate; }
+/* The reader (and the mail frame inside it) is its own layer beneath the composer, so it never paints over the opening composer. */
+.reader-pane { isolation: isolate; }
 .cmp-min { transform: translateY(calc(100% - 42px)); transition-timing-function: var(--ease-in); transition-duration: var(--dur-3-out); }
 .cmp-content-min { visibility: hidden; transition: visibility 0s linear var(--dur-3-out); }
 

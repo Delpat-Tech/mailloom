@@ -506,7 +506,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           void handleSend();
         }
       }}
-      className={`anim-composer cmp-panel fixed z-50 shadow-2xl rounded-t sm:rounded overflow-hidden bg-surface border border-line flex flex-col ${
+      className={`anim-composer cmp-panel fixed z-[55] shadow-2xl rounded-t sm:rounded overflow-hidden bg-surface border border-line flex flex-col ${
         isMinimized
           ? 'cmp-min inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
           : isMaximized

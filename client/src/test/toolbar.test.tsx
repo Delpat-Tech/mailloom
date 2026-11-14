@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, within } from '@testing-library/react';
 import { MessageViewer, toolbarLevel } from '../components/MessageViewer.js';
 import type { ParsedEmailMessage } from '../types.js';
 
@@ -70,24 +70,23 @@ describe('message toolbar', () => {
   it('picks a level from the toolbar width', () => {
     expect(toolbarLevel(0)).toBe('full');
     expect(toolbarLevel(1200)).toBe('full');
-    expect(toolbarLevel(800)).toBe('full');
-    expect(toolbarLevel(700)).toBe('mid');
+    expect(toolbarLevel(600)).toBe('full');
+    expect(toolbarLevel(500)).toBe('mid');
     expect(toolbarLevel(408)).toBe('tight');
   });
 
   for (const win of [800, 1024, 1280]) {
-    it(`at a ${win} px window the main actions stay, the rest sits under More, nothing is squeezed`, () => {
+    it(`at a ${win} px window the top bar holds Archive, Delete and More, and never squeezes a button`, () => {
       const w = viewerWidth(win);
       mockToolbarWidth(w);
       renderViewer();
       const bar = screen.getByRole('toolbar', { name: 'Message actions' });
-      for (const name of ['Reply', 'Reply all', 'Forward', 'Move to Trash', 'Move to folder', 'More actions']) {
-        expect(screen.getByRole('button', { name })).toBeTruthy();
+      for (const name of ['Move to Trash', 'More actions']) {
+        expect(within(bar).getByRole('button', { name })).toBeTruthy();
       }
-      // Secondary buttons are hidden at this width (moved under More), not squeezed in.
-      for (const name of ['HTML', 'Plain Text', 'Print message']) {
-        expect(shownFromSm(screen.getByRole('button', { name, hidden: true }))).toBe(false);
-      }
+      // Replies live in the message header, not in the top bar.
+      expect(within(bar).queryByRole('button', { name: 'Reply' })).toBeNull();
+      expect(screen.getAllByRole('button', { name: 'Reply' }).length).toBeGreaterThan(0);
       // Every button that is shown refuses to shrink below 32 px and never wraps its text.
       for (const b of bar.querySelectorAll('button')) {
         if (!shownFromSm(b)) continue;
@@ -99,11 +98,13 @@ describe('message toolbar', () => {
     });
   }
 
-  it('shows everything on a wide toolbar and no always-on More button', () => {
+  it('shows labels and key hints when wide, icons only when narrow', () => {
     mockToolbarWidth(1100);
+    const { unmount } = renderViewer();
+    expect(screen.getByText('Delete').className).toMatch(/sm:inline/);
+    unmount();
+    mockToolbarWidth(420);
     renderViewer();
-    const more = screen.getByRole('button', { name: 'More actions' });
-    expect(more.parentElement!.classList.contains('sm:hidden')).toBe(true);
-    expect(shownFromSm(screen.getByRole('button', { name: 'Plain Text' }))).toBe(true);
+    expect(screen.getByText('Delete').className).not.toMatch(/sm:inline/);
   });
 });
