@@ -33,6 +33,12 @@ users tester@ and colleague@delpat.test). Never the live mail server.
    (unread vs total, aria text); search enterkeyhint; drafts saved on hide; no example.com placeholder; manifest
    Compose shortcut and mailto: handling.
 2. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
+## Builder B batch 3 (branch builder-b, awaiting review and merge)
+- All 14 client items done (suggestions, pictures setting, inline viewer, search everywhere, print, refresh on reopen, templates, remember me,
+  16 px phone fields, undo/draft flush on hide, request timeouts, label counts, bulk actions, manifest shortcut and mailto). Client tests 179.
+- Not verified: PDF inside the viewer frame in Chrome (the server sends `default-src 'none'` on inline attachments; the viewer also has
+  an "Open in new tab" link), real iPhone behaviour, the manifest protocol handler on a real install.
+
 ## Later
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
 - Earlier note: Om first said local only; Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).

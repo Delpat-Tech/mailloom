@@ -681,7 +681,7 @@ export const App: React.FC = () => {
   const searchAllNow = searchingNow && (searchScope === 'all' || !!viewRef);
   const folderNames = useMemo(() => Object.fromEntries(folders.map((f) => [f.path, folderLabel(f)])), [folders]);
   const headerName = searchAllNow
-    ? 'Search results'
+    ? 'Search'
     : viewRef
     ? viewRef.kind === 'starred'
       ? 'Starred'
@@ -1755,7 +1755,7 @@ export const App: React.FC = () => {
                       setPage(1);
                     }
               }
-              unreadCount={inboxLike?.unreadCount ?? 0}
+              unreadCount={searchAllNow ? 0 : (inboxLike?.unreadCount ?? 0)}
               onArchive={archiveFolder && !inStarredView ? handleArchive : undefined}
               onSnooze={handleSnooze}
               totalMessages={shownTotalNow}

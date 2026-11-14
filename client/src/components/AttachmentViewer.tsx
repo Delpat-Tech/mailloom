@@ -49,6 +49,16 @@ export const AttachmentViewer: React.FC<{ target: ViewerTarget; onClose: () => v
     >
       <div className="shrink-0 flex items-center gap-2 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] bg-black/60">
         <span className="flex-1 min-w-0 truncate text-sm font-bold">{target.filename}</span>
+        {target.kind === 'pdf' && (
+          <a
+            href={target.src}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center min-h-[44px] px-3 rounded border border-white/40 text-sm font-bold hover:bg-white/10"
+          >
+            Open in new tab
+          </a>
+        )}
         <a
           href={target.downloadUrl}
           download={target.filename}

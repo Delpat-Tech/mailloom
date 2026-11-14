@@ -260,9 +260,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     savingRef.current = true;
     try {
       const res = await api.saveDraft({
-        to: data.to,
-        cc: data.cc,
-        bcc: data.bcc,
+        // Half-typed text in a recipient box is not an address yet: it is not sent along (nor reported as "not kept").
+        to: data.to.filter((e) => isValidRecipient(e) || toList.includes(e)),
+        cc: data.cc.filter((e) => isValidRecipient(e) || ccList.includes(e)),
+        bcc: data.bcc.filter((e) => isValidRecipient(e) || bccList.includes(e)),
         subject: data.subject,
         ...(data.plain ? { text: data.body } : { html: data.body, text: '' }),
         inReplyTo: replyMeta?.inReplyTo,
