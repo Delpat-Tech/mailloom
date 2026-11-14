@@ -11,6 +11,8 @@ import {
   PenTool
 } from 'lucide-react';
 import { api } from '../services/api.js';
+import { friendlyError } from '../services/errors.js';
+import { useDialog } from '../hooks/useDialog.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
 import type { ConfirmRequest } from './ConfirmDialog.js';
 import {
@@ -133,6 +135,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const sigRef = useRef<HTMLDivElement>(null);
+  const toInputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   // ---- Drafts: autosave every 10 s while there are changes ----
   const draftUidRef = useRef<number | undefined>(replyMeta?.draftUid);
@@ -177,7 +183,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       setDraftStatus({ text: `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, error: false });
       return true;
     } catch (err: unknown) {
-      setDraftStatus({ text: `Draft not saved: ${err instanceof Error ? err.message : 'unknown error'}`, error: true });
+      setDraftStatus({ text: `Draft not saved. ${friendlyError(err, 'Try again in a moment.')}`, error: true });
       return false;
     } finally {
       savingRef.current = false;
@@ -202,7 +208,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         await api.deleteDraft(draftUidRef.current);
       } catch (err: unknown) {
         sentRef.current = false;
-        setErrorMsg(`The saved draft could not be deleted: ${err instanceof Error ? err.message : 'unknown error'}`);
+        setErrorMsg(`The saved draft could not be deleted. ${friendlyError(err, 'Try again in a moment.')}`);
         return;
       }
     }
@@ -250,6 +256,14 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       onAlternate: () => void discardAndClose()
     });
   };
+
+  useDialog(panelRef, {
+    open: isOpen,
+    onEscape: handleCloseClick, // asks what to do with the content, if there is any
+    initialFocus: () => (toList.length === 0 ? toInputRef.current : bodyRef.current)
+  });
+
+  useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
 
   if (!isOpen) return null;
 
@@ -355,7 +369,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     } catch (err: unknown) {
       sentRef.current = false; // sending failed: the composer stays open and keeps autosaving
       setIsSending(false);
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to send message. Please check connection.');
+      setErrorMsg(friendlyError(err, 'The message could not be sent. Check your connection and try again.'));
     }
   };
 
@@ -378,6 +392,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   return (
     <div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="composer-title"
       className={`fixed z-50 transition-all duration-200 shadow-2xl rounded-t-2xl sm:rounded-xl overflow-hidden bg-white border border-slate-200 flex flex-col ${
         isMinimized
           ? 'bottom-0 right-4 sm:right-6 w-72 h-11'
@@ -388,14 +406,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     >
       {/* Modal Header */}
       <div className="bg-slate-900 text-slate-200 px-4 py-2.5 flex items-center justify-between select-none cursor-pointer">
-        <span className="text-xs font-semibold tracking-wide text-white truncate">
+        <span id="composer-title" className="text-xs font-semibold tracking-wide text-white truncate">
           {subject || 'New Message'}
         </span>
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setIsMinimized(!isMinimized)}
-            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"
+            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title={isMinimized ? 'Expand' : 'Minimize'}
+            aria-label={isMinimized ? 'Expand' : 'Minimize'}
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
@@ -404,14 +423,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               setIsMaximized(!isMaximized);
               setIsMinimized(false);
             }}
-            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"
-            title={isMaximized ? 'Restore' : 'Maximize'}
+            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            title={isMaximized ? 'Restore size' : 'Maximize'}
+            aria-label={isMaximized ? 'Restore size' : 'Maximize'}
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleCloseClick}
-            className="p-1 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
+            className="p-1 hover:text-red-400 hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title="Close"
             aria-label="Close"
           >
@@ -424,10 +444,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         <div className="flex-1 flex flex-col bg-white overflow-hidden">
           {/* Error Banner */}
           {errorMsg && (
-            <div className="bg-red-50 text-red-700 px-4 py-2 text-xs flex items-center gap-2 border-b border-red-200 shrink-0">
+            <div role="alert" className="bg-red-50 text-red-700 px-4 py-2 text-xs flex items-center gap-2 border-b border-red-200 shrink-0">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
               <span className="flex-1">{errorMsg}</span>
-              <button onClick={() => setErrorMsg(null)} className="text-red-500 font-bold">
+              <button onClick={() => setErrorMsg(null)} aria-label="Dismiss error" className="text-red-500 font-bold px-2 min-h-[44px] sm:min-h-0">
                 ×
               </button>
             </div>
@@ -437,7 +457,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           <div className="px-4 py-2 border-b border-slate-100 flex flex-col divide-y divide-slate-100 text-xs">
             {/* To Line */}
             <div className="py-1.5 flex items-center gap-2">
-              <span className="text-slate-400 font-medium w-12">To:</span>
+              <label htmlFor="composer-to" className="text-slate-400 font-medium w-12">To:</label>
               <div className="flex-1 flex flex-wrap items-center gap-1.5">
                 {toList.map((email, idx) => (
                   <span
@@ -448,13 +468,16 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     <button
                       type="button"
                       onClick={() => handleRemoveRecipient('to', idx)}
-                      className="hover:text-sky-900"
+                      aria-label={`Remove ${email}`}
+                      className="hover:text-sky-900 px-1 min-h-[44px] sm:min-h-0"
                     >
                       ×
                     </button>
                   </span>
                 ))}
                 <input
+                  id="composer-to"
+                  ref={toInputRef}
                   type="email"
                   value={toInput}
                   onChange={(e) => setToInput(e.target.value)}
@@ -473,12 +496,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </div>
               <div className="flex items-center gap-2 text-[11px] text-slate-400">
                 {!showCc && (
-                  <button onClick={() => setShowCc(true)} className="hover:text-slate-700">
+                  <button onClick={() => setShowCc(true)} className="hover:text-slate-700 min-h-[44px] px-1 sm:min-h-0">
                     Cc
                   </button>
                 )}
                 {!showBcc && (
-                  <button onClick={() => setShowBcc(true)} className="hover:text-slate-700">
+                  <button onClick={() => setShowBcc(true)} className="hover:text-slate-700 min-h-[44px] px-1 sm:min-h-0">
                     Bcc
                   </button>
                 )}
@@ -488,7 +511,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             {/* Cc Line */}
             {showCc && (
               <div className="py-1.5 flex items-center gap-2">
-                <span className="text-slate-400 font-medium w-12">Cc:</span>
+                <label htmlFor="composer-cc" className="text-slate-400 font-medium w-12">Cc:</label>
                 <div className="flex-1 flex flex-wrap items-center gap-1.5">
                   {ccList.map((email, idx) => (
                     <span
@@ -499,13 +522,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('cc', idx)}
-                        className="hover:text-slate-900"
+                        aria-label={`Remove ${email}`}
+                        className="hover:text-slate-900 px-1 min-h-[44px] sm:min-h-0"
                       >
                         ×
                       </button>
                     </span>
                   ))}
                   <input
+                    id="composer-cc"
                     type="email"
                     value={ccInput}
                     onChange={(e) => setCcInput(e.target.value)}
@@ -528,7 +553,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             {/* Bcc Line */}
             {showBcc && (
               <div className="py-1.5 flex items-center gap-2">
-                <span className="text-slate-400 font-medium w-12">Bcc:</span>
+                <label htmlFor="composer-bcc" className="text-slate-400 font-medium w-12">Bcc:</label>
                 <div className="flex-1 flex flex-wrap items-center gap-1.5">
                   {bccList.map((email, idx) => (
                     <span
@@ -539,13 +564,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('bcc', idx)}
-                        className="hover:text-slate-900"
+                        aria-label={`Remove ${email}`}
+                        className="hover:text-slate-900 px-1 min-h-[44px] sm:min-h-0"
                       >
                         ×
                       </button>
                     </span>
                   ))}
                   <input
+                    id="composer-bcc"
                     type="email"
                     value={bccInput}
                     onChange={(e) => setBccInput(e.target.value)}
@@ -567,8 +594,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
             {/* Subject Line */}
             <div className="py-1.5 flex items-center gap-2">
-              <span className="text-slate-400 font-medium w-12">Subject:</span>
+              <label htmlFor="composer-subject" className="text-slate-400 font-medium w-12">Subject:</label>
               <input
+                id="composer-subject"
                 type="text"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
@@ -581,6 +609,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           {/* Email Body Area */}
           <div className="flex-1 p-4 flex flex-col overflow-hidden">
             <textarea
+              ref={bodyRef}
+              aria-label="Message"
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="Write your email message here..."
@@ -607,7 +637,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     <button
                       type="button"
                       onClick={() => removeAttachment(idx)}
-                      className="ml-1 text-slate-400 hover:text-red-500 font-bold"
+                      aria-label={`Remove attachment ${att.filename}`}
+                      className="ml-1 text-slate-400 hover:text-red-500 font-bold px-1 min-h-[44px] sm:min-h-0"
                     >
                       ×
                     </button>
@@ -627,12 +658,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           />
 
           {/* Bottom Action Bar */}
-          <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="px-3 sm:px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex flex-wrap items-center justify-between gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={handleSend}
                 disabled={isSending}
-                className="flex items-center gap-2 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs px-4 py-2 rounded-lg shadow-sm shadow-sky-600/20 transition-all disabled:opacity-50"
+                className="flex items-center gap-2 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs px-4 py-2 min-h-[44px] sm:min-h-0 rounded-lg shadow-sm shadow-sky-600/20 transition-all disabled:opacity-50"
               >
                 {isSending ? (
                   <>
@@ -650,8 +681,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-lg transition-colors"
+                className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-lg transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
                 title="Attach files"
+                aria-label="Attach files"
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -659,7 +691,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowTemplateModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors border border-sky-200/60 font-medium"
+                className="flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors border border-sky-200/60 font-medium"
                 title="Insert pre-written email templates"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-sky-600" />
@@ -672,7 +704,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   setSigForm(signature);
                   setShowSigModal(true);
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors border font-medium ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded-lg transition-colors border font-medium ${
                   signature.enabled
                     ? 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200/60'
                     : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
@@ -696,7 +728,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             )}
             <button
               onClick={handleDiscard}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
               title="Discard message"
               aria-label="Discard message"
             >
@@ -720,15 +752,22 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       {/* Signature Settings Modal */}
       {showSigModal && (
         <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div
+            ref={sigRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="signature-title"
+            className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-full overflow-y-auto"
+          >
             <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <PenTool className="w-4 h-4 text-sky-400" />
-                <span className="text-xs font-semibold">Corporate Email Signature</span>
+                <span id="signature-title" className="text-xs font-semibold">Corporate Email Signature</span>
               </div>
               <button
                 onClick={() => setShowSigModal(false)}
-                className="text-slate-400 hover:text-white"
+                aria-label="Close signature settings"
+                className="text-slate-400 hover:text-white min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -746,10 +785,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </label>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                  Full Name
-                </label>
-                <input
+                <label htmlFor="sig-name" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Full Name</label>
+                <input id="sig-name"
                   type="text"
                   value={sigForm.name}
                   onChange={(e) => setSigForm({ ...sigForm, name: e.target.value })}
@@ -759,10 +796,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                  Designation / Role
-                </label>
-                <input
+                <label htmlFor="sig-designation" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Designation / Role</label>
+                <input id="sig-designation"
                   type="text"
                   value={sigForm.designation}
                   onChange={(e) => setSigForm({ ...sigForm, designation: e.target.value })}
@@ -773,10 +808,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                    Phone Number
-                  </label>
-                  <input
+                  <label htmlFor="sig-phone" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Phone Number</label>
+                <input id="sig-phone"
                     type="text"
                     value={sigForm.phone}
                     onChange={(e) => setSigForm({ ...sigForm, phone: e.target.value })}
@@ -785,10 +818,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                    Company Website
-                  </label>
-                  <input
+                  <label htmlFor="sig-website" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Company Website</label>
+                <input id="sig-website"
                     type="text"
                     value={sigForm.website}
                     onChange={(e) => setSigForm({ ...sigForm, website: e.target.value })}
@@ -799,10 +830,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                  Confidentiality Disclaimer
-                </label>
-                <textarea
+                <label htmlFor="sig-disclaimer" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Confidentiality Disclaimer</label>
+                <textarea id="sig-disclaimer"
                   rows={2}
                   value={sigForm.customText}
                   onChange={(e) => setSigForm({ ...sigForm, customText: e.target.value })}

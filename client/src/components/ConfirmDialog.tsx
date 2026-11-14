@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
+import { useDialog } from '../hooks/useDialog.js';
 
 export interface ConfirmRequest {
   title: string;
@@ -19,16 +20,9 @@ interface ConfirmDialogProps {
 
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }) => {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!request) return;
-    cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [request, onClose]);
+  useDialog(dialogRef, { open: !!request, onEscape: onClose, initialFocus: cancelRef });
 
   if (!request) return null;
 
@@ -39,7 +33,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
       role="presentation"
     >
       <div
-        role="alertdialog"
+        ref={dialogRef}
+        role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"

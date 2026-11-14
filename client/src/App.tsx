@@ -6,6 +6,8 @@ import { ComposerModal, type ComposerReplyMeta } from './components/ComposerModa
 import { planReply } from './services/reply.js';
 import { ConnectModal } from './components/ConnectModal.js';
 import { ConfirmDialog, type ConfirmRequest } from './components/ConfirmDialog.js';
+import { friendlyError } from './services/errors.js';
+import { useDialog } from './hooks/useDialog.js';
 import {
   api,
   getStoredToken,
@@ -90,6 +92,8 @@ export const App: React.FC = () => {
   // Mobile responsive state
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [mobileView, setMobileView] = useState<'list' | 'message'>('list');
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useDialog(drawerRef, { open: showMobileSidebar, onEscape: () => setShowMobileSidebar(false) });
 
   // PWA & Browser Notifications State
   const [isInstalled, setIsInstalled] = useState(() => isPwaInstalled());
@@ -135,9 +139,11 @@ export const App: React.FC = () => {
     }
   };
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), type === 'error' ? 7000 : 3500);
   };
 
   // 1. Initial Authentication Check (< 300ms Silent Auto-Login)
@@ -209,7 +215,7 @@ export const App: React.FC = () => {
         }
       }
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to load folders', 'error');
+      showToast(friendlyError(err, 'The folder list could not be loaded. Try again.'), 'error');
     }
   }, [account]);
 
@@ -233,7 +239,7 @@ export const App: React.FC = () => {
         setTotalMessages(res.total);
       } catch (err: unknown) {
         if (!silent && seq === loadSeq.current) {
-          showToast(err instanceof Error ? err.message : 'Failed to load messages', 'error');
+          showToast(friendlyError(err, 'The messages could not be loaded. Try again.'), 'error');
         }
       } finally {
         if (!silent && seq === loadSeq.current) setIsMessagesLoading(false);
@@ -298,7 +304,7 @@ export const App: React.FC = () => {
       loadFolders();
     } catch (err: unknown) {
       if (seq === detailSeq.current) {
-        showToast(err instanceof Error ? err.message : 'Failed to load email content', 'error');
+        showToast(friendlyError(err, 'This message could not be opened. Try again.'), 'error');
       }
     } finally {
       if (seq === detailSeq.current) setIsDetailLoading(false);
@@ -313,7 +319,7 @@ export const App: React.FC = () => {
       const detail = await api.getMessageDetail(selectedFolder, uid, { showImages: true });
       if (selectedMessage?.uid === uid) setSelectedMessage(detail);
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Could not load images', 'error');
+      showToast(friendlyError(err, 'The images could not be loaded. Try again.'), 'error');
     } finally {
       setIsLoadingImages(false);
     }
@@ -343,7 +349,7 @@ export const App: React.FC = () => {
       await api.toggleFlag(selectedFolder, uid, flag, newValue);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to update flag', 'error');
+      showToast(friendlyError(err, 'The change could not be saved. Try again.'), 'error');
       // Revert on failure
       loadMessages();
     }
@@ -355,6 +361,7 @@ export const App: React.FC = () => {
     if (selectedUid !== null && uids.includes(selectedUid)) {
       setSelectedUid(null);
       setSelectedMessage(null);
+      setMobileView('list'); // the message is gone: on a phone, go back to the list
     }
   };
 
@@ -368,7 +375,7 @@ export const App: React.FC = () => {
       clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to delete message', 'error');
+      showToast(friendlyError(err, 'The message could not be deleted. Try again.'), 'error');
       loadMessages(true);
     }
   };
@@ -396,7 +403,7 @@ export const App: React.FC = () => {
       clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to restore message', 'error');
+      showToast(friendlyError(err, 'The message could not be restored. Try again.'), 'error');
       loadMessages(true);
     }
   };
@@ -410,7 +417,7 @@ export const App: React.FC = () => {
       clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to move message', 'error');
+      showToast(friendlyError(err, 'The message could not be moved. Try again.'), 'error');
       loadMessages(true);
     }
   };
@@ -430,7 +437,7 @@ export const App: React.FC = () => {
           setSelectedUid(null);
           setSelectedMessage(null);
         } catch (err: unknown) {
-          showToast(err instanceof Error ? err.message : 'Failed to empty folder', 'error');
+          showToast(friendlyError(err, 'The folder could not be emptied. Try again.'), 'error');
         } finally {
           loadMessages();
           loadFolders();
@@ -450,7 +457,7 @@ export const App: React.FC = () => {
       clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to move message', 'error');
+      showToast(friendlyError(err, 'The message could not be moved. Try again.'), 'error');
       loadMessages(true);
     }
   };
@@ -477,36 +484,44 @@ export const App: React.FC = () => {
 
   const runBatch = async (uids: number[], op: (uid: number) => Promise<{ success?: boolean } | unknown>) => {
     const done: number[] = [];
+    const failed: number[] = [];
     const errors: string[] = [];
     for (const uid of uids) {
       try {
         const r = (await op(uid)) as { success?: boolean } | undefined;
-        if (r && r.success === false) throw new Error('not done');
+        if (r && r.success === false) throw new Error('The server did not do it.');
         done.push(uid);
       } catch (err: unknown) {
-        errors.push(err instanceof Error ? err.message : 'failed');
+        failed.push(uid);
+        errors.push(friendlyError(err, 'Try again in a moment.'));
       }
     }
-    return { done, errors };
+    return { done, failed, errors };
   };
 
-  const finishBatch = (past: string, total: number, done: number[], errors: string[], remove = true) => {
+  // Says exactly what happened: all done, some done (the failed ones stay selected to retry), or none.
+  const finishBatch = (
+    past: string,
+    total: number,
+    r: { done: number[]; failed: number[]; errors: string[] },
+    remove = true
+  ) => {
     const n = (c: number) => `${c} message${c === 1 ? '' : 's'}`;
-    if (errors.length === 0) showToast(`${past} ${n(done.length)}`);
-    else if (done.length === 0) showToast(`Could not do it for ${n(total)}: ${errors[0]}`, 'error');
-    else showToast(`${past} ${done.length} of ${n(total)}. ${errors.length} failed: ${errors[0]}`, 'error');
-    setSelectedUids(new Set());
+    if (r.failed.length === 0) showToast(`${past}: ${n(r.done.length)}.`);
+    else if (r.done.length === 0) showToast(`Nothing was changed for ${n(total)}. ${r.errors[0]}`, 'error');
+    else showToast(`${past}: ${r.done.length} of ${n(total)}. ${r.failed.length} could not be done and stay selected. ${r.errors[0]}`, 'error');
+    setSelectedUids(new Set(r.failed));
     if (remove) {
-      setMessages((prev) => prev.filter((m) => !done.includes(m.uid)));
-      clearSelectionIf(done);
+      setMessages((prev) => prev.filter((m) => !r.done.includes(m.uid)));
+      clearSelectionIf(r.done);
     }
     loadMessages();
     loadFolders();
   };
 
   const performBatchDelete = async (uids: number[], permanent: boolean) => {
-    const { done, errors } = await runBatch(uids, (uid) => api.deleteMessage(selectedFolder, uid));
-    finishBatch(permanent ? 'Permanently deleted' : 'Moved to Trash:', uids.length, done, errors);
+    const r = await runBatch(uids, (uid) => api.deleteMessage(selectedFolder, uid));
+    finishBatch(permanent ? 'Deleted forever' : 'Moved to Trash', uids.length, r);
   };
 
   const handleBatchDelete = () => {
@@ -527,9 +542,9 @@ export const App: React.FC = () => {
 
   const handleBatchMarkRead = async (isSeen: boolean) => {
     const uids = Array.from(selectedUids);
-    const { done, errors } = await runBatch(uids, (uid) => api.toggleFlag(selectedFolder, uid, 'isSeen', isSeen));
-    finishBatch(isSeen ? 'Marked as read:' : 'Marked as unread:', uids.length, done, errors, false);
-    setMessages((prev) => prev.map((m) => (done.includes(m.uid) ? { ...m, isSeen } : m)));
+    const r = await runBatch(uids, (uid) => api.toggleFlag(selectedFolder, uid, 'isSeen', isSeen));
+    finishBatch(isSeen ? 'Marked as read' : 'Marked as unread', uids.length, r, false);
+    setMessages((prev) => prev.map((m) => (r.done.includes(m.uid) ? { ...m, isSeen } : m)));
   };
 
   const getJunkFolderPath = () => {
@@ -553,7 +568,7 @@ export const App: React.FC = () => {
       clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to mark as spam', 'error');
+      showToast(friendlyError(err, 'The message could not be moved to Junk. Try again.'), 'error');
       loadMessages(true);
     }
   };
@@ -561,8 +576,22 @@ export const App: React.FC = () => {
   const handleBatchSpam = async () => {
     const uids = Array.from(selectedUids);
     const junkFolder = getJunkFolderPath();
-    const { done, errors } = await runBatch(uids, (uid) => api.markSpam(selectedFolder, uid, junkFolder));
-    finishBatch('Moved to Junk:', uids.length, done, errors);
+    const r = await runBatch(uids, (uid) => api.markSpam(selectedFolder, uid, junkFolder));
+    finishBatch('Moved to Junk', uids.length, r);
+  };
+
+  const handleBatchRestore = async () => {
+    const uids = Array.from(selectedUids);
+    if (uids.length === 0) return;
+    const r = await runBatch(uids, (uid) => api.restoreMessage(selectedFolder, uid));
+    finishBatch('Restored to Inbox', uids.length, r);
+  };
+
+  const handleBatchNotSpam = async () => {
+    const uids = Array.from(selectedUids);
+    if (uids.length === 0) return;
+    const r = await runBatch(uids, (uid) => api.notSpam(selectedFolder, uid));
+    finishBatch('Moved back to Inbox', uids.length, r);
   };
 
   // 9. Reply & Forward Composer Hooks
@@ -659,7 +688,7 @@ export const App: React.FC = () => {
       setSavedAccounts(getStoredAccounts());
       showToast(`Switched to ${targetEmail}`);
     } catch {
-      showToast(`Could not reconnect to ${targetEmail}`, 'error');
+      showToast(`Couldn't sign in to ${targetEmail}. Check your connection and try again.`, 'error');
     } finally {
       setIsMessagesLoading(false);
     }
@@ -756,7 +785,10 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans">
+    <div
+      className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans"
+      style={{ height: '100dvh' }}
+    >
       {!account ? (
         <ConnectModal
           onConnected={handleConnected}
@@ -777,10 +809,14 @@ export const App: React.FC = () => {
 
           {/* Left Pane: Mailbox Navigation & Multi-Account Switcher */}
           <div
+            ref={drawerRef}
+            role={showMobileSidebar ? 'dialog' : undefined}
+            aria-modal={showMobileSidebar ? true : undefined}
+            aria-label={showMobileSidebar ? 'Folders and accounts' : undefined}
             className={`
-              fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-200 ease-out shadow-2xl lg:shadow-none
+              fixed inset-y-0 left-0 z-50 w-64 transform transition-[transform,visibility] duration-200 ease-out shadow-2xl lg:shadow-none
               lg:relative lg:translate-x-0 lg:z-auto
-              ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full'}
+              ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full max-lg:invisible'}
             `}
           >
             <Sidebar
@@ -805,6 +841,7 @@ export const App: React.FC = () => {
             />
           </div>
 
+          <main className="flex-1 flex min-w-0 overflow-hidden">
           {/* Middle Pane: Message List */}
           <div
             className={`
@@ -839,6 +876,10 @@ export const App: React.FC = () => {
               onBatchDelete={handleBatchDelete}
               onBatchMarkRead={handleBatchMarkRead}
               onBatchSpam={handleBatchSpam}
+              onBatchRestore={handleBatchRestore}
+              onBatchNotSpam={handleBatchNotSpam}
+              onCompose={() => openComposer({})}
+              isVisible={mobileView === 'list'}
               page={page}
               limit={50}
               onPageChange={setPage}
@@ -873,6 +914,7 @@ export const App: React.FC = () => {
               onBackToList={() => setMobileView('list')}
             />
           </div>
+          </main>
         </div>
       )}
 
@@ -921,10 +963,17 @@ export const App: React.FC = () => {
 
       <ConfirmDialog request={confirmRequest} onClose={() => setConfirmRequest(null)} />
 
-      {/* Toast Notification */}
+      {/* Toast Notification: the live regions are always present so screen readers announce changes */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {toast && toast.type === 'success' ? toast.message : ''}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="true">
+        {toast && toast.type === 'error' ? toast.message : ''}
+      </div>
       {toast && (
         <div
-          className={`fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold z-50 flex items-center gap-2 border transition-all animate-bounce ${
+          aria-hidden="true"
+          className={`fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 w-max max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold z-[70] flex items-center gap-2 border transition-all animate-bounce motion-reduce:animate-none ${
             toast.type === 'error'
               ? 'bg-red-950 text-red-200 border-red-800'
               : 'bg-slate-900 text-white border-slate-700'
