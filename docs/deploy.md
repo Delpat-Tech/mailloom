@@ -92,7 +92,7 @@ refuses to start, and lists every problem at once, if a required value is missin
 | Variable | Set it to | How to get it / what it does |
 |---|---|---|
 | `NODE_ENV` | `production` | |
-| `HOST` | `127.0.0.1` | Listen on this machine only. Nginx is the only way in. (If left unset the server listens on every address.) |
+| `HOST` | `127.0.0.1` | Listen on this machine only. Nginx is the only way in. (In production, if left unset the server listens on 127.0.0.1 only; it listens on every address only when `HOST` is set to `0.0.0.0` on purpose.) |
 | `PORT` | `3000` | Any free port; must match the Nginx `proxy_pass`. |
 | `SESSION_SECRET` | 64 hex characters | **Required.** `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Encrypts the mail passwords kept in sessions, agent keys and push devices. Never reuse a value from anywhere else. |
 | `SESSION_DB_PATH` | `/var/lib/mailloom/sessions.db` | The sqlite file. Folder must be `chmod 700`, owned by `mailloom`. If empty, sessions live in memory and everyone is signed out on every restart. |
@@ -122,6 +122,10 @@ Create `/etc/nginx/sites-available/mailloom.conf` (or the place iRedMail keeps i
 `sites-enabled`. Replace the name and certificate paths.
 
 ```nginx
+# Sign-in attempts: 5 per minute per visitor address, small bursts allowed. (Put this line in the http block,
+# e.g. a file in /etc/nginx/conf.d/.)
+limit_req_zone $binary_remote_addr zone=mailloom_login:10m rate=5r/m;
+
 server {
     listen 80;
     server_name webmail.delpat.in;
@@ -136,6 +140,14 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/webmail.delpat.in/privkey.pem;
     add_header Strict-Transport-Security "max-age=31536000" always;
 
+    # Security headers for the app shell. The server sets the same ones itself (so it is safe without Nginx);
+    # repeating them here also covers Nginx error pages. Remember: add_header in a location block replaces
+    # the ones from the server block, so repeat them there if you add your own.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'" always;
+
     # Largest request body. Must be at least MAIL_MAX_MESSAGE_BYTES plus a little; 16m covers the 10 MB default.
     client_max_body_size 16m;
 
@@ -144,7 +156,19 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;                       # cookie and origin checks use it
         proxy_set_header X-Forwarded-For $remote_addr;     # the real visitor; not appended to anything a client sent
+        proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;        # sign-in over plain http is refused
+    }
+
+    location = /api/auth/connect {
+        limit_req zone=mailloom_login burst=5 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     # Sending mail with big attachments is slow: allow longer here only.
@@ -153,6 +177,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 180s;
         proxy_send_timeout 180s;
