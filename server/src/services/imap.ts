@@ -58,7 +58,8 @@ export function createImapClient(
     // Certificate checks are on unless the server config explicitly turns them off for local testing.
     tls: {
       rejectUnauthorized: config.tls?.rejectUnauthorized ?? true,
-      ...(config.tls?.servername ? { servername: config.tls.servername } : {})
+      ...(config.tls?.servername ? { servername: config.tls.servername } : {}),
+      ...(config.tls?.ca ? { ca: config.tls.ca } : {})
     },
     connectionTimeout: extra.connectionTimeout ?? 15000,
     greetingTimeout: extra.greetingTimeout ?? 10000,

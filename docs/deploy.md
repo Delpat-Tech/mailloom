@@ -100,7 +100,8 @@ refuses to start, and lists every problem at once, if a required value is missin
 | `MAIL_IMAP_HOST`, `MAIL_IMAP_PORT`, `MAIL_IMAP_SECURE` | `127.0.0.1`, `993`, `true` | **Required** host. Dovecot on this machine. |
 | `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT` | `127.0.0.1`, `587` | **Required** host. Postfix submission (STARTTLS). Use 465 for implicit TLS. SMTP without encryption is refused. |
 | `MAIL_TLS_SERVERNAME` | the certificate name of the mail host, e.g. `mail.delpat.in` | Mailloom connects to 127.0.0.1, but the certificate Dovecot and Postfix show is for the mail host name. This is the name the server checks it against. Find it with `openssl s_client -connect 127.0.0.1:993 -servername mail.delpat.in </dev/null 2>/dev/null \| openssl x509 -noout -subject -ext subjectAltName`. Leave `MAIL_TLS_REJECT_UNAUTHORIZED=true`; never switch certificate checks off on a real server. |
-| `MAIL_DOMAINS` | `delpat.in,houseofhumanity.in,ydco.in` | **Required.** Only these domains can sign in. |
+| `MAIL_TLS_CA_FILE` | `/etc/mailloom/mail-ca.pem` | Optional. A PEM file with the certificate (or CA) to trust for the mail server, read once at start-up; Mailloom refuses to start if it is unreadable or holds no certificate. Checks stay on, and the name is still checked against `MAIL_TLS_SERVERNAME`. See "Self-signed mail certificate" below. |
+| `MAIL_DOMAINS` | `delpat.in,houseofhumanity.in` | **Required.** Only these domains can sign in. Only domains whose mailboxes live on this iRedMail server belong here. |
 | `MAIL_MAX_MESSAGE_BYTES` | see below | Largest attachment total of one outgoing mail (raw bytes). Default 10485760 (10 MB). |
 | `COOKIE_SECURE` | `true` | Always. Sign-in cookies become `__Host-` Secure cookies and sign-in over plain http is refused. |
 | `TRUST_PROXY` | `127.0.0.1` | The Nginx address. Gives the server the real visitor address (sign-in throttling, agent API check). Never `true`, never a hop count when the agent API is on. |
@@ -110,6 +111,20 @@ refuses to start, and lists every problem at once, if a required value is missin
 | `AGENT_SENDS_PER_HOUR`, `AGENT_MAX_RECIPIENTS`, `AGENT_MAX_TEXT_CHARS`, `AGENT_MAX_ATTACHMENT_BYTES` | defaults | Optional guard rails, see `docs/agent-api.md`. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | key pair + `mailto:it@delpat.in` | Phone/desktop notifications while the app is closed. All three or none. Generate the pair once, on your computer, in the repo: `pnpm --filter mailloom-server exec web-push generate-vapid-keys`. Keep the private key secret. |
 | `DEMO_MODE` | `0` | Leave off on the real server. |
+
+**Self-signed mail certificate (iRedMail default).** Run `openssl s_client -connect 127.0.0.1:993 -servername mail.delpat.in </dev/null 2>/dev/null | openssl x509 -noout -issuer -subject`. If issuer and subject are the same (iRedMail's own certificate, for example CN `mail.houseofhumanity.in`), Mailloom rejects it, correctly. Two fixes:
+
+1. Preferred: point Dovecot (`ssl_cert`, `ssl_key`) and Postfix (`smtpd_tls_cert_file`, `smtpd_tls_key_file`) at the Let's Encrypt certificate the box already has for `mail.delpat.in`, reload both, and set `MAIL_TLS_SERVERNAME=mail.delpat.in`. No `MAIL_TLS_CA_FILE` is needed.
+2. Otherwise trust that one certificate. Save it (as root) and let the `mailloom` user read it:
+
+   ```
+   sudo mkdir -p /etc/mailloom
+   openssl s_client -connect 127.0.0.1:993 </dev/null 2>/dev/null | openssl x509 | sudo tee /etc/mailloom/mail-ca.pem >/dev/null
+   sudo chown root:mailloom /etc/mailloom/mail-ca.pem && sudo chmod 640 /etc/mailloom/mail-ca.pem
+   ```
+
+   Then set `MAIL_TLS_CA_FILE=/etc/mailloom/mail-ca.pem` and `MAIL_TLS_SERVERNAME` to the certificate's CN (the `subject=` line above) and restart. Confirm Postfix on 587 shows the same certificate (`openssl s_client -starttls smtp -connect 127.0.0.1:587`); if it differs, save that one too into the same file. Certificate checks stay on. If iRedMail renews its certificate, repeat the save.
+
 
 **`MAIL_MAX_MESSAGE_BYTES` and Postfix.** Attachments grow by about a third when mail is encoded. Postfix refuses a
 message bigger than `message_size_limit`. Look it up (`postconf message_size_limit`; iRedMail often sets 15728640,
@@ -278,5 +293,5 @@ mail or admin passwords were ever kept in the old files, change those in iRedAdm
 - "SESSION_SECRET is not set": pm2 is not reading the file; check `DOTENV_CONFIG_PATH` and that `mailloom` can read it.
 - Sign-in says it needs https: Nginx is not sending `X-Forwarded-Proto`, or `TRUST_PROXY` is not `127.0.0.1`.
 - Sign-in works but is signed out on the next click: `Host` header not forwarded, or `COOKIE_SECURE` not `true`.
-- Certificate errors to the mail server: fix `MAIL_TLS_SERVERNAME`; do not turn checks off.
+- Certificate errors to the mail server: fix `MAIL_TLS_SERVERNAME`, or trust the server's self-signed certificate with `MAIL_TLS_CA_FILE`; do not turn checks off.
 - Stuck: roll back (section 8).
