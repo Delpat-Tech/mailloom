@@ -66,3 +66,33 @@ export interface LabelWithCounts {
 export function listLabelsWithCounts(): Promise<LabelWithCounts[]> {
   return request<LabelWithCounts[]>('/labels');
 }
+
+export type BatchAction = 'read' | 'unread' | 'flag' | 'unflag' | 'move' | 'delete' | 'archive' | 'spam';
+
+export interface BatchResponse {
+  success: boolean;
+  affected: number;
+  movedTo?: string;
+  permanent?: boolean;
+}
+
+/**
+ * One action on many messages of a folder (or the whole folder with all: true), as one IMAP command.
+ * `move` needs targetFolder. Up to 5000 uids per call.
+ */
+export function batchAction(
+  folderPath: string,
+  action: BatchAction,
+  selection: { uids: number[] } | { all: true },
+  options: { targetFolder?: string; junkFolder?: string } = {}
+): Promise<BatchResponse> {
+  return request<BatchResponse>(`/mailboxes/${encodeURIComponent(folderPath)}/batch`, {
+    method: 'POST',
+    body: JSON.stringify({ action, ...selection, ...options })
+  });
+}
+
+/** Marks every message of a folder read; `affected` is how many were unread. */
+export function markAllRead(folderPath: string): Promise<{ success: boolean; affected: number }> {
+  return request<{ success: boolean; affected: number }>(`/mailboxes/${encodeURIComponent(folderPath)}/mark-all-read`, { method: 'POST' });
+}

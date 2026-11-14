@@ -20,6 +20,7 @@ import {
   buildSearchCriteria,
   type ListFilter
 } from '../services/imap.js';
+import { BATCH_ACTIONS, BatchError, MAX_BATCH_UIDS, markAllRead, runBatch, type BatchAction, type BatchSelection } from '../services/batch.js';
 import { enrichList, searchAllFolders } from '../services/organise.js';
 import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
@@ -507,6 +508,54 @@ export async function mailRoutes(
       }
     }
   );
+
+  // 11e. Batch actions: many messages (or the whole folder) in one request, one IMAP command per action.
+  // Body: { action, uids?: number[], all?: true, targetFolder?, junkFolder? }.
+  fastify.post('/api/mailboxes/:path/batch', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const config = req.accountConfig!;
+    const { path } = req.params as { path: string };
+    const body = (req.body ?? {}) as { action?: unknown; uids?: unknown; all?: unknown; targetFolder?: unknown; junkFolder?: unknown };
+    const invalid = (error: string) => reply.status(400).send({ code: 'INVALID_INPUT', error });
+    if (typeof body.action !== 'string' || !(BATCH_ACTIONS as readonly string[]).includes(body.action)) {
+      return invalid(`action must be one of: ${BATCH_ACTIONS.join(', ')}`);
+    }
+    const wantsAll = body.all === true;
+    if (wantsAll === (body.uids !== undefined)) return invalid('Give either uids or all: true.');
+    let selection: BatchSelection;
+    if (wantsAll) {
+      selection = { all: true };
+    } else {
+      const u = body.uids;
+      if (!Array.isArray(u) || u.length === 0 || u.length > MAX_BATCH_UIDS || !u.every((x) => Number.isInteger(x) && x > 0 && x < 2 ** 32)) {
+        return invalid(`uids must be 1 to ${MAX_BATCH_UIDS} message ids.`);
+      }
+      selection = { uids: [...new Set(u as number[])] };
+    }
+    if (body.action === 'move' && (typeof body.targetFolder !== 'string' || !body.targetFolder)) return invalid('Give a targetFolder.');
+    if (config.isDemo) return reply.status(400).send({ code: 'DEMO_ACCOUNT', error: 'This is not available in the demo.' });
+    try {
+      const r = await runBatch(config, path, body.action as BatchAction, selection, {
+        targetFolder: typeof body.targetFolder === 'string' ? body.targetFolder : undefined,
+        junkFolder: typeof body.junkFolder === 'string' ? body.junkFolder : undefined
+      });
+      return { success: true, ...r };
+    } catch (err) {
+      if (err instanceof BatchError) return reply.status(err.status).send({ code: err.code, error: err.message });
+      return failMail(req, reply, err, 'Could not complete that action');
+    }
+  });
+
+  // 11f. Mark every message of a folder as read.
+  fastify.post('/api/mailboxes/:path/mark-all-read', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const config = req.accountConfig!;
+    const { path } = req.params as { path: string };
+    if (config.isDemo) return reply.status(400).send({ code: 'DEMO_ACCOUNT', error: 'This is not available in the demo.' });
+    try {
+      return { success: true, affected: await markAllRead(config, path) };
+    } catch (err) {
+      return failMail(req, reply, err, 'Could not mark the messages as read');
+    }
+  });
 
   // 11d. Drafts: save (create or replace) and delete
   fastify.post('/api/drafts', { onRequest: [requireAuth], bodyLimit: draftBodyLimit }, async (req: AuthenticatedRequest, reply) => {
