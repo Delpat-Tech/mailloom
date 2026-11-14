@@ -123,7 +123,13 @@ refuses to start, and lists every problem at once, if a required value is missin
    sudo chown root:mailloom /etc/mailloom/mail-ca.pem && sudo chmod 640 /etc/mailloom/mail-ca.pem
    ```
 
-   Then set `MAIL_TLS_CA_FILE=/etc/mailloom/mail-ca.pem` and `MAIL_TLS_SERVERNAME` to the certificate's CN (the `subject=` line above) and restart. Confirm Postfix on 587 shows the same certificate (`openssl s_client -starttls smtp -connect 127.0.0.1:587`); if it differs, save that one too into the same file. Certificate checks stay on. If iRedMail renews its certificate, repeat the save.
+   Then set `MAIL_TLS_CA_FILE=/etc/mailloom/mail-ca.pem` and restart. Set `MAIL_TLS_SERVERNAME` to a DNS name from the certificate's `subjectAltName` (see `openssl x509 -noout -ext subjectAltName`). If the certificate has any, Node ignores the CN, so the CN is only right when the certificate has no subjectAltName at all. Postfix on 587 may show a different certificate; check, and if it differs, append it to the same file:
+
+   ```
+   openssl s_client -starttls smtp -connect 127.0.0.1:587 </dev/null 2>/dev/null | openssl x509 | sudo tee -a /etc/mailloom/mail-ca.pem >/dev/null
+   ```
+
+   Certificate checks stay on. If iRedMail renews its certificate, repeat the save.
 
 
 **`MAIL_MAX_MESSAGE_BYTES` and Postfix.** Attachments grow by about a third when mail is encoded. Postfix refuses a

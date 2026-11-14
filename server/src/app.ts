@@ -186,6 +186,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   if (!config.mail.tls.rejectUnauthorized) {
     fastify.log.warn('MAIL_TLS_REJECT_UNAUTHORIZED=false: mail server certificates are NOT checked (local testing only).');
+    if (config.mail.tls.ca) fastify.log.warn('MAIL_TLS_CA_FILE is ignored because certificate checks are switched off.');
   }
 
   if (config.mail.smtpAllowPlain) {

@@ -4,6 +4,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -140,12 +141,21 @@ function readCaFile(env: Env): string | undefined {
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    throw new ConfigError(`MAIL_TLS_CA_FILE (${path}) cannot be read: ${(err as Error).message}`);
+    throw new ConfigError(`MAIL_TLS_CA_FILE (${path}) cannot be read (${(err as NodeJS.ErrnoException).code ?? 'error'}).`);
   }
-  if (!/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/.test(text)) {
+  // Keep only certificate blocks (a private key in the same file is never passed on) and refuse corrupt ones.
+  const blocks = text.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+  if (blocks.length === 0) {
     throw new ConfigError(`MAIL_TLS_CA_FILE (${path}) does not contain a PEM certificate (-----BEGIN CERTIFICATE-----).`);
   }
-  return text;
+  for (const block of blocks) {
+    try {
+      new X509Certificate(block);
+    } catch {
+      throw new ConfigError(`MAIL_TLS_CA_FILE (${path}) contains a certificate that cannot be parsed.`);
+    }
+  }
+  return blocks.join('\n') + '\n';
 }
 
 export function loadConfig(env: Env): AppConfig {
