@@ -234,23 +234,45 @@ describe('empty views say what would appear there', () => {
 });
 
 describe('one click opens a row', () => {
-  it('opens the pressed row even if its button was redrawn between mouse down and up', () => {
+  it('opens a row that was not hovered, with the pointer arriving just before the click', () => {
     const onSelectMessage = vi.fn();
     list({ onSelectMessage });
     const btn = screen.getAllByRole('button', { name: /Subject 1/ })[0];
+    fireEvent.mouseEnter(btn);
+    fireEvent.pointerDown(btn, { pointerType: 'mouse', button: 0 });
     fireEvent.mouseDown(btn);
-    // The click lands on the list, not on the (replaced) button.
+    fireEvent.pointerUp(btn, { pointerType: 'mouse', button: 0 });
+    fireEvent.mouseUp(btn);
+    // The browser dropped the click: the release alone has opened it.
+    expect(onSelectMessage).toHaveBeenCalledWith(1);
+    fireEvent.click(btn); // a click that does arrive does not open it twice
+    expect(onSelectMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the pressed row even if its button was redrawn before the click', () => {
+    const onSelectMessage = vi.fn();
+    list({ onSelectMessage });
+    const btn = screen.getAllByRole('button', { name: /Subject 1/ })[0];
+    fireEvent.pointerDown(btn, { pointerType: 'mouse', button: 0 });
     fireEvent.click(screen.getByRole('list', { name: 'Inbox messages' }));
     expect(onSelectMessage).toHaveBeenCalledWith(1);
   });
 
-  it('a plain click opens it once', () => {
+  it('a plain keyboard or script click opens it once', () => {
     const onSelectMessage = vi.fn();
     list({ onSelectMessage });
-    const btn = screen.getAllByRole('button', { name: /Subject 2/ })[0];
-    fireEvent.mouseDown(btn);
-    fireEvent.click(btn);
+    fireEvent.click(screen.getAllByRole('button', { name: /Subject 2/ })[0]);
     expect(onSelectMessage).toHaveBeenCalledTimes(1);
     expect(onSelectMessage).toHaveBeenCalledWith(2);
+  });
+
+  it('row hover is pure CSS: no mouse enter or over handlers on rows', () => {
+    list();
+    const btn = screen.getAllByRole('button', { name: /Subject 1/ })[0];
+    const before = btn.outerHTML;
+    fireEvent.mouseEnter(btn);
+    fireEvent.mouseOver(btn);
+    fireEvent.mouseLeave(btn);
+    expect(btn.outerHTML).toBe(before);
   });
 });

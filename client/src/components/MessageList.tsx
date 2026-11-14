@@ -437,6 +437,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   const [searchOpen, setSearchOpen] = useState(false);
   const sentinelRef = useRef<HTMLLIElement>(null);
   const downUid = useRef<number | null>(null);
+  const lastOpen = useRef<{ uid: number; t: number } | null>(null);
   // The Search tab and the "/" key ask for the search box (open on a phone, then focus).
   useEffect(() => {
     const open = () => {
@@ -535,6 +536,9 @@ export const MessageList: React.FC<MessageListProps> = ({
     () => ({
       check: (uid, e) => latest.current.onToggleSelectUid(uid, e),
       open: (uid) => {
+        const last = lastOpen.current;
+        if (last && last.uid === uid && Date.now() - last.t < 400) return; // pointer-up and click for one press
+        lastOpen.current = { uid, t: Date.now() };
         setActiveUid(uid);
         latest.current.onSelectMessage(uid);
       },
@@ -893,13 +897,21 @@ export const MessageList: React.FC<MessageListProps> = ({
           ref={scrollerRef}
           aria-label={`${folderName} messages`}
           onKeyDown={onRowKeyDown}
-          onMouseDown={(e) => {
+          onPointerDown={(e) => {
             const el = (e.target as HTMLElement).closest('[data-row-open]');
-            downUid.current = el ? Number(el.getAttribute('data-row-open')) : null;
+            downUid.current = el && e.pointerType === 'mouse' && e.button === 0 ? Number(el.getAttribute('data-row-open')) : null;
+          }}
+          onPointerUp={(e) => {
+            // A mouse press and release on the same row opens it, even when the browser drops the click
+            // (the row was redrawn or the pointer had only just arrived). The real click, if it comes, is ignored.
+            const t = e.target as HTMLElement;
+            const row = t.closest('[data-row-open]');
+            const uid = row ? Number(row.getAttribute('data-row-open')) : null;
+            if (downUid.current !== null && uid === downUid.current && e.pointerType === 'mouse') ctl.open(uid);
+            downUid.current = null;
           }}
           onClick={(e) => {
-            // If the row's button was redrawn between mouse down and up (the list just refreshed),
-            // the click lands on the list instead: it still opens the row that was pressed.
+            // The click landed on the list itself (the pressed button had been replaced): open the pressed row.
             const t = e.target as HTMLElement;
             if (downUid.current !== null && !t.closest('button')) ctl.open(downUid.current);
             downUid.current = null;

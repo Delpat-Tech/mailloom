@@ -1,3 +1,4 @@
+import { measureMailHeight } from '../services/frameHeight.js';
 import { AnchoredPanel } from './AnchoredPanel.js';
 import { Presence } from './Presence.js';
 import { realUid } from '../services/uidKey.js';
@@ -315,23 +316,8 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
     const iframe = iframeRef.current;
     const doc = iframe?.contentDocument;
     if (!iframe || !doc?.documentElement) return;
-    // The height of the content itself (the bottom of its last element), never the frame's own height
-    // and never the window's: a short mail leaves no empty area, and the reader has one scroll.
-    const body = doc.body;
-    const view = doc.defaultView;
-    let h = doc.documentElement.offsetHeight;
-    if (body && view) {
-      let bottom = 0;
-      for (const el of Array.from(body.children)) {
-        const rect = el.getBoundingClientRect();
-        if (rect.height === 0 && rect.bottom === 0) continue;
-        bottom = Math.max(bottom, rect.bottom + (parseFloat(view.getComputedStyle(el).marginBottom) || 0));
-      }
-      if (bottom === 0) bottom = body.getBoundingClientRect().bottom;
-      const cs = view.getComputedStyle(body);
-      const measured = bottom + view.scrollY + (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
-      if (measured > 0) h = measured;
-    }
+    // The height of the content itself (see measureMailHeight), never the frame's own height.
+    const h = measureMailHeight(doc) || doc.documentElement.offsetHeight;
     iframe.style.height = `${Math.ceil(h)}px`;
   }, []);
 
