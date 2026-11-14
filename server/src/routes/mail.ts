@@ -1,6 +1,6 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { SendEmailPayload } from '../types.js';
-import { requireAuth } from './auth.js';
+import { endSession, requireAuth, sendSessionExpired } from './auth.js';
 import { demoMailService } from '../services/demo-mail.js';
 import {
   getLiveMailboxes,
@@ -10,23 +10,44 @@ import {
   moveLiveMessage,
   deleteLiveMessage,
   markLiveMessageSpam,
-  streamLiveAttachment
+  streamLiveAttachment,
+  isImapAuthError
 } from '../services/imap.js';
 import { sendLiveEmail } from '../services/smtp.js';
 
 type AuthenticatedRequest = FastifyRequest;
 
+/**
+ * Answers a failed mail operation. If the mail server refused the session's stored credentials,
+ * the session is ended and the browser gets 401 SESSION_EXPIRED. Otherwise the client only
+ * sees a fixed plain message; the technical reason goes to the server log (error code only,
+ * never message content, subjects or addresses).
+ */
+export async function failMail(req: FastifyRequest, reply: FastifyReply, err: unknown, message: string) {
+  if (isImapAuthError(err)) {
+    await endSession(req, reply);
+    return sendSessionExpired(reply);
+  }
+  const e = err as { code?: string; responseStatus?: string; name?: string } | null;
+  req.log.warn({ route: req.routeOptions?.url, errName: e?.name, errCode: e?.code, status: e?.responseStatus }, message);
+  return reply.status(500).send({ error: message });
+}
+
 // Mail routes. Sign-in, sign-out and session checks live in ./auth.ts; requireAuth
 // sets req.accountConfig (server-configured mail host plus the session's credentials).
 export async function mailRoutes(fastify: FastifyInstance) {
   // 4. List Mailbox Folders
-  fastify.get('/api/mailboxes', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest) => {
+  fastify.get('/api/mailboxes', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     if (config.isDemo) {
       return { folders: demoMailService.getMailboxes() };
     }
-    const folders = await getLiveMailboxes(config);
-    return { folders };
+    try {
+      const folders = await getLiveMailboxes(config);
+      return { folders };
+    } catch (err) {
+      return failMail(req, reply, err, 'Could not load folders');
+    }
   });
 
   // 5. List Messages in Mailbox
@@ -76,7 +97,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       try {
         return await getLiveMessages(config, folderPath, pageNum, limitNum, filters);
       } catch (err) {
-        return reply.status(500).send({ error: `Failed to fetch messages: ${(err as Error).message}` });
+        return failMail(req, reply, err, 'Could not load messages');
       }
     }
   );
@@ -102,7 +123,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
         if (!msg) return reply.status(404).send({ error: 'Message not found' });
         return msg;
       } catch (err) {
-        return reply.status(500).send({ error: `Failed to fetch message detail: ${(err as Error).message}` });
+        return failMail(req, reply, err, 'Could not load this message');
       }
     }
   );
@@ -126,7 +147,12 @@ export async function mailRoutes(fastify: FastifyInstance) {
 
       // For real IMAP: stream attachment directly to HTTP response socket with zero RAM buffering
       const folderPath = decodeURIComponent((req.params as { path: string }).path);
-      const attData = await streamLiveAttachment(config, folderPath, messageUid, partId);
+      let attData;
+      try {
+        attData = await streamLiveAttachment(config, folderPath, messageUid, partId);
+      } catch (err) {
+        return failMail(req, reply, err, 'Could not download the attachment');
+      }
       if (!attData) return reply.status(404).send({ error: 'Attachment not found' });
 
       reply.header('Content-Type', attData.contentType);
@@ -156,7 +182,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
         const success = await setLiveMessageFlags(config, folderPath, messageUid, flag, value);
         return { success };
       } catch (err) {
-        return reply.status(500).send({ error: (err as Error).message });
+        return failMail(req, reply, err, 'Could not update the message');
       }
     }
   );
@@ -181,7 +207,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
         const success = await moveLiveMessage(config, folderPath, messageUid, targetFolder);
         return { success };
       } catch (err) {
-        return reply.status(500).send({ error: (err as Error).message });
+        return failMail(req, reply, err, 'Could not move the message');
       }
     }
   );
@@ -205,7 +231,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
         const success = await deleteLiveMessage(config, folderPath, messageUid);
         return { success };
       } catch (err) {
-        return reply.status(500).send({ error: (err as Error).message });
+        return failMail(req, reply, err, 'Could not delete the message');
       }
     }
   );
@@ -230,7 +256,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
         const success = await markLiveMessageSpam(config, folderPath, messageUid, junkFolder);
         return { success };
       } catch (err) {
-        return reply.status(500).send({ error: (err as Error).message });
+        return failMail(req, reply, err, 'Could not mark the message as spam');
       }
     }
   );
@@ -259,7 +285,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
         const info = await sendLiveEmail(config, payload);
         return { success: true, info };
       } catch (err) {
-        return reply.status(500).send({ error: `Failed to send email: ${(err as Error).message}` });
+        return failMail(req, reply, err, 'Could not send the message');
       }
     }
   );

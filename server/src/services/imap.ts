@@ -69,10 +69,36 @@ interface PoolEntry {
   connecting?: Promise<ImapFlow>;
   timer?: NodeJS.Timeout;
   lastUsed: number;
+  /** When the connection was opened; connections are replaced after MAX_AGE_MS. */
+  connectedAt: number;
+}
+
+/** The mail server refused the stored credentials (password changed or mailbox closed). */
+export class ImapAuthError extends Error {
+  constructor() {
+    super('IMAP authentication failed');
+    this.name = 'ImapAuthError';
+  }
+}
+
+export function isImapAuthError(err: unknown): boolean {
+  if (err instanceof ImapAuthError) return true;
+  const e = err as { authenticationFailed?: boolean; serverResponseCode?: string } | null;
+  return !!e && (e.authenticationFailed === true || e.serverResponseCode === 'AUTHENTICATIONFAILED');
 }
 
 const connectionPool = new Map<string, PoolEntry>();
 const IDLE_TIMEOUT_MS = 60 * 1000; // Auto-close connection after 60s of inactivity
+// A connection never lives longer than this, so a password change or a closed mailbox shows up
+// within minutes even for a busy session. The replacement uses the session's stored credentials.
+let maxConnectionAgeMs = 10 * 60 * 1000;
+
+/** Test hook: shorten the connection age cap. Returns the previous value. */
+export function setMaxConnectionAgeMs(ms: number): number {
+  const previous = maxConnectionAgeMs;
+  maxConnectionAgeMs = ms;
+  return previous;
+}
 
 function getPoolKey(config: AccountConfig): string {
   if (config.sessionKey) return `s:${config.sessionKey}`;
@@ -129,8 +155,13 @@ export async function closeAllPooledClients(): Promise<void> {
 
 export async function getPooledImapClient(config: AccountConfig): Promise<ImapFlow> {
   const key = getPoolKey(config);
-  const existing = connectionPool.get(key);
+  let existing = connectionPool.get(key);
 
+  if (existing?.client?.usable && Date.now() - existing.connectedAt >= maxConnectionAgeMs) {
+    // Too old: close it and open a fresh one below (another request may have done so meanwhile).
+    await closePooledClient(key);
+    existing = connectionPool.get(key);
+  }
   if (existing?.client?.usable) {
     armIdleTimer(key, existing);
     return existing.client;
@@ -145,7 +176,7 @@ export async function getPooledImapClient(config: AccountConfig): Promise<ImapFl
     connectionPool.delete(key);
   }
 
-  const entry: PoolEntry = { lastUsed: Date.now() };
+  const entry: PoolEntry = { lastUsed: Date.now(), connectedAt: Date.now() };
   const client = createImapClient(config);
 
   const forget = () => {
@@ -164,6 +195,7 @@ export async function getPooledImapClient(config: AccountConfig): Promise<ImapFl
     () => {
       entry.client = client;
       entry.connecting = undefined;
+      entry.connectedAt = Date.now();
       if (connectionPool.get(key) === entry) {
         armIdleTimer(key, entry);
       }
@@ -171,7 +203,7 @@ export async function getPooledImapClient(config: AccountConfig): Promise<ImapFl
     },
     (err: unknown) => {
       forget();
-      throw err;
+      throw isImapAuthError(err) ? new ImapAuthError() : err;
     }
   );
   connectionPool.set(key, entry);
