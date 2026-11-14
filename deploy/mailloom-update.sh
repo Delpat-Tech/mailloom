@@ -16,7 +16,7 @@ PORT="$(grep -E '^PORT=' "$APP/.env" 2>/dev/null | cut -d= -f2 || true)"; PORT="
 
 healthy() {
   for _ in $(seq 1 15); do
-    if systemctl is-active --quiet mailloom && curl -fsS -o /dev/null "http://127.0.0.1:$PORT/api/auth/accounts"; then return 0; fi
+    if systemctl is-active --quiet mailloom && curl -fs -o /dev/null "http://127.0.0.1:$PORT/api/auth/accounts"; then return 0; fi
     sleep 1
   done
   return 1
