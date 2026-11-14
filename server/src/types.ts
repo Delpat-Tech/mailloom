@@ -1,3 +1,4 @@
+import type { Recipient } from './utils/recipients.js';
 export interface EmailAddress {
   name: string;
   address: string;
@@ -104,9 +105,10 @@ export interface SendAttachment {
 }
 
 export interface SendEmailPayload {
-  to: string[];
-  cc?: string[];
-  bcc?: string[];
+  /** Bare addresses or {name,address}; always passed on to nodemailer as objects. */
+  to: Array<string | Recipient>;
+  cc?: Array<string | Recipient>;
+  bcc?: Array<string | Recipient>;
   subject: string;
   text?: string;
   /**

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { SendEmailPayload, SendAttachment } from '../types.js';
+import { parseRecipients, RecipientError, type Recipient } from '../utils/recipients.js';
 import { endSession, requireAuth, sendSessionExpired } from './auth.js';
 import { demoMailService } from '../services/demo-mail.js';
 import {
@@ -457,11 +458,16 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
 
       const strList = (v: unknown): string[] =>
         Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [];
+      let recipients: { to: Recipient[]; cc: Recipient[]; bcc: Recipient[] };
+      try {
+        recipients = { to: parseRecipients(raw.to, 'To'), cc: parseRecipients(raw.cc, 'Cc'), bcc: parseRecipients(raw.bcc, 'Bcc') };
+      } catch (err) {
+        if (err instanceof RecipientError) return reply.status(400).send({ error: err.message });
+        throw err;
+      }
       const fo = raw.forwardOf as { folder?: unknown; uid?: unknown } | undefined;
       const payload: SendEmailPayload = {
-        to: strList(raw.to),
-        cc: strList(raw.cc),
-        bcc: strList(raw.bcc),
+        ...recipients,
         subject: typeof raw.subject === 'string' && raw.subject ? raw.subject : '(No Subject)',
         text: typeof raw.text === 'string' ? raw.text : undefined,
         html: typeof raw.html === 'string' ? raw.html : undefined,
