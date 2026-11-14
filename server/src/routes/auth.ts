@@ -175,7 +175,10 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Pro
     return reply;
   }
 
-  sessions.touch(result.session);
+  // A slid Remember Me session also refreshes its persistent cookie so the browser keeps it as long.
+  if (sessions.touch(result.session) && result.session.remember) {
+    setSessionCookie(req, reply, result.session, sessionId);
+  }
   req.mailSession = result.session;
   req.accountConfig = accountConfigFor(result.session, config);
 }
