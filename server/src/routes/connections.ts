@@ -79,7 +79,7 @@ async function checkPassword(account: AccountConfig, req: FastifyRequest): Promi
 }
 
 /** Re-entered password, checked against IMAP and the sign-in throttle. Sends the error reply itself. */
-async function verifyReentry(req: FastifyRequest, reply: FastifyReply): Promise<string | null> {
+export async function verifyReentry(req: FastifyRequest, reply: FastifyReply): Promise<string | null> {
   const body = (req.body ?? {}) as { password?: unknown };
   const password = typeof body.password === 'string' ? body.password : '';
   if (!password || password.length > 1024) {

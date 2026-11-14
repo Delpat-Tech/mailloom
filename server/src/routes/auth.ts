@@ -330,6 +330,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (result.status === 'ok' && result.session.handle === handle) {
         sessions.deleteByKey(result.session.key);
         await closeSessionConnection(result.session.key);
+        // Signing out on a device also turns off that device's notifications for this mailbox.
+        const push = fastify.mailloomPush;
+        if (push) {
+          for (const email of push.store.deleteForSession(result.session.key)) await push.watcher?.refresh(email);
+        }
       }
     }
     clearAccountCookie(req, reply, handle);

@@ -41,7 +41,7 @@ export function detectSpecialUse(name: string, specialUse?: string, path?: strin
 
 export function createImapClient(
   config: AccountConfig,
-  extra: { connectionTimeout?: number; greetingTimeout?: number } = {}
+  extra: { connectionTimeout?: number; greetingTimeout?: number; maxIdleTime?: number; autoIdleDelay?: number } = {}
 ): ImapFlow {
   return new ImapFlow({
     host: config.imapHost,
@@ -58,7 +58,9 @@ export function createImapClient(
       ...(config.tls?.servername ? { servername: config.tls.servername } : {})
     },
     connectionTimeout: extra.connectionTimeout ?? 15000,
-    greetingTimeout: extra.greetingTimeout ?? 10000
+    greetingTimeout: extra.greetingTimeout ?? 10000,
+    ...(extra.maxIdleTime ? { maxIdleTime: extra.maxIdleTime } : {}),
+    ...(extra.autoIdleDelay ? { autoIdleDelay: extra.autoIdleDelay } : {})
   });
 }
 

@@ -15,6 +15,11 @@ import { loadAgentConfig } from './agent/config.js';
 import { AgentStore } from './agent/store.js';
 import { connectionRoutes } from './routes/connections.js';
 import { agentRoutes } from './routes/agent.js';
+import { pushRoutes } from './routes/push.js';
+import { isAllowedPushEndpoint, loadPushConfig } from './push/config.js';
+import { PushStore } from './push/store.js';
+import { createPushSender, type PushSendFn } from './push/sender.js';
+import { DEFAULT_TIMING, PushWatcher, type WatcherTiming } from './push/watcher.js';
 
 export interface BuildAppOptions {
   /** Environment to read configuration from. Defaults to process.env. */
@@ -25,6 +30,12 @@ export interface BuildAppOptions {
   clientDist?: string | null;
   /** Clock override for tests (session expiry, login throttle). */
   now?: () => number;
+  /** Test hooks for push notifications (never set in production). */
+  push?: {
+    timing?: Partial<WatcherTiming>;
+    send?: PushSendFn;
+    endpointAllowed?: (endpoint: string) => boolean;
+  };
 }
 
 function isApiUrl(url: string): boolean {
@@ -94,6 +105,23 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   agentStore.prune();
   fastify.decorate('mailloomAgent', { store: agentStore, config: agentConfig });
 
+  // New-mail notifications (Web Push). The table always exists so sign-out can clean it up.
+  const pushConfig = loadPushConfig(env);
+  const pushStore = new PushStore(sessions.database, config.sessionSecret, now);
+  const pushWatcher = pushConfig.enabled
+    ? new PushWatcher(pushStore, opts.push?.send ?? createPushSender(pushConfig), config, fastify.log, {
+        ...DEFAULT_TIMING,
+        ...opts.push?.timing
+      })
+    : null;
+  fastify.decorate('mailloomPush', {
+    config: pushConfig,
+    store: pushStore,
+    watcher: pushWatcher,
+    endpointAllowed: opts.push?.endpointAllowed ?? isAllowedPushEndpoint
+  });
+  if (pushWatcher) fastify.addHook('onReady', async () => pushWatcher.startAll());
+
   if (!config.mail.tls.rejectUnauthorized) {
     fastify.log.warn('MAIL_TLS_REJECT_UNAUTHORIZED=false: mail server certificates are NOT checked (local testing only).');
   }
@@ -112,6 +140,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   fastify.addHook('onClose', async () => {
     clearInterval(sweeper);
+    await pushWatcher?.stopAll();
     await closeAllPooledClients();
     sessions.close();
   });
@@ -171,6 +200,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await fastify.register(mailRoutes, { prefix });
     await fastify.register(connectionRoutes, { prefix });
     await fastify.register(agentRoutes, { prefix });
+    await fastify.register(pushRoutes, { prefix });
   }
 
   const clientDist = opts.clientDist === undefined ? resolveClientDist(env) : opts.clientDist;
