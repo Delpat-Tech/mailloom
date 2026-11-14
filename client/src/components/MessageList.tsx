@@ -1,3 +1,4 @@
+import { useBackLayer } from '../hooks/useBackLayer.js';
 import { Presence } from './Presence.js';
 import React, { useState, useRef, useLayoutEffect, useEffect, useMemo } from 'react';
 import {
@@ -450,6 +451,11 @@ export const MessageList: React.FC<MessageListProps> = ({
 }) => {
   const [showFilters, setShowFilters] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  // Phone Back closes the search box (and clears the search) before leaving the list.
+  useBackLayer(searchOpen || !!searchTerm, () => {
+    setSearchOpen(false);
+    onSearchChange('');
+  });
   const sentinelRef = useRef<HTMLLIElement>(null);
   // The Search tab and the "/" key ask for the search box (open on a phone, then focus).
   useEffect(() => {
@@ -569,6 +575,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   const showSkeleton = useAfterDelay((isLoading || !countReady) && messages.length === 0, 150);
   const labelMap = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
   const [snoozeUid, setSnoozeUid] = useState<number | null>(null);
+  useBackLayer(snoozeUid !== null, () => setSnoozeUid(null));
   const canArchive = !!onArchive && folderKind !== 'Archive' && folderKind !== 'Drafts' && folderKind !== 'Sent';
 
   const FIELD =

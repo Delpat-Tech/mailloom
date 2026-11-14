@@ -9,6 +9,7 @@ import { labelsApi, labelErrorText, type Label, type LabelColour } from './servi
 import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
 import { useSwipeBack } from './hooks/useSwipeBack.js';
+import { useBackLayer } from './hooks/useBackLayer.js';
 import { folderLabel } from './services/folderName.js';
 import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
@@ -178,6 +179,19 @@ export const App: React.FC = () => {
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [mobileView, setMobileView] = useState<'list' | 'message'>('list');
   useSwipeBack(readerPaneRef, mobileView === 'message' && !!account, () => setMobileView('list'));
+  // Phone Back button: each screen a phone user sees is a layer; Back closes the top one only.
+  useBackLayer(mobileView === 'message' && !!account, () => setMobileView('list'));
+  useBackLayer(showMobileSidebar, () => setShowMobileSidebar(false));
+  useBackLayer(menu !== null, () => setMenu(null));
+  useBackLayer(showLabelsManager, () => setShowLabelsManager(false));
+  useBackLayer(showShortcuts, () => setShowShortcuts(false));
+  useBackLayer(showConnections, () => setShowConnections(false));
+  useBackLayer(showNotifications, () => {
+    setShowNotifications(false);
+    setNotificationPerm(getNotificationPermission());
+  });
+  useBackLayer(isAddingAccount, () => setIsAddingAccount(false));
+  useBackLayer(confirmRequest !== null, () => setConfirmRequest(null));
   const drawerRef = useRef<HTMLDivElement>(null);
   useDialog(drawerRef, { open: showMobileSidebar, onEscape: () => setShowMobileSidebar(false) });
 

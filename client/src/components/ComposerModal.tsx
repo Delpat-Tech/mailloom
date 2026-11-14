@@ -1,3 +1,4 @@
+import { useBackLayer } from '../hooks/useBackLayer.js';
 import { usePresence, LEAVE_COMPOSER_MS, Presence } from './Presence.js';
 import { AnchoredPanel } from './AnchoredPanel.js';
 import { usePopover } from '../hooks/usePopover.js';
@@ -367,6 +368,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     initialFocus: () =>
       toList.length === 0 ? toInputRef.current : (editorRef.current?.view.dom as HTMLElement | undefined) ?? bodyRef.current
   });
+
+  // Phone Back asks the same as the close button (keep as draft, discard, or keep editing).
+  useBackLayer(isOpen, handleCloseClick);
+  useBackLayer(showSigModal, () => setShowSigModal(false));
+  useBackLayer(showTemplateModal, () => setShowTemplateModal(false));
 
   useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
 
