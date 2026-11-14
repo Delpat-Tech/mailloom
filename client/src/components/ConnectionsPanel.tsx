@@ -1,3 +1,4 @@
+import { fullDate } from '../services/time.js';
 import React, { useCallback, useEffect, useState } from 'react';
 import { X, KeyRound, Copy, Check, RotateCw, Ban, Pencil, AlertCircle, Plus } from 'lucide-react';
 import { connectionsApi, type AgentAuditEntry, type AgentKey, type AgentScope } from '../services/connections.js';
@@ -15,7 +16,7 @@ const SCOPE_LABELS: Record<AgentScope, string> = {
 
 function when(iso: string | null): string {
   if (!iso) return 'Never';
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return fullDate(iso) || iso;
 }
 
 function errorText(err: unknown): string {

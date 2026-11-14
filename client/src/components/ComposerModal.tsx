@@ -1,4 +1,6 @@
-import { usePresence, LEAVE_COMPOSER_MS } from './Presence.js';
+import { usePresence, LEAVE_COMPOSER_MS, Presence } from './Presence.js';
+import { usePopover } from '../hooks/usePopover.js';
+import { readImageFile, IMAGE_TYPES, MAX_IMAGE_BYTES } from '../services/richtext.js';
 import { splitRecipients, mergeRecipients, recipientSnapshot, isValidRecipient } from '../services/recipients';
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -11,7 +13,11 @@ import {
   AlertCircle,
   FileSpreadsheet,
   PenTool,
-  Info
+  Info,
+  Bold,
+  ImagePlus,
+  MoreHorizontal,
+  Type
 } from 'lucide-react';
 import { api, ApiError } from '../services/api.js';
 import { clockTime } from '../services/time.js';
@@ -65,6 +71,8 @@ export interface ComposerReplyMeta {
   forwardedAttachmentNames?: string[];
   /** UID of the saved draft this composer was opened from. */
   draftUid?: number;
+  /** Known names for addresses (lower case address to name), so chips can show people, not addresses. */
+  names?: Record<string, string>;
 }
 
 interface ComposerModalProps {
@@ -100,6 +108,43 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+const ICON_BTN =
+  't-fast shrink-0 p-2 text-ink-3 hover:text-ink hover:bg-hover rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] flex items-center justify-center';
+
+/** The "..." menu in the composer's bottom bar: Templates, Signature, Plain text. */
+const ComposerMore: React.FC<{
+  items: { key: string; label: string; icon: React.ReactNode; onSelect: () => void }[];
+  anchor: React.RefObject<HTMLElement>;
+  onClose: (refocus: boolean) => void;
+}> = ({ items, anchor, onClose }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  usePopover(ref, onClose, anchor);
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="More composer options"
+      className="anim-menu origin-bl absolute bottom-full left-0 mb-1 z-40 w-48 bg-surface text-ink border border-line rounded shadow-xl py-1.5"
+    >
+      {items.map((it) => (
+        <button
+          key={it.key}
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onClose(false);
+            it.onSelect();
+          }}
+          className="w-full min-h-[44px] sm:min-h-[36px] text-left px-3 py-2 text-sm font-semibold text-ink-2 hover:bg-sel hover:text-sel-ink flex items-center gap-3"
+        >
+          {it.icon}
+          <span>{it.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+};
 
 export const ComposerModal: React.FC<ComposerModalProps> = ({
   isOpen,
@@ -138,6 +183,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showFormat, setShowFormat] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const nameOf = (email: string) => replyMeta?.names?.[email.toLowerCase()] || '';
   const [showSigModal, setShowSigModal] = useState(false);
   const [signature, setSignature] = useState<AccountSignature>(() =>
     getSignatureForAccount(accountEmail, accountName)
@@ -573,20 +623,20 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   <span
                     key={idx}
                     aria-invalid={!isValidRecipient(email) || undefined}
-                    title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
+                    title={!isValidRecipient(email) ? 'Not a valid address' : email}
                     className={`inline-flex items-center gap-1.5 bg-sheet text-ink border border-line pl-[3px] pr-1.5 py-[2px] rounded-[3px] text-[13px] font-bold${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
                   >
                     <span
                       aria-hidden="true"
                       className={`cut-av w-5 h-5 shrink-0 grid place-items-center text-[9px] font-extrabold text-white ${avatarClass(email)}`}
                     >
-                      {initialsOf(email)}
+                      {initialsOf(nameOf(email) || email)}
                     </span>
-                    <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
+                    <span>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                     <button
                       type="button"
                       onClick={() => handleRemoveRecipient('to', idx)}
-                      aria-label={`Remove ${email}`}
+                      aria-label={`Remove ${nameOf(email) || email}`}
                       className="hover:text-act px-1 min-h-[44px] sm:min-h-0"
                     >
                       ×
@@ -638,7 +688,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
                     className={`inline-flex items-center gap-1 bg-hover text-ink-2 px-2 py-0.5 rounded text-xs font-medium${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
                     >
-                      <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
+                      <span title={email}>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('cc', idx)}
@@ -682,7 +732,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
                     className={`inline-flex items-center gap-1 bg-hover text-ink-2 px-2 py-0.5 rounded text-xs font-medium${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
                     >
-                      <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
+                      <span title={email}>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('bcc', idx)}
@@ -757,6 +807,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                 ariaLabel="Message"
                 placeholder="Write your email message here..."
                 contentClassName="min-h-[10rem]"
+                hideToolbar={!showFormat}
               />
             )}
 
@@ -800,104 +851,153 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             className="hidden"
           />
 
-          {/* Bottom Action Bar */}
-          <div className="px-3 sm:px-4 py-3 border-t border-line bg-sheet flex flex-wrap items-center justify-between gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleSend}
-                disabled={isSending}
-                className="cut-tr flex items-center gap-2 bg-act hover:bg-act-hov text-act-ink font-extrabold text-[13.5px] pl-3 pr-3.5 min-h-[44px] sm:min-h-[36px] transition-colors disabled:opacity-50"
-              >
-                {isSending ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-surface border-t-transparent rounded-full animate-spin" />
-                    <span>Sending...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Send Message</span>
-                    <kbd className="hidden sm:inline-block text-[10.5px] font-semibold leading-none px-1 py-[3px] rounded-[3px] border border-current opacity-80">Ctrl+Enter</kbd>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-ink-3 hover:text-ink hover:bg-line rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
-                title="Attach files"
-                aria-label="Attach files"
-              >
-                <Paperclip className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={togglePlainMode}
-                aria-pressed={plainMode}
-                title={plainMode ? 'Back to formatted text' : 'Write this message as plain text'}
-                className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded transition-colors border font-medium ${
-                  plainMode
-                    ? 'text-ink bg-line border-line-2'
-                    : 'text-ink-3 bg-hover hover:bg-line border-line'
-                }`}
-              >
-                <span>Plain text</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowTemplateModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs text-sel-ink bg-sel hover:bg-sel rounded transition-colors border border-line-2 font-medium"
-                title="Insert pre-written email templates"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-act" />
-                <span>Templates</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSigForm(signature);
-                  setSigError(null);
-                  setShowSigModal(true);
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded transition-colors border font-medium ${
-                  signature.enabled
-                    ? 'text-sel-ink bg-sel hover:bg-sel border-line'
-                    : 'text-ink-3 bg-hover hover:bg-line border-line'
-                }`}
-                title="Configure Delpat corporate signature"
-              >
-                <PenTool className="w-3.5 h-3.5 text-act" />
-                <span>Signature</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 min-w-0">
-            {/* Fixed-size slot: the status never moves the buttons. Icon only on narrow screens. */}
-            <span
-              className={`shrink-0 w-5 sm:w-48 h-5 flex items-center justify-end overflow-hidden text-[11px] ${draftStatus?.error ? 'text-warn-ink font-semibold' : 'text-ink-3'}`}
-              role="status"
-              title={statusText}
-              aria-label={statusText || undefined}
+          {/* Bottom bar: one row. Send, attach, picture, formatting on the left; saved time and delete on the right. */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept={IMAGE_TYPES.join(',')}
+            multiple
+            aria-label="Choose a picture"
+            className="hidden"
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              for (const f of files) {
+                try {
+                  const src = await readImageFile(f, MAX_IMAGE_BYTES);
+                  editorRef.current?.chain().focus().setImage({ src, alt: f.name }).run();
+                } catch (err) {
+                  setErrorMsg(err instanceof Error ? err.message : 'That picture could not be added.');
+                }
+              }
+            }}
+          />
+          <div className="px-3 sm:px-4 py-2.5 border-t border-line bg-sheet flex flex-nowrap items-center gap-1 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+            <button
+              onClick={handleSend}
+              disabled={isSending}
+              aria-keyshortcuts="Control+Enter"
+              className="cut-tr shrink-0 whitespace-nowrap flex items-center gap-2 bg-act hover:bg-act-hov text-act-ink font-extrabold text-[13.5px] pl-3 pr-3.5 mr-1 min-h-[44px] sm:min-h-[36px] transition-colors disabled:opacity-50"
             >
-              {statusText && (
+              {isSending ? (
                 <>
-                  <Info className="w-4 h-4 sm:hidden" aria-hidden="true" />
-                  <span className="hidden sm:block truncate">{statusText}</span>
+                  <div className="w-3.5 h-3.5 border-2 border-surface border-t-transparent rounded-full animate-spin" />
+                  <span>Sending...</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Send</span>
+                  <kbd aria-hidden="true" className="hidden md:inline-block text-[10.5px] font-semibold leading-none px-1 py-[3px] rounded-[3px] border border-current opacity-80">Ctrl+Enter</kbd>
                 </>
               )}
-            </span>
-            <button
-              onClick={handleDiscard}
-              className="p-2 text-ink-3 hover:text-warn-ink hover:bg-warn-bg rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
-              title="Discard message"
-              aria-label="Discard message"
-            >
-              <Trash2 className="w-4 h-4" />
             </button>
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={ICON_BTN}
+              title="Attach files"
+              aria-label="Attach files"
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
+            {!plainMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  className={ICON_BTN}
+                  title="Insert picture"
+                  aria-label="Insert picture"
+                >
+                  <ImagePlus className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFormat((v) => !v)}
+                  aria-pressed={showFormat}
+                  className={`${ICON_BTN} ${showFormat ? '!bg-sel !text-sel-ink' : ''}`}
+                  title="Formatting"
+                  aria-label="Formatting"
+                >
+                  <Bold className="w-4 h-4" />
+                </button>
+              </>
+            )}
+            <div className="relative shrink-0">
+              <button
+                ref={moreBtn}
+                type="button"
+                onClick={() => setMoreOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                className={ICON_BTN}
+                title="More"
+                aria-label="More composer options"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+              </button>
+              <Presence show={moreOpen}>
+                {moreOpen && (
+                  <ComposerMore
+                    anchor={moreBtn}
+                    onClose={(refocus) => {
+                      setMoreOpen(false);
+                      if (refocus) moreBtn.current?.focus();
+                    }}
+                    items={[
+                      {
+                        key: 'templates',
+                        label: 'Templates',
+                        icon: <FileSpreadsheet className="w-4 h-4" />,
+                        onSelect: () => setShowTemplateModal(true)
+                      },
+                      {
+                        key: 'signature',
+                        label: signature.enabled ? 'Signature (on)' : 'Signature',
+                        icon: <PenTool className="w-4 h-4" />,
+                        onSelect: () => {
+                          setSigForm(signature);
+                          setSigError(null);
+                          setShowSigModal(true);
+                        }
+                      },
+                      {
+                        key: 'plain',
+                        label: plainMode ? 'Back to formatted text' : 'Plain text',
+                        icon: <Type className="w-4 h-4" />,
+                        onSelect: togglePlainMode
+                      }
+                    ]}
+                  />
+                )}
+              </Presence>
+            </div>
+
+            <div className="flex items-center gap-1 min-w-0 ml-auto">
+              {/* Fixed-size slot: the status never moves the buttons. Icon only on narrow screens. */}
+              <span
+                className={`shrink-0 w-5 sm:w-40 h-5 flex items-center justify-end overflow-hidden text-[11px] whitespace-nowrap ${draftStatus?.error ? 'text-warn-ink font-semibold' : 'text-ink-3'}`}
+                role="status"
+                title={statusText}
+                aria-label={statusText || undefined}
+              >
+                {statusText && (
+                  <>
+                    <Info className="w-4 h-4 sm:hidden" aria-hidden="true" />
+                    <span className="hidden sm:block truncate">{statusText}</span>
+                  </>
+                )}
+              </span>
+              <button
+                onClick={handleDiscard}
+                className="p-2 text-ink-3 hover:text-warn-ink hover:bg-warn-bg rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center shrink-0"
+                title="Discard message"
+                aria-label="Discard message"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>

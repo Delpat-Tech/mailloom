@@ -152,3 +152,56 @@ describe('menus and sheets', () => {
     expect(screen.getByRole('button', { name: 'Inbox' }).getAttribute('aria-current')).toBe('page');
   });
 });
+
+describe('list as in the design', () => {
+  it('groups rows under day headers and shows no Select bar until something is selected', () => {
+    const now = new Date();
+    const old = new Date(now.getFullYear() - 1, 0, 5).toISOString();
+    list({}, [msg(1, { date: now.toISOString() }), msg(2, { date: old })]);
+    expect(screen.getByText('Today')).toBeTruthy();
+    expect(screen.getByText('Earlier')).toBeTruthy();
+    expect(screen.queryByRole('toolbar', { name: 'Actions for selected messages' })).toBeNull();
+    expect(screen.queryByText('Select')).toBeNull();
+  });
+
+  it('the avatar selects (Shift passes through) and the bulk bar appears with a selection', () => {
+    const onToggleSelectUid = vi.fn();
+    const { rerender } = list({ onToggleSelectUid });
+    fireEvent.click(screen.getByRole('button', { name: 'Select message from Sender 2' }), { shiftKey: true });
+    expect(onToggleSelectUid).toHaveBeenCalledWith(2, expect.objectContaining({ shiftKey: true }));
+    rerender(
+      <MessageList
+        folderName="Inbox"
+        messages={[msg(1), msg(2)]}
+        totalMessages={2}
+        selectedUid={null}
+        onSelectMessage={() => {}}
+        selectedUids={new Set([2])}
+        onToggleSelectUid={onToggleSelectUid}
+        onSelectAll={() => {}}
+        onToggleFlag={() => {}}
+        onRefresh={() => {}}
+        isLoading={false}
+        searchTerm=""
+        onSearchChange={() => {}}
+        onBatchDelete={() => {}}
+        onBatchMarkRead={() => {}}
+      />
+    );
+    expect(screen.getByRole('toolbar', { name: 'Actions for selected messages' })).toBeTruthy();
+    expect(screen.getByText('1 selected')).toBeTruthy();
+  });
+
+  it('has no pager; "Load more" appears when there are more messages', () => {
+    const onLoadMore = vi.fn();
+    list({ hasMore: true, onLoadMore });
+    expect(screen.queryByText(/Page \d+ of/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(onLoadMore).toHaveBeenCalled();
+  });
+
+  it('the header reads "Inbox  12 unread"', () => {
+    list({ unreadCount: 12 });
+    expect(screen.getByText('12 unread')).toBeTruthy();
+  });
+});

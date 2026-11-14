@@ -1,16 +1,12 @@
 import React, { useRef, useState } from 'react';
-import { format } from 'date-fns';
+import { fullDate } from '../services/time.js';
 import { api } from '../services/api.js';
 import { avatarClass, initialsOf } from '../services/avatar.js';
 import { threadSummary, type ThreadInfo, type ThreadMessage } from '../services/threads.js';
 import type { ParsedEmailMessage } from '../types.js';
 
 function when(d: string): string {
-  try {
-    return format(new Date(d), 'MMM d, h:mm a');
-  } catch {
-    return d;
-  }
+  return fullDate(d) || d;
 }
 
 const Collapsed: React.FC<{ m: ThreadMessage }> = ({ m }) => {

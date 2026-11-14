@@ -1,3 +1,4 @@
+import { fullDate } from '../services/time.js';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Bell, BellOff, AlertCircle, Smartphone, Share } from 'lucide-react';
 import { useDialog } from '../hooks/useDialog.js';
@@ -24,7 +25,7 @@ function errorText(err: unknown): string {
 
 function when(iso: string | null): string {
   if (!iso) return 'never';
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return fullDate(iso) || iso;
 }
 
 const AVAILABILITY_TEXT: Record<Exclude<PushAvailability, 'ok' | 'ios-needs-install'>, string> = {

@@ -35,6 +35,8 @@ export interface RichEditorProps {
   contentClassName?: string;
   /** Extra controls placed at the end of the toolbar (e.g. the Plain text switch). */
   toolbarExtra?: React.ReactNode;
+  /** Hide the formatting row (the composer toggles it from its bottom bar). */
+  hideToolbar?: boolean;
 }
 
 interface BtnProps {
@@ -116,7 +118,8 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   onReady,
   maxImageBytes = MAX_IMAGE_BYTES,
   contentClassName = 'min-h-[8rem]',
-  toolbarExtra
+  toolbarExtra,
+  hideToolbar = false
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [linkOpen, setLinkOpen] = useState(false);
@@ -224,7 +227,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
 
   return (
     <div className="ml-editor flex flex-col min-h-0 flex-1">
-      <div role="toolbar" aria-label="Formatting" className="ml-editor-toolbar flex flex-wrap items-center gap-0.5 pb-2 border-b border-line mb-2">
+      <div role="toolbar" aria-label="Formatting" hidden={hideToolbar} className={`ml-editor-toolbar flex-wrap items-center gap-0.5 pb-2 border-b border-line mb-2 ${hideToolbar ? 'hidden' : 'flex'}`}>
         <ToolButton label="Bold" shortcut="Ctrl+B" active={editor.isActive('bold')} onClick={() => chain(editor).toggleBold().run()}>
           <Bold className="w-4 h-4" />
         </ToolButton>

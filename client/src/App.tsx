@@ -1009,6 +1009,13 @@ export const App: React.FC = () => {
     setIsComposerOpen(true);
   };
 
+  /** Names for the addresses in a message, so recipient chips show people. */
+  const namesOf = (m: ParsedEmailMessage): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const a of [m.from, ...m.to, ...(m.cc || [])]) if (a.name) out[a.address.toLowerCase()] = a.name;
+    return out;
+  };
+
   const handleReply = (message: ParsedEmailMessage, replyAll = false) => {
     const plan = planReply(message, account?.email || '', replyAll);
     const dateStr = new Date(message.date).toLocaleString();
@@ -1024,7 +1031,7 @@ export const App: React.FC = () => {
       html:
         `<p>${escapeHtml(quoteLine(message.date, message.from.name || message.from.address))}</p>` +
         quoteHtml(message.text || ''),
-      meta: { inReplyTo: plan.inReplyTo, references: plan.references }
+      meta: { inReplyTo: plan.inReplyTo, references: plan.references, names: namesOf(message) }
     });
   };
 

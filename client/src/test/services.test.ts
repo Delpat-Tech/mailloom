@@ -273,3 +273,25 @@ describe('swipe back rules', () => {
     wide.remove();
   });
 });
+
+describe('British 24-hour dates', () => {
+  it('formats rows, the quote line and the day groups', async () => {
+    const t = await import('../services/time.js');
+    const now = new Date(2026, 10, 14, 11, 0); // Fri 14 Nov 2026 11:00
+    const at = (d: number, h: number, m: number) => new Date(2026, 10, d, h, m).toISOString();
+    expect(t.rowTime(at(14, 10, 38), now)).toBe('10:38');
+    expect(t.rowTime(at(12, 9, 5), now)).toBe('Thu');
+    expect(t.rowTime(at(2, 9, 5), now)).toBe('2 Nov');
+    expect(t.rowTime(new Date(2025, 2, 3).toISOString(), now)).toBe('3 Mar 2025');
+    expect(t.quoteLine(new Date(2026, 10, 15, 0, 26).toISOString(), 'Priya Shah')).toBe('On Sun 15 Nov 2026 at 00:26, Priya Shah wrote:');
+    expect(t.fullDate(at(14, 15, 7))).toBe('Sat 14 Nov 2026, 15:07');
+    expect(t.relativeAgo(at(14, 10, 54), now)).toBe('6 min ago');
+    expect(t.dayBucket(at(13, 8, 0), now)).toBe('yesterday');
+    expect(t.dayBucket(at(10, 8, 0), now)).toBe('week');
+    expect(t.dayBucket(at(1, 8, 0), now)).toBe('earlier');
+    expect(t.groupHeader('today', [new Date(at(14, 10, 38))])).toEqual({ title: 'Today', sub: 'Saturday 14 November' });
+    expect(/AM|PM|\d\/\d/.test(t.rowTime(at(14, 15, 0), now) + t.fullDate(at(14, 15, 0)))).toBe(false);
+    expect(t.folderTitle('INBOX')).toBe('Inbox');
+    expect(t.folderTitle('Clients')).toBe('Clients');
+  });
+});
