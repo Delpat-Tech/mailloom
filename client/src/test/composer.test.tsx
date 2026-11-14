@@ -184,7 +184,7 @@ describe('templates in the composer', () => {
   it('blocks Send for a placeholder left in the body', async () => {
     renderComposer({ initialHtml: '<p>Dear {{candidate_name}},</p>' });
     await userEvent.click(screen.getByRole('button', { name: /^send/i }));
-    expect(await screen.findByText(/\{\{candidate_name\}\}/)).toBeTruthy();
+    expect(await screen.findByText(/Fill in or delete \{\{candidate_name\}\} before sending/)).toBeTruthy();
     expect(sendEmail).not.toHaveBeenCalled();
   });
 });
