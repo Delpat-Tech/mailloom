@@ -196,7 +196,7 @@ async function verifyMailLogin(account: AccountConfig, log: FastifyInstance['log
     if (isPasswordRefused(err)) {
       return 'bad_credentials';
     }
-    log.warn({ code: e.code, msg: e.message }, 'IMAP login check failed (server problem)');
+    log.warn({ code: e.code }, 'IMAP login check failed (server problem)');
     return 'unreachable';
   } finally {
     client.close();

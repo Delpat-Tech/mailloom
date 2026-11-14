@@ -109,7 +109,23 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const config = loadConfig(env);
   const now = opts.now ?? Date.now;
 
-  const fastify = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy as string | boolean });
+  // Request logs never carry the query string (search words, Message-IDs) or other URL data beyond the path.
+  const logSerializers = {
+    req: (r: FastifyRequest) => ({
+      method: r.method,
+      url: String(r.url).split('?')[0],
+      host: r.headers?.host,
+      remoteAddress: r.ip
+    })
+  };
+  const logger: FastifyServerOptions['logger'] =
+    opts.logger === true
+      ? { serializers: logSerializers }
+      : opts.logger && typeof opts.logger === 'object'
+        ? { ...opts.logger, serializers: { ...opts.logger.serializers, ...logSerializers } }
+        : (opts.logger ?? false);
+
+  const fastify = Fastify({ logger, trustProxy: config.trustProxy as string | boolean });
 
   const sessions = new SessionStore(
     config.sessionDbPath,

@@ -90,7 +90,7 @@ export class SendError extends Error {
 function toSendError(err: unknown): Error {
   if (err instanceof SendError) return err;
   const code = (err as { code?: string })?.code;
-  console.warn('[SMTP] send failed:', code || '', (err as Error)?.message?.split('\n')[0]);
+  console.warn('[SMTP] send failed:', code || '', (err as Error)?.name || ''); // never the text: it can hold addresses
   switch (code) {
     case 'EAUTH':
       if ((err as { responseCode?: number }).responseCode! < 500) return new SendError('The mail server is temporarily unable to sign in. Try again shortly.');
@@ -297,7 +297,7 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
     if (!appended) throw new Error('append returned no result');
     result.sentCopySaved = true;
   } catch (appendErr) {
-    console.warn('[SMTP] Could not save Sent copy:', (appendErr as Error).message);
+    console.warn('[SMTP] Could not save Sent copy:', (appendErr as { code?: string })?.code || '', (appendErr as Error)?.name || '');
     result.sentCopyError = 'The message was sent, but a copy could not be saved to the Sent folder.';
   }
 

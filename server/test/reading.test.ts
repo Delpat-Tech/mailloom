@@ -137,6 +137,26 @@ test('logo sent as attachment-disposition with a Content-ID inside multipart/rel
   assert.match(d2.html || '', /src="data:image\/png/);
 });
 
+test('inline cid parts that are not real png/jpeg/gif/webp bytes are dropped (svg, mislabelled)', async () => {
+  await resetAccount(GM.tester);
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  const u1 = await appendRaw(
+    GM.tester,
+    'INBOX',
+    await buildMime({
+      subject: 'svg cid',
+      html: '<img src="cid:s1"><img src="cid:s2">',
+      attachments: [
+        { filename: 'a.svg', content: svg, cid: 's1', contentDisposition: 'inline', contentType: 'image/svg+xml' },
+        { filename: 'b.png', content: svg, cid: 's2', contentDisposition: 'inline', contentType: 'image/png' }
+      ]
+    })
+  );
+  const d = (await getLiveMessageDetail(tester, 'INBOX', u1))!;
+  assert.doesNotMatch(d.html || "", /data:image/);
+  assert.doesNotMatch(d.html || '', /<svg|alert/i);
+});
+
 test('previews decode quoted-printable and base64 in other charsets', async () => {
   await resetAccount(GM.tester);
   const qp =

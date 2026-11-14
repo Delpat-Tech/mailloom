@@ -3,6 +3,7 @@ import { simpleParser } from 'mailparser';
 import { createHash } from 'node:crypto';
 import type { AccountConfig, MailboxFolder, MessageHeader, ParsedEmailMessage, SpecialUseFolder } from '../types.js';
 import { renderEmail, findCidReferences } from '../utils/sanitize.js';
+import { sniffImage } from './richbody.js';
 import { classifyParts, findPart, isValidPartId, type LeafPart, type MessageParts } from './mailparts.js';
 import { cleanFilename, decodeCharset, decodeTransfer, htmlToText, makeSnippet } from '../utils/mime.js';
 
@@ -557,8 +558,11 @@ export async function getLiveMessageDetail(
         try {
           const buf = await readPart(client, uid, p, MAX_INLINE_IMAGE_BYTES);
           if (!buf || buf.length === 0 || buf.length >= MAX_INLINE_IMAGE_BYTES) continue;
+          // Only real png/jpeg/gif/webp bytes become data: URIs, labelled by what they are, not by the sender's claim.
+          const realType = sniffImage(buf);
+          if (!realType) continue;
           budget -= buf.length;
-          cids.set(key, `data:${p.type};base64,${buf.toString('base64')}`);
+          cids.set(key, `data:${realType};base64,${buf.toString('base64')}`);
         } catch {
           // The image stays hidden; the rest of the mail is still shown.
         }
