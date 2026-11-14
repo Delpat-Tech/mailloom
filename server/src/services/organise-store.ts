@@ -147,8 +147,17 @@ export class OrganiseStore {
     const e = lc(email);
     const current = this.label(e, id);
     if (!current) return null;
-    const next = { ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) } as LabelDef;
-    this.db.prepare('UPDATE labels SET name = ?, colour = ?, ord = ? WHERE email = ? AND id = ?').run(next.name, next.colour, next.order, e, id);
+    const next: LabelDef = { ...current, name: patch.name ?? current.name, colour: patch.colour ?? current.colour };
+    this.db.prepare('UPDATE labels SET name = ?, colour = ? WHERE email = ? AND id = ?').run(next.name, next.colour, e, id);
+    if (patch.order !== undefined) {
+      // order is a position: the label moves there and the others close up around it.
+      const others = this.labels(e).filter((l) => l.id !== id);
+      const at = Math.min(Math.max(0, patch.order), others.length);
+      const sequence = [...others.slice(0, at).map((l) => l.id), id, ...others.slice(at).map((l) => l.id)];
+      const set = this.db.prepare('UPDATE labels SET ord = ? WHERE email = ? AND id = ?');
+      sequence.forEach((lid, i) => set.run(i, e, lid));
+      next.order = at;
+    }
     return next;
   }
 
