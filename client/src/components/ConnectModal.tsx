@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Mail,
   AlertCircle,
@@ -10,6 +10,8 @@ import {
   Check
 } from 'lucide-react';
 import { api } from '../services/api.js';
+import { friendlyError } from '../services/errors.js';
+import { useDialog } from '../hooks/useDialog.js';
 import type { UserAccount } from '../types.js';
 
 interface ConnectModalProps {
@@ -56,6 +58,18 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
     reauthEmail !== undefined ? 'Your session has ended. Sign in again to continue; open drafts are kept.' : null
   );
 
+  // Dialog behaviour: focus moves in (to the password when the email is already known), Tab stays inside,
+  // and Escape closes it only when there is another signed-in account to go back to.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const canClose = isAddingAccount && !!onCancel;
+  useDialog(dialogRef, {
+    open: true,
+    onEscape: canClose ? onCancel : undefined,
+    initialFocus: () => (reauthEmail ? passwordRef.current : emailRef.current)
+  });
+
   const handleConnectCustom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
@@ -71,19 +85,28 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
       setPassword('');
       onConnected(res.account, rememberMe);
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+      setErrorMsg(friendlyError(err, 'Sign-in failed. Please try again.'));
       setIsLoading(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 select-none">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="connect-title"
+        aria-describedby={errorMsg ? 'connect-error' : undefined}
+        className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col"
+      >
         {/* Header */}
         <div className="bg-slate-900 px-6 py-6 text-white text-center relative">
           {isAddingAccount && onCancel && (
             <button
+              type="button"
               onClick={onCancel}
+              aria-label="Close"
               className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
             >
               <X className="w-4 h-4" />
@@ -93,7 +116,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
           <div className="w-11 h-11 rounded-xl bg-sky-500 mx-auto flex items-center justify-center text-white mb-2.5 shadow-lg shadow-sky-500/25">
             <Mail className="w-6 h-6" />
           </div>
-          <h2 className="text-xl font-bold tracking-tight">
+          <h2 id="connect-title" className="text-xl font-bold tracking-tight">
             {reauthEmail !== undefined ? 'Sign In Again' : isAddingAccount ? 'Connect Another Mailbox' : 'Mailloom Webmail'}
           </h2>
 
@@ -106,7 +129,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
 
         {/* Error notification */}
         {errorMsg && (
-          <div className="bg-red-50 border-b border-red-200 px-6 py-2.5 text-xs text-red-700 flex items-center gap-2">
+          <div id="connect-error" role="alert" className="bg-red-50 border-b border-red-200 px-6 py-2.5 text-xs text-red-700 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
             <span className="flex-1">{errorMsg}</span>
           </div>
@@ -116,12 +139,13 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
         <form onSubmit={handleConnectCustom} className="p-6 space-y-4 text-xs">
           {/* Email Address */}
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">Email Address *</label>
+            <label htmlFor="connect-email" className="block font-semibold text-slate-700 mb-1">Email Address *</label>
             <input
+              id="connect-email"
+              ref={emailRef}
               type="email"
               required
               autoComplete="username"
-              aria-label="Email address"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
@@ -130,12 +154,13 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
 
           {/* Password */}
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">Password *</label>
+            <label htmlFor="connect-password" className="block font-semibold text-slate-700 mb-1">Password *</label>
             <input
+              id="connect-password"
+              ref={passwordRef}
               type="password"
               required
               autoComplete="current-password"
-              aria-label="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"

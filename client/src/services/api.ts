@@ -1,3 +1,4 @@
+import { friendlyError } from './errors.js';
 import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount, StoredAccountProfile } from '../types.js';
 
 /*
@@ -190,11 +191,18 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
 
   if (!res.ok) {
     const errorBody = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-    const err = new ApiError(
-      errorBody.error || `Request failed (${res.status}${res.statusText ? ` ${res.statusText}` : ''})`,
-      res.status,
-      errorBody.code
-    );
+    // Anything technical the server (or a proxy) sent is replaced by a plain sentence; status and code stay on the error.
+    const fallback =
+      res.status === 401
+        ? 'You have been signed out. Sign in again to continue.'
+        : res.status === 404
+          ? 'That is no longer there.'
+          : res.status === 429
+            ? 'Too many requests at once. Wait a moment and try again.'
+            : res.status >= 500
+              ? 'The mail server is having trouble. Try again in a moment.'
+              : 'That did not work. Please try again.';
+    const err = new ApiError(friendlyError(errorBody.error || '', fallback), res.status, errorBody.code);
     if (handle && isSessionEndedError(err)) {
       const email = readAccounts().find((a) => a.handle === handle)?.email;
       window.dispatchEvent(
