@@ -212,6 +212,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onInstallApp}
+            aria-label="Install desktop app"
             className="w-full flex items-center justify-between px-3 py-1.5 min-h-[44px] lg:min-h-0 rounded-lg text-xs font-semibold text-sky-300 bg-sky-950/60 hover:bg-sky-900/60 border border-sky-800/60 transition-all shadow-sm active:scale-[0.98]"
           >
             <div className="flex items-center gap-2">
@@ -228,6 +229,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onRequestNotifications}
+            aria-label="Allow notifications"
             className="w-full flex items-center justify-between px-3 py-1.5 min-h-[44px] lg:min-h-0 rounded-lg text-xs font-semibold text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-800/50 transition-all shadow-sm active:scale-[0.98]"
           >
             <div className="flex items-center gap-2">
