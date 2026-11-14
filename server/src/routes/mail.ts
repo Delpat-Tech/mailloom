@@ -48,7 +48,8 @@ function parseUid(raw: string): number {
 
 // Mail routes. Sign-in, sign-out and session checks live in ./auth.ts; requireAuth
 // sets req.accountConfig (server-configured mail host plus the session's credentials).
-export async function mailRoutes(fastify: FastifyInstance) {
+export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageBytes?: number } = {}) {
+  const draftBodyLimit = Math.ceil((opts.maxMessageBytes || 10 * 1024 * 1024) * 1.4) + 256 * 1024;
   // 4. List Mailbox Folders
   fastify.get('/api/mailboxes', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
@@ -334,7 +335,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
   );
 
   // 11d. Drafts: save (create or replace) and delete
-  fastify.post('/api/drafts', { preHandler: [requireAuth], bodyLimit: 8 * 1024 * 1024 }, async (req: AuthenticatedRequest, reply) => {
+  fastify.post('/api/drafts', { preHandler: [requireAuth], bodyLimit: draftBodyLimit }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     const raw = (req.body as Record<string, unknown>) || {};
     const strList = (v: unknown): string[] =>
@@ -390,7 +391,6 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const max = getMaxMessageBytes(config);
       let raw: Record<string, unknown> = {};
       const attachments: SendAttachment[] = [];
-      const inlineImages: NonNullable<SendEmailPayload['inlineImages']> = [];
 
       // Too big: answer, then close the connection so the rest of the upload is discarded, not buffered.
       const tooLarge = (message: string) => {
@@ -412,15 +412,9 @@ export async function mailRoutes(fastify: FastifyInstance) {
               if (total > max) {
                 return tooLarge('Attachments together are larger than the allowed size.');
               }
-              if (part.fieldname.startsWith('cid:')) {
-                // A picture of the message body, referenced from the HTML as cid:<id>; never an attachment.
-                inlineImages.push({
-                  cid: part.fieldname.slice(4),
-                  filename: part.filename || 'image',
-                  contentType: part.mimetype || 'application/octet-stream',
-                  content: buf
-                });
-                continue;
+              if (part.fieldname.toLowerCase().startsWith('cid:')) {
+                // Pictures travel only as data: images in the HTML; a client-chosen Content-ID is never accepted.
+                return reply.status(400).send({ error: 'Pictures must be part of the message, not separate uploads.' });
               }
               attachments.push({
                 filename: part.filename || 'attachment',
@@ -452,7 +446,6 @@ export async function mailRoutes(fastify: FastifyInstance) {
         subject: typeof raw.subject === 'string' && raw.subject ? raw.subject : '(No Subject)',
         text: typeof raw.text === 'string' ? raw.text : undefined,
         html: typeof raw.html === 'string' ? raw.html : undefined,
-        inlineImages,
         attachments,
         inReplyTo: typeof raw.inReplyTo === 'string' ? raw.inReplyTo : undefined,
         references: strList(raw.references),

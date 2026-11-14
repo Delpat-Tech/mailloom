@@ -115,8 +115,6 @@ export interface SendEmailPayload {
    * When absent, `text` is sent and the HTML is built from the escaped text.
    */
   html?: string;
-  /** Images the request carried itself, referenced from `html` as cid:<cid>. */
-  inlineImages?: { cid: string; filename: string; contentType: string; content: Buffer }[];
   attachments?: SendAttachment[];
   /** Message-ID of the mail being answered (with or without angle brackets). */
   inReplyTo?: string;

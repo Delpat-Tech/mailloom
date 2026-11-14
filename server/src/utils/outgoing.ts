@@ -8,23 +8,14 @@ export const OUTGOING_TAGS = [
 
 const SAFE_DATA_IMG = /^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i;
 
-function decodeURIComponentSafe(s: string): string {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-}
-
 /**
  * Clean HTML written in the composer before it is sent or stored in a draft.
  *  - only the composer's tag subset; no scripts, styles, event handlers, classes or inline CSS
  *  - links: http, https, mailto, tel only
- *  - images: only `data:image/{png,jpeg,gif,webp};base64` or `cid:` ids listed in `suppliedCids`;
+ *  - images: only `data:image/{png,jpeg,gif,webp};base64` (cid: images are removed);
  *    remote images and anything else are removed
  */
-export function sanitizeOutgoingHtml(dirty: string, opts: { suppliedCids?: Iterable<string> } = {}): string {
-  const cids = new Set([...(opts.suppliedCids || [])].map((c) => c.toLowerCase()));
+export function sanitizeOutgoingHtml(dirty: string): string {
   return sanitizeHtml(dirty || '', {
     allowedTags: OUTGOING_TAGS,
     allowedAttributes: {
@@ -32,7 +23,7 @@ export function sanitizeOutgoingHtml(dirty: string, opts: { suppliedCids?: Itera
       img: ['src', 'alt', 'width', 'height']
     },
     allowedSchemes: ['http', 'https', 'mailto', 'tel'],
-    allowedSchemesByTag: { img: ['data', 'cid'] },
+    allowedSchemesByTag: { img: ['data'] },
     allowProtocolRelative: false,
     disallowedTagsMode: 'discard',
     transformTags: {
@@ -41,9 +32,6 @@ export function sanitizeOutgoingHtml(dirty: string, opts: { suppliedCids?: Itera
     exclusiveFilter: (frame) => {
       if (frame.tag !== 'img') return false;
       const src = String((frame.attribs as Record<string, string>).src || '').trim();
-      if (/^cid:/i.test(src)) {
-        return !cids.has(decodeURIComponentSafe(src.slice(4)).replace(/^<|>$/g, '').toLowerCase());
-      }
       return !SAFE_DATA_IMG.test(src);
     }
   });

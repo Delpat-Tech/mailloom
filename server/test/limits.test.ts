@@ -114,3 +114,24 @@ test('an oversized upload gets 413 and the connection is closed', async () => {
     await a.close();
   }
 });
+
+test('a multipart field named cid:... is rejected (no client-chosen Content-ID)', async () => {
+  const a = await buildTestApp();
+  const t = await signIn(a, GM.tester);
+  try {
+    const m = multipartBody(
+      { payload: JSON.stringify({ to: [GM.colleague], subject: 'cid field', html: '<p>x</p>' }) },
+      { name: 'x.html', data: Buffer.from('<p>x</p>') }
+    );
+    const body = Buffer.from(m.body.toString('latin1').replace('name="files"', 'name="cid:a&quot; onerror=&quot;alert(1)"'), 'latin1');
+    const r = await a.inject({
+      method: 'POST',
+      url: '/api/messages/send',
+      headers: { ...t.headers, 'content-type': m.type },
+      payload: body
+    });
+    assert.equal(r.statusCode, 400);
+  } finally {
+    await a.close();
+  }
+});

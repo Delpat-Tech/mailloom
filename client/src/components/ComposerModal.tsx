@@ -8,9 +8,10 @@ import {
   Trash2,
   AlertCircle,
   FileSpreadsheet,
-  PenTool
+  PenTool,
+  Info
 } from 'lucide-react';
-import { api } from '../services/api.js';
+import { api, ApiError } from '../services/api.js';
 import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
@@ -162,7 +163,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   const draftUidRef = useRef<number | undefined>(replyMeta?.draftUid);
   const [draftStatus, setDraftStatus] = useState<{ text: string; error: boolean } | null>(null);
   const savingRef = useRef(false);
+  const lastSaveAtRef = useRef(0);
   const sentRef = useRef(false);
+
+  const statusText = [draftStatus?.text, attachments.length > 0 ? 'Attachments are not saved in drafts' : ''].filter(Boolean).join(' · ');
 
   const snapshot = () =>
     JSON.stringify({
@@ -199,21 +203,32 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       if (!res.success) throw new Error('The draft could not be saved.');
       draftUidRef.current = res.uid;
       lastSavedSnap.current = snap;
+      lastSaveAtRef.current = Date.now();
       setDraftStatus({ text: `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, error: false });
       return true;
     } catch (err: unknown) {
-      setDraftStatus({ text: `Draft not saved. ${friendlyError(err, 'Try again in a moment.')}`, error: true });
+      const tooBig = err instanceof ApiError && err.status === 413;
+      setDraftStatus({
+        text: tooBig
+          ? 'This draft is too large to save; remove a picture.'
+          : `Draft not saved. ${friendlyError(err, 'Try again in a moment.')}`,
+        error: true
+      });
       return false;
     } finally {
       savingRef.current = false;
     }
   };
+  const bodyHtmlRef = useRef(bodyHtml);
+  bodyHtmlRef.current = plainMode ? '' : bodyHtml;
   const saveDraftRef = useRef(saveDraftNow);
   saveDraftRef.current = saveDraftNow;
 
   useEffect(() => {
     if (!isOpen) return;
     const id = setInterval(() => {
+      // With pictures every save uploads them all: at most once a minute (closing still saves at once).
+      if (/<img/i.test(bodyHtmlRef.current) && Date.now() - lastSaveAtRef.current < 60000) return;
       void saveDraftRef.current();
     }, 10000);
     return () => clearInterval(id);
@@ -816,15 +831,20 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             </div>
 
             <div className="flex items-center gap-2 min-w-0">
-            {(draftStatus || attachments.length > 0) && (
-              <span
-                className={`text-[11px] truncate ${draftStatus?.error ? 'text-red-600 font-semibold' : 'text-slate-400'}`}
-                role="status"
-              >
-                {draftStatus?.text}
-                {attachments.length > 0 ? `${draftStatus ? ' · ' : ''}Attachments are not saved in drafts` : ''}
-              </span>
-            )}
+            {/* Fixed-size slot: the status never moves the buttons. Icon only on narrow screens. */}
+            <span
+              className={`shrink-0 w-5 sm:w-48 h-5 flex items-center justify-end overflow-hidden text-[11px] ${draftStatus?.error ? 'text-red-600 font-semibold' : 'text-slate-400'}`}
+              role="status"
+              title={statusText}
+              aria-label={statusText || undefined}
+            >
+              {statusText && (
+                <>
+                  <Info className="w-4 h-4 sm:hidden" aria-hidden="true" />
+                  <span className="hidden sm:block truncate">{statusText}</span>
+                </>
+              )}
+            </span>
             <button
               onClick={handleDiscard}
               className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"

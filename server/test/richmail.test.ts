@@ -123,24 +123,22 @@ test('a signature logo arrives inline, next to a real attachment that stays an a
   assert.match(m.mail.text || '', /> old text/);
 });
 
-test('images supplied by the request as cid parts are inlined; unknown cid and remote images are dropped', async () => {
+test('cid: images in the HTML are always dropped (only data: images come in)', async () => {
   await sendLiveEmail(tester, {
     to: [GM.colleague],
-    subject: 'cid-supplied',
+    subject: 'cid-dropped',
     html:
-      '<p>hi</p><img src="cid:mine@x"><img src="cid:not-supplied@x">' +
-      '<img src="https://evil.example/pixel.png"><img src="file:///etc/passwd">',
-    inlineImages: [
-      { cid: 'mine@x', filename: 'logo.png', contentType: 'image/png', content: PNG },
-      { cid: 'unused@x', filename: 'spare.png', contentType: 'image/png', content: PNG }
-    ]
+      '<p>hi</p><img src="cid:mine@x"><img src="https://evil.example/pixel.png"><img src="file:///etc/passwd">'
   });
-  const m = (await inboxMail('cid-supplied'))[0];
+  const m = (await inboxMail('cid-dropped'))[0];
   const html = await sentHtml(m.raw);
-  assert.ok(html.includes('cid:mine@x'));
-  assert.ok(!html.includes('not-supplied') && !html.includes('evil.example') && !html.includes('file:'));
-  assert.equal(m.mail.attachments.length, 1, 'the unreferenced image is not sent');
-  assert.equal(m.mail.attachments[0].contentDisposition, 'inline');
+  assert.ok(!html.includes('cid:') && !html.includes('evil.example') && !html.includes('file:'));
+  assert.equal(m.mail.attachments.length, 0);
+});
+
+test('a picture whose base64 is far over the limit is refused before decoding', () => {
+  const big = 'A'.repeat(Math.ceil(((2 * 1024 * 1024 + 100) * 4) / 3));
+  assert.throws(() => prepareRichBody(`<img src="data:image/png;base64,${big}">`, 'x.test', { maxTotal: 50 * 1024 * 1024 }), /larger than/);
 });
 
 test('outgoing sanitiser strips scripts, event handlers, styles, remote images and bad links', () => {

@@ -202,7 +202,7 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
   let rich: ReturnType<typeof prepareRichBody> | undefined;
   if (payload.html && payload.html.trim() !== '') {
     try {
-      rich = prepareRichBody(payload.html, domain, { supplied: payload.inlineImages, maxTotal: max });
+      rich = prepareRichBody(payload.html, domain, { maxTotal: max });
     } catch (err) {
       if (err instanceof RichBodyError) throw new SendError(err.message, err.status);
       throw err;

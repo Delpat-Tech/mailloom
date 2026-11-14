@@ -45,20 +45,18 @@ function formatLimit(bytes: number): string {
 
 /**
  * Turn composer HTML into a safe html part, a plain-text alternative and the inline image parts.
- *  - `supplied`: images the request itself carried (referenced as cid:<cid>); other cid: references are removed
+ *  - cid: references are removed by the sanitiser (only data: images come in)
  *  - data:image/... URIs are decoded and converted to new cid parts
  *  - every image is capped at MAX_INLINE_IMAGE_BYTES; all inline images together at `maxTotal`
  */
 export function prepareRichBody(
   dirtyHtml: string,
   domain: string,
-  opts: { supplied?: InlineImage[]; maxTotal: number }
+  opts: { maxTotal: number }
 ): RichBody {
-  const supplied = new Map((opts.supplied || []).map((i) => [i.cid.toLowerCase(), i]));
-  const clean = sanitizeOutgoingHtml(dirtyHtml, { suppliedCids: supplied.keys() });
+  const clean = sanitizeOutgoingHtml(dirtyHtml);
 
   const inline: InlineImage[] = [];
-  const used = new Set<string>();
   let total = 0;
   const byData = new Map<string, string>(); // identical data URI -> one part
   let n = 0;
@@ -79,27 +77,18 @@ export function prepareRichBody(
 
   const html = clean.replace(/(<img\b[^>]*?\bsrc=")([^"]*)(")/gi, (whole, pre: string, srcRaw: string, post: string) => {
     const src = srcRaw.replace(/&amp;/g, '&');
-    if (/^cid:/i.test(src)) {
-      let key = src.slice(4);
-      try {
-        key = decodeURIComponent(key);
-      } catch {
-        // keep as is
-      }
-      key = key.replace(/^<|>$/g, '').toLowerCase();
-      const img = supplied.get(key);
-      if (!img) return whole; // cannot happen: the sanitiser removed unknown cids
-      if (!used.has(key)) {
-        used.add(key);
-        add(img);
-      }
-      return `${pre}cid:${img.cid}${post}`;
-    }
     const m = /^data:(image\/[a-z+.-]+);base64,([a-z0-9+/=\s]+)$/i.exec(src);
     if (!m) return whole;
     const known = byData.get(src);
     if (known) return `${pre}cid:${known}${post}`;
-    const content = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
+    const b64 = m[2].replace(/\s+/g, '');
+    if (Math.floor((b64.length * 3) / 4) > MAX_INLINE_IMAGE_BYTES + 3) {
+      throw new RichBodyError(
+        `A picture is larger than the ${formatLimit(MAX_INLINE_IMAGE_BYTES)} limit for pictures in a message.`,
+        413
+      );
+    }
+    const content = Buffer.from(b64, 'base64');
     const type = sniffImage(content);
     if (!type) throw new RichBodyError('One of the pictures is not a PNG, JPEG, GIF or WebP image.', 400);
     n++;
