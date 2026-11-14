@@ -14,8 +14,11 @@ import {
   streamLiveAttachment,
   emptyLiveFolder,
   restoreLiveMessage,
-  isImapAuthError
+  isImapAuthError,
+  LIST_FILTERS,
+  type ListFilter
 } from '../services/imap.js';
+import { enrichList } from '../services/organise.js';
 import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
@@ -99,8 +102,10 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
         to = '',
         subject = '',
         since = '',
-        before = ''
+        before = '',
+        filter = 'all'
       } = req.query as {
+        filter?: string;
         page?: string;
         limit?: string;
         search?: string;
@@ -114,6 +119,11 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       const pageNum = Math.max(1, parseInt(page, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
       const folderPath = path;
+      if (!(LIST_FILTERS as readonly string[]).includes(filter)) {
+        return reply.status(400).send({ code: 'INVALID_INPUT', error: `filter must be one of: ${LIST_FILTERS.join(', ')}` });
+      }
+      const listFilter = filter as ListFilter;
+      const { store, indexer } = fastify.mailloomOrganise;
 
       const filters = {
         search: search.trim() || undefined,
@@ -125,11 +135,17 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
       };
 
       if (config.isDemo) {
-        return demoMailService.getMessages(folderPath, pageNum, limitNum, search, filters);
+        const keep = (m: { isSeen: boolean; isFlagged: boolean; hasAttachments: boolean }) =>
+          listFilter === 'unread' ? !m.isSeen : listFilter === 'starred' ? m.isFlagged : listFilter === 'attachments' ? m.hasAttachments : true;
+        const all = demoMailService.getMessages(folderPath, 1, 10_000, search, filters).messages.filter(keep);
+        const pageItems = all.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+        return { messages: await enrichList(store, indexer, config, pageItems), total: all.length };
       }
 
       try {
-        return await getLiveMessages(config, folderPath, pageNum, limitNum, filters);
+        const cache = (folder: string, uidValidity: string, uids: number[]) => store.attachmentFlags(config.email, folder, uidValidity, uids);
+        const r = await getLiveMessages(config, folderPath, pageNum, limitNum, filters, listFilter, cache);
+        return { ...r, messages: await enrichList(store, indexer, config, r.messages, req.log) };
       } catch (err) {
         return failMail(req, reply, err, 'Could not load messages');
       }

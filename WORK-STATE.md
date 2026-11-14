@@ -5,6 +5,7 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
+- builder-a: server side of list filters, labels, starred view, snooze, conversations and bounce summaries (branch builder-a, not merged; client by builder B).
 - On main, reviewed and tested (server 178, client 70): sign-in and sessions, sending, organising, reading, drafts,
   live list, phone and keyboard basics, agent keys and API, push notifications, rich-text composer with inline images
   and signature logo, release build (`pnpm release`), deploy runbook (docs/deploy.md), message deep links,
@@ -20,6 +21,9 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 3. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
 ## Later
+- Snooze wake-up without notifications on waits for the next sign-in or request for that mailbox; on time only with a stored push login (docs/organise.md; waits on real use, or on a decision to keep a separate wake-up login).
+- Labels server side (builder-a): 501 path for servers without custom keywords is untested (GreenMail and Dovecot allow them); conversation index rows are never pruned for folders renamed away or for mailboxes no longer used (waits on real use).
+- Conversation index on a big mailbox: until the first background run ends, older threads count 1 and the thread view may miss older messages (docs/organise.md; waits on real-mailbox timing).
 - Rich composer built on builder-b (TipTap): needs a browser check (typing, paste from Word/Gmail, picture paste/drop, signature logo, phone width).
 - Signatures (and the logo) are still stored per browser in localStorage; move to server account settings (waits on a settings store).
 - Pictures in a message are sent as data: in the request JSON and turned into cid parts on the server; large messages could use multipart upload instead.
