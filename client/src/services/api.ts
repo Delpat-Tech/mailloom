@@ -1,5 +1,6 @@
 import { realUid } from './uidKey.js';
 import { friendlyError } from './errors.js';
+import { getLoadPictures } from './settings.js';
 import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount, StoredAccountProfile } from '../types.js';
 
 /*
@@ -356,7 +357,9 @@ export const api = {
   ): Promise<ParsedEmailMessage> => {
     const encoded = encodeURIComponent(folderPath);
     const params = new URLSearchParams();
+    // Pictures: the reader asked for them (1 = load directly), or the account loads them automatically (the picture proxy).
     if (options.showImages) params.set('images', '1');
+    else if (getLoadPictures(activeHandle)) params.set('images', 'auto');
     // peek: read without marking as read (prefetching neighbours).
     if (options.peek) params.set('peek', '1');
     const q = params.toString() ? `?${params}` : '';

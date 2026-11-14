@@ -1602,6 +1602,10 @@ export const App: React.FC = () => {
               notificationPermission={notificationPerm}
               onRequestNotifications={handleRequestNotifications}
               onCloseMobileSidebar={() => setShowMobileSidebar(false)}
+              onPicturesChange={() => {
+                detailCache.clear();
+                if (selectedUid !== null) void handleSelectMessageRef.current(selectedUid);
+              }}
               onOpenConnections={() => {
                 setShowConnections(true);
                 setShowMobileSidebar(false);

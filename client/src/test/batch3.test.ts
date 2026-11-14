@@ -62,3 +62,26 @@ describe('built-in templates', () => {
     expect(findPlaceholder('all filled in')).toBeNull();
   });
 });
+
+import { api, setActiveHandle } from '../services/api.js';
+import { getLoadPictures, setLoadPictures } from '../services/settings.js';
+
+describe('load pictures automatically', () => {
+  function urlOfDetail(opts: { showImages?: boolean } = {}): Promise<string> {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ uid: 1 }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    return api.getMessageDetail('INBOX', 1, opts).then(() => (fetchMock.mock.calls[0] as unknown as [string])[0]);
+  }
+
+  it('asks for images=auto by default, nothing when switched off, images=1 for Show images', async () => {
+    setActiveHandle('acct1');
+    expect(getLoadPictures('acct1')).toBe(true);
+    expect(await urlOfDetail()).toContain('images=auto');
+    expect(await urlOfDetail({ showImages: true })).toContain('images=1');
+    setLoadPictures('acct1', false);
+    expect(getLoadPictures('acct1')).toBe(false);
+    expect(await urlOfDetail()).not.toContain('images=');
+    setLoadPictures('acct1', true);
+    setActiveHandle(null);
+  });
+});

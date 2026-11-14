@@ -26,6 +26,7 @@ import {
 import type { MailboxFolder, UserAccount, StoredAccountProfile } from '../types.js';
 import { Logo } from './Logo.js';
 import { ThemePicker } from './ThemePicker.js';
+import { PicturesSetting } from './PicturesSetting.js';
 import { TagSwatch } from './LabelChip.js';
 import type { Label } from '../services/labels.js';
 import { STARRED_PATH, SNOOZED_PATH, labelPath } from '../services/views.js';
@@ -49,6 +50,8 @@ interface SidebarProps {
   onRequestNotifications?: () => void;
   onCloseMobileSidebar?: () => void;
   onOpenConnections?: () => void;
+  /** "Load pictures automatically" was changed: open messages are fetched again. */
+  onPicturesChange?: (on: boolean) => void;
   /** Opens notification settings (push while closed). Replaces the plain permission button. */
   onOpenNotifications?: () => void;
   /** Labels with counts, shown under the folders. */
@@ -132,6 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onRequestNotifications,
   onCloseMobileSidebar,
   onOpenConnections,
+  onPicturesChange,
   onOpenNotifications,
   labels = [],
   onManageLabels,
@@ -436,6 +440,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <ThemePicker />
+            <PicturesSetting handle={account.handle} onChange={onPicturesChange} />
 
             {/* Actions */}
             <div className="border-t border-line pt-1 flex flex-col gap-0.5">
