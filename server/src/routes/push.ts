@@ -145,6 +145,8 @@ export async function pushRoutes(fastify: FastifyInstance) {
       showDetails,
       quiet
     });
+    // The re-entered password is the current one: rows saved earlier on other devices get it too.
+    store.updatePasswordForMailbox(account.email, password);
     watcher.ensure(account.email);
     return reply.status(201).send({ device: publicDevice(device) });
   });

@@ -268,9 +268,10 @@ export const api = {
   },
 
   /** Signs one account out (this browser only). Throws if the server could not be told. */
-  logout: async (handle: string | null = activeHandle): Promise<void> => {
+  logout: async (handle: string | null = activeHandle, pushEndpoint: string | null = null): Promise<void> => {
     if (!handle) return;
-    await request('/auth/logout', { method: 'POST', account: handle });
+    // The device's push endpoint lets the server drop its notification rows even if the session already expired.
+    await request('/auth/logout', { method: 'POST', account: handle, ...(pushEndpoint ? { body: JSON.stringify({ endpoint: pushEndpoint }) } : {}) });
     removeStoredAccount(handle);
   },
 

@@ -116,7 +116,7 @@ export class PushStore {
   }
 
   countForMailbox(email: string): number {
-    const r = this.db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE email = ?').get(email.toLowerCase()) as { n: number };
+    const r = this.db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE email = ? AND disabled_at IS NULL').get(email.toLowerCase()) as { n: number };
     return Number(r.n);
   }
 
@@ -169,6 +169,48 @@ export class PushStore {
 
   deleteAllForMailbox(email: string): number {
     return Number(this.db.prepare('DELETE FROM push_subscriptions WHERE email = ?').run(email.toLowerCase()).changes);
+  }
+
+  /**
+   * After a successful password re-entry: every other working row of this mailbox gets the new
+   * password (re-encrypted per row), so no old password lingers. Returns how many rows changed.
+   */
+  updatePasswordForMailbox(email: string, password: string): number {
+    const rows = this.db
+      .prepare('SELECT * FROM push_subscriptions WHERE email = ? AND disabled_at IS NULL')
+      .all(email.toLowerCase()) as unknown as Row[];
+    let changed = 0;
+    for (const r of rows) {
+      const s = decryptDeviceSecrets(this.secret, r.id, r.email, r.endpoint_hash, r.enc_secrets);
+      if (!s || s.password === password) continue;
+      const enc = encryptDeviceSecrets(this.secret, r.id, r.email, r.endpoint_hash, { ...s, password });
+      this.db.prepare('UPDATE push_subscriptions SET enc_secrets = ? WHERE id = ?').run(enc, r.id);
+      changed++;
+    }
+    return changed;
+  }
+
+  /** Re-signing in replaces the session: its devices follow the new one. */
+  rebindSession(oldKey: string, newKey: string): void {
+    this.db.prepare('UPDATE push_subscriptions SET session_key = ? WHERE session_key = ?').run(newKey, oldKey);
+  }
+
+  /** Logout from a device: removes this device's row for the mailbox. Returns whether one existed. */
+  deleteByEndpoint(email: string, endpoint: string): boolean {
+    return Number(this.db.prepare('DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND email = ?').run(endpointHash(endpoint), email.toLowerCase()).changes) > 0;
+  }
+
+  /**
+   * Logout from a device whose session already expired (so its mailbox is unknown): removes this
+   * endpoint's rows whose session no longer exists. Rows of live sessions are never touched.
+   * Returns the mailboxes affected.
+   */
+  deleteOrphansByEndpoint(endpoint: string): string[] {
+    const where = 'endpoint_hash = ? AND session_key IS NOT NULL AND session_key NOT IN (SELECT id_hash FROM sessions)';
+    const h = endpointHash(endpoint);
+    const rows = this.db.prepare(`SELECT DISTINCT email FROM push_subscriptions WHERE ${where}`).all(h) as Array<{ email: string }>;
+    this.db.prepare(`DELETE FROM push_subscriptions WHERE ${where}`).run(h);
+    return rows.map((r) => r.email);
   }
 
   /** Signing out of a session removes the devices it turned notifications on for. Returns their mailboxes. */

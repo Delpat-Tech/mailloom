@@ -2,6 +2,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import http from 'node:http';
+import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { FastifyInstance } from 'fastify';
 import { generateVAPIDKeys } from 'web-push';
@@ -10,6 +11,8 @@ import { buildApp } from '../src/app.js';
 import { isAllowedPushEndpoint, loadPushConfig } from '../src/push/config.js';
 import { decryptDeviceSecrets, encryptDeviceSecrets, endpointHash } from '../src/push/crypto.js';
 import { buildNewMailPayload } from '../src/push/watcher.js';
+import { isImapAuthError, isPasswordRefused, getPooledImapClient } from '../src/services/imap.js';
+import { isSmtpAuthError } from '../src/agent/send-adapter.js';
 import { COLLEAGUE, TESTER, TEST_PASSWORD, buildTestApp, signIn, testEnv, withImap, type SignedIn } from './helpers.js';
 
 /**
@@ -109,7 +112,7 @@ const PUSH_ENV = { VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.p
 async function pushApp(timing: Record<string, number> = {}): Promise<FastifyInstance> {
   return buildTestApp(PUSH_ENV, {
     push: {
-      timing: { debounceMs: 600, collapseMs: 30_000, pollMs: 400, idlePollMs: 60_000, retryMs: 200, ...timing },
+      timing: { debounceMs: 600, collapseMs: 30_000, pollMs: 400, idlePollMs: 60_000, retryMs: 200, jitterMs: 0, confirmRefusalMs: 500, ...timing },
       endpointAllowed: (e) => e.startsWith(mockBase + '/')
     }
   });
@@ -461,6 +464,280 @@ describe('push watcher', () => {
       await waitFor(() => app.mailloomPush.watcher!.isConnected(TESTER), 8000, 'watcher connection');
     } finally {
       await app.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------- review fixes
+
+/** A tiny IMAP server that answers every LOGIN with the given NO line (plain text, 127.0.0.1). */
+function fakeImap(noLine: string): Promise<{ port: number; logins: () => number; close: () => Promise<void> }> {
+  let logins = 0;
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((sock) => {
+    sockets.add(sock);
+    sock.on('close', () => sockets.delete(sock));
+    sock.on('error', () => undefined);
+    sock.write('* OK IMAP4rev1 ready\r\n');
+    let buf = '';
+    sock.on('data', (d) => {
+      buf += d.toString('latin1');
+      let i;
+      while ((i = buf.indexOf('\r\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const [tag, cmd] = line.split(' ');
+        if (/^CAPABILITY$/i.test(cmd || '')) sock.write(`* CAPABILITY IMAP4rev1\r\n${tag} OK done\r\n`);
+        else if (/^LOGIN$/i.test(cmd || '')) {
+          logins++;
+          sock.write(`${tag} NO ${noLine}\r\n`);
+        } else if (/^LOGOUT$/i.test(cmd || '')) sock.write(`* BYE\r\n${tag} OK bye\r\n`);
+        else sock.write(`${tag} BAD unsupported\r\n`);
+      }
+    });
+  });
+  return new Promise((resolve) =>
+    server.listen(0, '127.0.0.1', () =>
+      resolve({
+        port: (server.address() as AddressInfo).port,
+        logins: () => logins,
+        close: () =>
+          new Promise<void>((r) => {
+            for (const sk of sockets) sk.destroy();
+            server.close(() => r());
+          })
+      })
+    )
+  );
+}
+
+function storeDevice(app: FastifyInstance, d: FakeDevice, password: string, sessionKey: string | null = null, email = TESTER) {
+  return app.mailloomPush.store.upsert({
+    email,
+    endpoint: d.subscription.endpoint,
+    p256dh: d.subscription.keys.p256dh,
+    auth: d.subscription.keys.auth,
+    password,
+    sessionKey,
+    label: 'Phone',
+    showDetails: false,
+    quiet: false
+  });
+}
+
+function accountForPlain(port: number) {
+  return {
+    email: TESTER,
+    imapHost: '127.0.0.1',
+    imapPort: port,
+    imapSecure: false,
+    imapUser: TESTER,
+    imapPass: 'x',
+    smtpHost: '127.0.0.1',
+    smtpPort: 1,
+    smtpSecure: false,
+    tls: { rejectUnauthorized: false }
+  };
+}
+
+describe('push watcher: connections', () => {
+  test('a refresh before the retry timer fires leaves exactly one live connection', async () => {
+    const app = await pushApp({ retryMs: 1200 });
+    try {
+      const t = await signIn(app, TESTER);
+      await subscribe(app, t, fakeDevice());
+      const pw = app.mailloomPush.watcher! as unknown as { watchers: Map<string, { client: { close(): void; usable: boolean } | null; retryTimer: unknown }> };
+      await waitFor(() => app.mailloomPush.watcher!.isConnected(TESTER), 8000, 'watcher connection');
+      const w = pw.watchers.get(TESTER)!;
+      const first = w.client!;
+      first.close(); // dropped connection: the retry timer is now armed for 1.2 s
+      await waitFor(() => w.client === null && w.retryTimer !== null, 3000, 'retry armed');
+      app.mailloomPush.watcher!.ensure(TESTER); // a device turned notifications on meanwhile
+      await waitFor(() => w.client !== null, 5000, 'reconnected by refresh');
+      const second = w.client!;
+      assert.notEqual(second, first);
+      assert.equal(w.retryTimer, null);
+      await sleep(2000); // well past the original retry time
+      assert.equal(w.client, second, 'the retry timer must not replace the live connection');
+      assert.ok(second.usable);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('without IDLE the poll path (forced short here) finds new mail', async () => {
+    const app = await pushApp({ noIdle: true, pollMs: 300, idlePollMs: 600_000, debounceMs: 200 } as Record<string, number>);
+    try {
+      const t = await signIn(app, TESTER);
+      const d = fakeDevice();
+      await subscribe(app, t, d);
+      await waitFor(() => app.mailloomPush.watcher!.isConnected(TESTER), 8000, 'watcher connection');
+      await plant(TESTER, uniq('poll'));
+      await waitFor(() => pushesFor(d).length >= 1, 8000, 'push from the poll');
+      assert.equal(decrypt(d, pushesFor(d)[0]!.body).count, 1);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('temporary sign-in failures are not refused passwords', () => {
+  test('error classification', () => {
+    const temp = { authenticationFailed: true, serverResponseCode: 'UNAVAILABLE' };
+    const refused = { authenticationFailed: true, serverResponseCode: 'AUTHENTICATIONFAILED' };
+    assert.equal(isPasswordRefused(temp), false);
+    assert.equal(isImapAuthError(temp), false);
+    assert.equal(isPasswordRefused(refused), true);
+    assert.equal(isImapAuthError(refused), true);
+    assert.equal(isSmtpAuthError({ code: 'EAUTH', responseCode: 454 }), false);
+    assert.equal(isSmtpAuthError({ code: 'EAUTH', responseCode: 535 }), true);
+  });
+
+  test('the watcher keeps the device and retries when the server says "Temporary authentication failure"', async () => {
+    const fake = await fakeImap('[UNAVAILABLE] Temporary authentication failure');
+    const app = await buildTestApp(
+      { ...PUSH_ENV, MAIL_IMAP_PORT: String(fake.port), MAIL_IMAP_SECURE: 'false' },
+      { push: { timing: { debounceMs: 600, collapseMs: 30_000, pollMs: 400, idlePollMs: 60_000, retryMs: 100, jitterMs: 0, confirmRefusalMs: 60_000 }, endpointAllowed: (e) => e.startsWith(mockBase + '/') } }
+    );
+    try {
+      const d = fakeDevice();
+      const device = storeDevice(app, d, 'whatever');
+      app.mailloomPush.watcher!.ensure(TESTER);
+      await waitFor(() => fake.logins() >= 3, 8000, 'repeated login attempts');
+      const row = rawRow(app, device.id)!;
+      assert.equal(row.disabled_at, null);
+      assert.notEqual(row.enc_secrets, '');
+      assert.equal(app.mailloomPush.watcher!.isWatching(TESTER), true);
+      assert.equal(pushesFor(d).length, 0); // nobody is told "stopped"
+    } finally {
+      await app.close();
+      await fake.close();
+    }
+  });
+
+  test('a session connection is not ended by a temporary failure, but is by a real refusal', async () => {
+    const temp = await fakeImap('[UNAVAILABLE] Temporary authentication failure');
+    const bad = await fakeImap('[AUTHENTICATIONFAILED] Invalid credentials');
+    const tmpKey = 'tmp-' + run;
+    const badKey = 'bad-' + run;
+    try {
+      await assert.rejects(getPooledImapClient({ ...accountForPlain(temp.port), sessionKey: tmpKey }), (err: Error) => err.name !== 'ImapAuthError');
+      await assert.rejects(getPooledImapClient({ ...accountForPlain(bad.port), sessionKey: badKey }), (err: Error) => err.name === 'ImapAuthError');
+    } finally {
+      await temp.close();
+      await bad.close();
+    }
+  });
+});
+
+describe('push device lifecycle', () => {
+  test("re-entering the password updates the password stored on the mailbox's other devices", async () => {
+    const app = await pushApp();
+    try {
+      const t = await signIn(app, TESTER);
+      const oldRow = storeDevice(app, fakeDevice(), 'an-old-password');
+      assert.equal((await subscribe(app, t, fakeDevice())).statusCode, 201);
+      const rows = app.mailloomPush.store.active(TESTER);
+      assert.equal(rows.length, 2);
+      for (const r of rows) assert.equal(r.secrets.password, TEST_PASSWORD);
+      assert.ok(rows.some((r) => r.id === oldRow.id));
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('the device cap counts only working devices', async () => {
+    const app = await pushApp();
+    try {
+      const t = await signIn(app, TESTER);
+      const { store } = app.mailloomPush;
+      for (let i = 0; i < 10; i++) {
+        const r = storeDevice(app, fakeDevice(), TEST_PASSWORD);
+        if (i < 5) store.disable(r.id, 'test');
+      }
+      assert.equal(store.countForMailbox(TESTER), 5);
+      assert.equal((await subscribe(app, t, fakeDevice())).statusCode, 201);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('logout with the push endpoint removes the device even when the session already expired', async () => {
+    const app = await pushApp();
+    try {
+      const t = await signIn(app, TESTER);
+      const c = await signIn(app, COLLEAGUE);
+      const d = fakeDevice();
+      assert.equal((await subscribe(app, t, d)).statusCode, 201);
+      assert.equal((await subscribe(app, c, d)).statusCode, 201); // same browser endpoint, other mailbox
+      const { store } = app.mailloomPush;
+      // The tester's session expires on the server (row gone); the colleague's stays live.
+      const key = (app.mailloom.sessions.database.prepare('SELECT id_hash FROM sessions WHERE email = ?').get(TESTER) as { id_hash: string }).id_hash;
+      app.mailloom.sessions.deleteByKey(key);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/logout',
+        headers: { ...t.headers, 'content-type': 'application/json' },
+        payload: { endpoint: d.subscription.endpoint }
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(store.hasEndpoint(TESTER, d.subscription.endpoint), false);
+      assert.equal(store.hasEndpoint(COLLEAGUE, d.subscription.endpoint), true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('signing in again moves the device to the new session so sign-out still removes it', async () => {
+    const app = await pushApp();
+    try {
+      const t = await signIn(app, TESTER);
+      const d = fakeDevice();
+      assert.equal((await subscribe(app, t, d)).statusCode, 201);
+      const again = await signIn(app, TESTER, { browser: t.browser });
+      assert.equal(again.res.statusCode, 200);
+      assert.equal(app.mailloomPush.store.hasEndpoint(TESTER, d.subscription.endpoint), true);
+      const out = await app.inject({ method: 'POST', url: '/api/auth/logout', headers: again.headers });
+      assert.equal(out.statusCode, 200);
+      assert.equal(app.mailloomPush.store.hasEndpoint(TESTER, d.subscription.endpoint), false);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('refusal classification in the watcher', () => {
+  async function runAgainst(noLine: string, confirmRefusalMs: number) {
+    const fake = await fakeImap(noLine);
+    const app = await buildTestApp(
+      { ...PUSH_ENV, MAIL_IMAP_PORT: String(fake.port), MAIL_IMAP_SECURE: 'false' },
+      { push: { timing: { debounceMs: 600, collapseMs: 30_000, pollMs: 400, idlePollMs: 60_000, retryMs: 100, jitterMs: 0, confirmRefusalMs }, endpointAllowed: (e) => e.startsWith(mockBase + '/') } }
+    );
+    return { fake, app };
+  }
+
+  test('AUTHENTICATIONFAILED disables the device at once', async () => {
+    const { fake, app } = await runAgainst('[AUTHENTICATIONFAILED] Invalid credentials', 60_000);
+    try {
+      const device = storeDevice(app, fakeDevice(), 'changed');
+      app.mailloomPush.watcher!.ensure(TESTER);
+      await waitFor(() => rawRow(app, device.id)?.disabled_at != null, 5000, 'device disabled');
+    } finally {
+      await app.close();
+      await fake.close();
+    }
+  });
+
+  test('a plain NO (no code) waits for a second refusal before disabling', async () => {
+    const { fake, app } = await runAgainst('Authentication failed', 60_000);
+    try {
+      const device = storeDevice(app, fakeDevice(), 'changed');
+      app.mailloomPush.watcher!.ensure(TESTER);
+      await waitFor(() => fake.logins() >= 3, 5000, 'repeated attempts');
+      assert.equal(rawRow(app, device.id)!.disabled_at, null);
+    } finally {
+      await app.close();
+      await fake.close();
     }
   });
 });

@@ -731,7 +731,8 @@ export const App: React.FC = () => {
   /** Signs one account out on the server. Returns false (and says why) if that failed. */
   const signOutAccount = async (handle: string, email: string): Promise<boolean> => {
     try {
-      await api.logout(handle);
+      const endpoint = (await currentSubscription())?.endpoint ?? null;
+      await api.logout(handle, endpoint);
       return true;
     } catch (err) {
       showToast(`Could not sign out of ${email}: ${err instanceof Error ? err.message : 'unknown error'}`, 'error');
