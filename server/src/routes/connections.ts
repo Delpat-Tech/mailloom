@@ -117,7 +117,7 @@ function realMailboxOnly(req: FastifyRequest, reply: FastifyReply): boolean {
 }
 
 export async function connectionRoutes(fastify: FastifyInstance) {
-  const auth = { preHandler: [requireAuth] };
+  const auth = { onRequest: [requireAuth] };
 
   fastify.get('/api/connections/keys', auth, async (req) => {
     const { store, config } = fastify.mailloomAgent;

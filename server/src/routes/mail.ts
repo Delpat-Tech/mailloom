@@ -52,7 +52,7 @@ function parseUid(raw: string): number {
 export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageBytes?: number } = {}) {
   const draftBodyLimit = Math.ceil((opts.maxMessageBytes || 10 * 1024 * 1024) * 1.4) + 256 * 1024;
   // 4. List Mailbox Folders
-  fastify.get('/api/mailboxes', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+  fastify.get('/api/mailboxes', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     if (config.isDemo) {
       return { folders: demoMailService.getMailboxes() };
@@ -67,7 +67,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
 
   // Find one message of the signed-in mailbox by its Message-ID (INBOX first, then every other folder).
   // Used by deep links (#/m/<Message-ID>). Only ever searches the session's own account.
-  fastify.get('/api/messages/locate', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+  fastify.get('/api/messages/locate', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     const raw = String((req.query as { message_id?: string }).message_id ?? '').trim();
     if (!raw || raw.length > 998 || /[\s\u0000-\u001f\u007f]/.test(raw)) return reply.status(400).send({ error: 'Invalid Message-ID' });
@@ -86,7 +86,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 5. List Messages in Mailbox
   fastify.get(
     '/api/mailboxes/:path/messages',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path } = req.params as { path: string };
@@ -138,7 +138,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 6. Get Message Detail
   fastify.get(
     '/api/mailboxes/:path/messages/:uid',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
@@ -168,7 +168,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 7. Download Attachment
   fastify.get(
     '/api/mailboxes/:path/messages/:uid/attachments/:partId',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { uid, partId } = req.params as { path: string; uid: string; partId: string };
@@ -206,7 +206,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 8. Toggle Message Flags (Seen / Flagged)
   fastify.post(
     '/api/mailboxes/:path/messages/:uid/flags',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
@@ -232,7 +232,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 9. Move Message
   fastify.post(
     '/api/mailboxes/:path/messages/:uid/move',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
@@ -259,7 +259,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 10. Delete Message
   fastify.delete(
     '/api/mailboxes/:path/messages/:uid',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
@@ -285,7 +285,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 11. Mark Message as Spam (Move to Junk & Mark Read)
   fastify.post(
     '/api/mailboxes/:path/messages/:uid/spam',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
@@ -312,7 +312,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   for (const [suffix, from] of [['restore', 'Trash'], ['not-spam', 'Junk']] as const) {
     fastify.post(
       `/api/mailboxes/:path/messages/:uid/${suffix}`,
-      { preHandler: [requireAuth] },
+      { onRequest: [requireAuth] },
       async (req: AuthenticatedRequest, reply) => {
         const config = req.accountConfig!;
         const { path, uid } = req.params as { path: string; uid: string };
@@ -336,7 +336,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 11c. Empty Trash / Junk (permanent)
   fastify.post(
     '/api/mailboxes/:path/empty',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path } = req.params as { path: string };
@@ -354,7 +354,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   );
 
   // 11d. Drafts: save (create or replace) and delete
-  fastify.post('/api/drafts', { preHandler: [requireAuth], bodyLimit: draftBodyLimit }, async (req: AuthenticatedRequest, reply) => {
+  fastify.post('/api/drafts', { onRequest: [requireAuth], bodyLimit: draftBodyLimit }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     const raw = (req.body as Record<string, unknown>) || {};
     const strList = (v: unknown): string[] =>
@@ -382,7 +382,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
     }
   });
 
-  fastify.delete('/api/drafts/:uid', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+  fastify.delete('/api/drafts/:uid', { onRequest: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     const uid = parseUid((req.params as { uid: string }).uid);
     if (!uid) return reply.status(400).send({ error: 'Invalid draft id' });
@@ -399,7 +399,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
   // 12. Send Outgoing Message (multipart/form-data: JSON field "payload" + file parts, or plain JSON without files)
   fastify.post(
     '/api/messages/send',
-    { preHandler: [requireAuth] },
+    { onRequest: [requireAuth] },
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const release = acquireSlot(`send|${config.email.toLowerCase()}|${config.imapHost}`, MAX_CONCURRENT_SENDS);

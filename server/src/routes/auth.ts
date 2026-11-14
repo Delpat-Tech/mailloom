@@ -152,7 +152,7 @@ function sendAuthError(reply: FastifyReply, status: number, code: keyof typeof A
   return reply.status(status).send({ error: AUTH_ERRORS[code], code, ...extra });
 }
 
-/** preHandler: resolves the session for the requested account, or answers 401. */
+/** onRequest hook: resolves the session for the requested account, or answers 401. */
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const { sessions, config } = req.server.mailloom;
   const handle = requestedHandle(req);
@@ -302,7 +302,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   });
 
   // 2. The account a request names (via X-Mailloom-Account)
-  fastify.get('/api/auth/me', { preHandler: [requireAuth] }, async (req) => {
+  fastify.get('/api/auth/me', { onRequest: [requireAuth] }, async (req) => {
     return { account: publicAccount(req.mailSession!) };
   });
 

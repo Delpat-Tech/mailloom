@@ -97,7 +97,7 @@ function endpointFromBody(req: FastifyRequest): string | null {
 }
 
 export async function pushRoutes(fastify: FastifyInstance) {
-  const auth = { preHandler: [requireAuth] };
+  const auth = { onRequest: [requireAuth] };
 
   fastify.addHook('onSend', async (req, reply) => {
     if (req.url.includes('/api/push/')) reply.header('Cache-Control', 'no-store');
