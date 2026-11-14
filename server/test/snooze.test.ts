@@ -197,3 +197,52 @@ test('snoozes survive a restart and wake on the next sign-in', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('two copies with the same Message-ID are tracked and woken separately', async () => {
+  await resetAll();
+  t = await signIn(app, GM.tester); // the test clock has moved past the idle timeout
+  const a = await put('INBOX', 'twin', '<snz-twin@delpat.test>', ['\Seen']);
+  const b = await put('INBOX', 'twin', '<snz-twin@delpat.test>', ['\Seen']);
+  assert.equal((await snooze(t, { mailbox: 'INBOX', uids: [a], until: new Date(clock + 5 * MIN).toISOString() })).statusCode, 200);
+  assert.equal((await snooze(t, { mailbox: 'INBOX', uids: [b], until: new Date(clock + 50 * MIN).toISOString() })).statusCode, 200);
+  const records = app.mailloomOrganise.store.snoozes(GM.tester);
+  assert.equal(records.length, 2);
+  assert.ok(records.every((r) => r.uid > 0 && r.messageId === 'snz-twin@delpat.test'));
+  assert.notEqual(records[0]!.uid, records[1]!.uid);
+
+  clock += 6 * MIN;
+  const r = await app.mailloomOrganise.snoozer.wakeFor(accountFor(GM.tester));
+  assert.deepEqual(r, { woken: 1, dropped: 0 });
+  assert.equal((await folder('INBOX')).length, 1);
+  assert.equal((await folder('Snoozed')).length, 1);
+  assert.equal(app.mailloomOrganise.store.snoozes(GM.tester).length, 1);
+
+  clock += 45 * MIN;
+  assert.deepEqual(await app.mailloomOrganise.snoozer.wakeFor(accountFor(GM.tester)), { woken: 1, dropped: 0 });
+  assert.equal((await folder('INBOX')).length, 2);
+  assert.deepEqual(await folder('Snoozed'), []);
+});
+
+test('a wake-up that keeps failing backs off 1, 5, 15, 60 minutes for that mailbox', async () => {
+  await resetAll();
+  t = await signIn(app, GM.tester); // the test clock has moved past the idle timeout
+  const uid = await put('INBOX', 'backoff', '<snz-back@delpat.test>');
+  assert.equal((await snooze(t, { mailbox: 'INBOX', uids: [uid], until: new Date(clock + MIN).toISOString() })).statusCode, 200);
+  clock += 2 * MIN;
+  const snoozer = app.mailloomOrganise.snoozer;
+  const broken = accountFor(GM.tester, 'Test User', { imapPass: 'wrong-password' });
+  for (const wait of [1, 5, 15, 60, 60]) {
+    assert.equal(snoozer.coolingOff(GM.tester), false);
+    assert.deepEqual(await snoozer.wakeFor(broken), { woken: 0, dropped: 0 });
+    assert.equal(snoozer.coolingOff(GM.tester), true);
+    // While cooling off, requests do not even try (the good login is skipped too).
+    assert.deepEqual(await snoozer.wakeFor(accountFor(GM.tester)), { woken: 0, dropped: 0 });
+    assert.equal((await folder('Snoozed')).length, 1);
+    clock += wait * MIN - 1000;
+    assert.equal(snoozer.coolingOff(GM.tester), true);
+    clock += 1000;
+  }
+  // Success clears the back-off.
+  assert.deepEqual(await snoozer.wakeFor(accountFor(GM.tester)), { woken: 1, dropped: 0 });
+  assert.equal(snoozer.coolingOff(GM.tester), false);
+});

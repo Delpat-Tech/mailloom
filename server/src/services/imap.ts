@@ -463,14 +463,21 @@ function filterCriteria(filter: ListFilter): SearchObject {
   return {};
 }
 
-/** Keep only the UIDs whose BODYSTRUCTURE lists a real attachment. */
-async function withAttachments(client: ImapFlow, uids: number[]): Promise<number[]> {
+/** Cached has-attachments per UID for a folder at a UIDVALIDITY (the conversation index). */
+export type AttachmentCache = (folder: string, uidValidity: string, uids: number[]) => Map<number, boolean>;
+
+/** Keep only the UIDs whose BODYSTRUCTURE lists a real attachment; cached answers skip the fetch. */
+async function withAttachments(client: ImapFlow, uids: number[], cache?: AttachmentCache): Promise<number[]> {
   if (uids.length === 0) return [];
-  const keep = new Set<number>();
-  for await (const msg of client.fetch(uids, { uid: true, bodyStructure: true }, { uid: true })) {
-    if (classifyParts(msg.bodyStructure).attachments.length > 0) keep.add(msg.uid);
+  const mb = client.mailbox;
+  const known = cache && mb ? cache(mb.path, String(mb.uidValidity ?? ''), uids) : new Map<number, boolean>();
+  const unknown = uids.filter((u) => !known.has(u));
+  if (unknown.length > 0) {
+    for await (const msg of client.fetch(unknown, { uid: true, bodyStructure: true }, { uid: true })) {
+      known.set(msg.uid, classifyParts(msg.bodyStructure).attachments.length > 0);
+    }
   }
-  return uids.filter((u) => keep.has(u));
+  return uids.filter((u) => known.get(u) === true);
 }
 
 export async function getLiveMessages(
@@ -479,7 +486,8 @@ export async function getLiveMessages(
   page = 1,
   limit = 50,
   filters?: SearchFilters,
-  filter: ListFilter = 'all'
+  filter: ListFilter = 'all',
+  attachmentCache?: AttachmentCache
 ): Promise<{ messages: MessageHeader[]; total: number }> {
   const client = await getPooledImapClient(config);
 
@@ -529,7 +537,7 @@ export async function getLiveMessages(
 
       // Sort descending (newest UID first)
       let sortedUids = [...searchResult].sort((a, b) => b - a);
-      if (filter === 'attachments') sortedUids = await withAttachments(client, sortedUids);
+      if (filter === 'attachments') sortedUids = await withAttachments(client, sortedUids, attachmentCache);
       const total = sortedUids.length;
       const startIdx = (page - 1) * limit;
       const pagedUids = sortedUids.slice(startIdx, startIdx + limit);

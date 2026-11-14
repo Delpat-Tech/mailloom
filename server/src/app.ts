@@ -23,6 +23,7 @@ import { DEFAULT_TIMING, PushWatcher, type WatcherTiming } from './push/watcher.
 import { organiseRoutes } from './routes/organise.js';
 import { OrganiseStore } from './services/organise-store.js';
 import { Snoozer } from './services/snoozer.js';
+import { ConversationIndexer, type IndexerOptions } from './services/conv-index.js';
 
 export interface BuildAppOptions {
   /** Environment to read configuration from. Defaults to process.env. */
@@ -39,6 +40,8 @@ export interface BuildAppOptions {
     send?: PushSendFn;
     endpointAllowed?: (endpoint: string) => boolean;
   };
+  /** Test hooks for the conversation index (never set in production). */
+  organise?: Pick<IndexerOptions, 'batchSize' | 'retryMs' | 'onBatch'>;
 }
 
 function isApiUrl(url: string): boolean {
@@ -170,8 +173,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // Labels, snooze and the conversation index (same database). Snoozed mail is woken by a timer for
   // mailboxes with a stored (push) login, and on the next signed-in request for everyone else.
   const organiseStore = new OrganiseStore(sessions.database, now);
-  const snoozer = new Snoozer(organiseStore, pushStore, config, fastify.log);
-  fastify.decorate('mailloomOrganise', { store: organiseStore, snoozer, now });
+  const snoozer = new Snoozer(organiseStore, pushStore, config, fastify.log, now);
+  const indexer = new ConversationIndexer(organiseStore, { ...opts.organise, log: fastify.log, now });
+  fastify.decorate('mailloomOrganise', { store: organiseStore, snoozer, indexer, now });
   fastify.addHook('onReady', async () => {
     snoozer.start();
     void snoozer.tick();

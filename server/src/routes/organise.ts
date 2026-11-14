@@ -3,6 +3,7 @@ import { requireAuth } from './auth.js';
 import { failMail } from './mail.js';
 import { LABEL_COLOURS, LABEL_ID_RE, MAX_LABELS, type LabelColour, type OrganiseStore } from '../services/organise-store.js';
 import type { Snoozer } from '../services/snoozer.js';
+import type { ConversationIndexer } from '../services/conv-index.js';
 import {
   OrganiseError,
   assertKeywordsSupported,
@@ -30,6 +31,7 @@ import { demoMailService } from '../services/demo-mail.js';
 export interface OrganiseContext {
   store: OrganiseStore;
   snoozer: Snoozer;
+  indexer: ConversationIndexer;
   now: () => number;
 }
 
@@ -90,12 +92,12 @@ export async function organiseRoutes(fastify: FastifyInstance) {
     const { page, limit } = paging(req.query);
     if (config.isDemo) {
       const r = demoMailService.getMessages('starred', page, limit);
-      return { ...r, messages: (await enrichList(ctx().store, config, r.messages)).map((m) => ({ ...m, mailbox: m.mailbox || 'INBOX' })) };
+      return { ...r, messages: (await enrichList(ctx().store, ctx().indexer, config, r.messages)).map((m) => ({ ...m, mailbox: m.mailbox || 'INBOX' })) };
     }
     try {
       const folders = await resolveFolders(await getPooledImapClient(config));
       const r = await crossFolderView(config, { flagged: true }, folders.viewable, page, limit);
-      return { ...r, messages: await enrichList(ctx().store, config, r.messages, req.log) };
+      return { ...r, messages: await enrichList(ctx().store, ctx().indexer, config, r.messages, req.log) };
     } catch (err) {
       return fail(req, reply, err, 'Could not load starred messages');
     }
@@ -107,7 +109,7 @@ export async function organiseRoutes(fastify: FastifyInstance) {
     if (config.isDemo) return { messages: [], total: 0 };
     try {
       const r = await snoozedView(ctx().store, config, page, limit);
-      return { ...r, messages: await enrichList(ctx().store, config, r.messages, req.log) };
+      return { ...r, messages: await enrichList(ctx().store, ctx().indexer, config, r.messages, req.log) };
     } catch (err) {
       return fail(req, reply, err, 'Could not load snoozed messages');
     }
@@ -200,7 +202,7 @@ export async function organiseRoutes(fastify: FastifyInstance) {
     try {
       const folders = await resolveFolders(await getPooledImapClient(config));
       const r = await crossFolderView(config, { keyword: keywordFor(id) }, folders.viewable, page, limit);
-      return { ...r, messages: await enrichList(ctx().store, config, r.messages, req.log) };
+      return { ...r, messages: await enrichList(ctx().store, ctx().indexer, config, r.messages, req.log) };
     } catch (err) {
       return fail(req, reply, err, 'Could not load messages');
     }
@@ -274,7 +276,7 @@ export async function organiseRoutes(fastify: FastifyInstance) {
     if (mailbox === null) return bad(reply, 400, 'INVALID_INPUT', 'Invalid mailbox.');
     if (config.isDemo) return bad(reply, 404, 'THREAD_NOT_FOUND', 'Conversation not found.');
     try {
-      const thread = await getThread(ctx().store, config, threadId, mailbox);
+      const thread = await getThread(ctx().store, ctx().indexer, config, threadId, mailbox);
       if (!thread) return bad(reply, 404, 'THREAD_NOT_FOUND', 'Conversation not found.');
       return thread;
     } catch (err) {

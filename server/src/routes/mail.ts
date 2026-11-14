@@ -123,7 +123,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
         return reply.status(400).send({ code: 'INVALID_INPUT', error: `filter must be one of: ${LIST_FILTERS.join(', ')}` });
       }
       const listFilter = filter as ListFilter;
-      const store = fastify.mailloomOrganise.store;
+      const { store, indexer } = fastify.mailloomOrganise;
 
       const filters = {
         search: search.trim() || undefined,
@@ -139,12 +139,13 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
           listFilter === 'unread' ? !m.isSeen : listFilter === 'starred' ? m.isFlagged : listFilter === 'attachments' ? m.hasAttachments : true;
         const all = demoMailService.getMessages(folderPath, 1, 10_000, search, filters).messages.filter(keep);
         const pageItems = all.slice((pageNum - 1) * limitNum, pageNum * limitNum);
-        return { messages: await enrichList(store, config, pageItems), total: all.length };
+        return { messages: await enrichList(store, indexer, config, pageItems), total: all.length };
       }
 
       try {
-        const r = await getLiveMessages(config, folderPath, pageNum, limitNum, filters, listFilter);
-        return { ...r, messages: await enrichList(store, config, r.messages, req.log) };
+        const cache = (folder: string, uidValidity: string, uids: number[]) => store.attachmentFlags(config.email, folder, uidValidity, uids);
+        const r = await getLiveMessages(config, folderPath, pageNum, limitNum, filters, listFilter, cache);
+        return { ...r, messages: await enrichList(store, indexer, config, r.messages, req.log) };
       } catch (err) {
         return failMail(req, reply, err, 'Could not load messages');
       }

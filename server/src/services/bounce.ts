@@ -14,6 +14,31 @@ export interface BounceInfo {
   originalSubject: string;
   recipient: string;
   reason: string;
+  /** True only when the original was found in Sent (see `original`), so it can be sent again. */
+  retryable: boolean;
+  /** Where the original is in Sent, so the client reopens the real message, not the bounce text. */
+  original?: { mailbox: string; uid: number };
+  /** Normalised Message-ID of the bounced message. Server-side only; removed before responding. */
+  originalMessageId?: string;
+}
+
+export const MAX_ORIGINAL_SUBJECT = 300;
+export const MAX_RECIPIENT = 320;
+
+function capped(info: { originalSubject: string; recipient: string; reason: string; originalMessageId?: string }): BounceInfo {
+  return {
+    originalSubject: info.originalSubject.slice(0, MAX_ORIGINAL_SUBJECT),
+    recipient: info.recipient.slice(0, MAX_RECIPIENT),
+    reason: info.reason,
+    retryable: false,
+    ...(info.originalMessageId ? { originalMessageId: info.originalMessageId } : {})
+  };
+}
+
+/** The Message-ID of the returned original: first Message-ID header after the copy marker, else anywhere. */
+function originalMessageIdIn(text: string): string {
+  const m = /^[ \t>]*message-id:[ \t]*(<[^<>\s]+>)/im.exec(text);
+  return m ? m[1]!.slice(1, -1).toLowerCase() : '';
 }
 
 export type BounceCandidate =
@@ -139,11 +164,12 @@ export async function parseDsn(statusText: string, originalText: string, fallbac
   let originalSubject = originalText ? await subjectFromHeaders(originalText) : '';
   if (!originalSubject && fallbackText) originalSubject = await subjectInText(fallbackText);
   const fromText = !recipient && fallbackText ? await parsePlainBounce(fallbackText, '') : null;
-  return {
+  return capped({
     originalSubject,
     recipient: recipient || fromText?.recipient || '',
-    reason: status || diag ? reasonFor(status, diag) : fromText?.reason || REASONS.other
-  };
+    reason: status || diag ? reasonFor(status, diag) : fromText?.reason || REASONS.other,
+    originalMessageId: originalMessageIdIn(originalText) || fromText?.originalMessageId
+  });
 }
 
 async function subjectInText(text: string): Promise<string> {
@@ -168,9 +194,10 @@ export async function parsePlainBounce(text: string, ownAddress: string): Promis
   });
   // Not part of an IP address or version number ("10.4.5.6").
   const status = /(?<![\d.])([45]\.\d{1,3}\.\d{1,3})(?![\d.])/.exec(report)?.[1];
-  return {
+  return capped({
     originalSubject: await subjectInText(body),
     recipient: addresses[0] || '',
-    reason: reasonFor(status, report)
-  };
+    reason: reasonFor(status, report),
+    originalMessageId: marker ? originalMessageIdIn(body.slice(marker.index)) : ''
+  });
 }

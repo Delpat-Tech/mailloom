@@ -23,7 +23,13 @@ const list = async (folder: string, query = '') => {
   return res.json() as { messages: Array<Record<string, any>>; total: number };
 };
 
-const DSN = (status: string, diag: string, subject: string, recipient: string) =>
+/** List once (which starts any background indexing) and wait for the index to settle. */
+const settle = async (folder = 'INBOX') => {
+  await list(folder);
+  await app.mailloomOrganise.indexer.idle(GM.tester);
+};
+
+const DSN = (status: string, diag: string, subject: string, recipient: string, originalId = `orig-${status}@delpat.test`) =>
   [
     'Return-Path: <>',
     'From: MAILER-DAEMON@delpat.test (Mail Delivery System)',
@@ -73,7 +79,7 @@ const DSN = (status: string, diag: string, subject: string, recipient: string) =
     'From: Tester <tester@delpat.test>',
     `To: ${recipient}`,
     `Subject: ${subject}`,
-    'Message-ID: <orig-1@delpat.test>',
+    `Message-ID: <${originalId}>`,
     'Date: Fri, 13 Nov 2026 10:00:00 +0000',
     '',
     '--B0UND/mail.delpat.test--',
@@ -167,16 +173,29 @@ test('filters: unread, starred and attachments use IMAP search; items carry the 
 
 test('bounces: a real-shaped Postfix DSN and an Exim text bounce get a plain summary', async () => {
   await resetAccount(GM.tester);
-  await put('INBOX', DSN('5.1.1', '550 5.1.1 <nobody@example.org>: Recipient address rejected: User unknown in virtual mailbox table', '=?UTF-8?Q?Quarterly_r=C3=A9port?=', 'nobody@example.org'));
+  await put('INBOX', DSN('5.1.1', '550 5.1.1 <nobody@example.org>: Recipient address rejected: User unknown in virtual mailbox table', '=?UTF-8?Q?Quarterly_r=C3=A9port?=', 'nobody@example.org', 'orig-1@delpat.test'));
   await put('INBOX', DSN('5.2.2', '552 5.2.2 Mailbox full: user is over quota', 'Lunch', 'full@example.org'));
   await put('INBOX', EXIM_BOUNCE);
   await put('INBOX', await buildMime({ subject: 'not a bounce', text: 'hello' }));
+  // The original of the first DSN (Message-ID <orig-1@delpat.test>) is in Sent; the others are not.
+  const sentUid = await put('Sent', await buildMime({ from: 'tester@delpat.test', to: 'nobody@example.org', subject: 'Quarterly réport', messageId: '<orig-1@delpat.test>' }));
 
   const { messages } = await list('INBOX');
   const by = (s: string) => messages.filter((m) => m.bounce && m.bounce.recipient === s)[0]?.bounce;
-  assert.deepEqual(by('nobody@example.org'), { originalSubject: 'Quarterly réport', recipient: 'nobody@example.org', reason: 'address does not exist' });
-  assert.deepEqual(by('full@example.org'), { originalSubject: 'Lunch', recipient: 'full@example.org', reason: 'mailbox full' });
-  assert.deepEqual(by('someone@far.example'), { originalSubject: 'Invoice 42', recipient: 'someone@far.example', reason: 'rejected as spam' });
+  assert.deepEqual(by('nobody@example.org'), {
+    originalSubject: 'Quarterly réport',
+    recipient: 'nobody@example.org',
+    reason: 'address does not exist',
+    retryable: true,
+    original: { mailbox: 'Sent', uid: sentUid }
+  });
+  assert.deepEqual(by('full@example.org'), { originalSubject: 'Lunch', recipient: 'full@example.org', reason: 'mailbox full', retryable: false });
+  assert.deepEqual(by('someone@far.example'), { originalSubject: 'Invoice 42', recipient: 'someone@far.example', reason: 'rejected as spam', retryable: false });
+  // Same answer once the index is complete (found in the index rather than by IMAP search).
+  await app.mailloomOrganise.indexer.idle(GM.tester);
+  const again = (await list('INBOX')).messages.find((m) => m.bounce?.recipient === 'nobody@example.org')!.bounce;
+  assert.deepEqual(again.original, { mailbox: 'Sent', uid: sentUid });
+  assert.ok(!('originalMessageId' in again));
   assert.equal(messages.find((m) => m.subject === 'not a bounce')!.bounce, undefined);
 });
 
@@ -192,10 +211,18 @@ test('bounce reasons in plain English', async () => {
     'Reporting-MTA: dns; a\n\nFinal-Recipient: rfc822; late@x.example\nAction: delayed\nStatus: 4.4.1\nDiagnostic-Code: X-Postfix; connect to x.example: Connection timed out\n',
     ''
   );
-  assert.deepEqual(delayed, { originalSubject: '', recipient: 'late@x.example', reason: 'server could not be reached' });
+  assert.deepEqual(delayed, { originalSubject: '', recipient: 'late@x.example', reason: 'server could not be reached', retryable: false });
   const plain = await parsePlainBounce('<gone@y.example>: host y.example said: 550 No such user here\n', 'tester@delpat.test');
   assert.equal(plain.recipient, 'gone@y.example');
   assert.equal(plain.reason, 'address does not exist');
+  // Sender-written fields are capped.
+  const long = await parseDsn(`Final-Recipient: rfc822; ${'a'.repeat(400)}@x.example
+Action: failed
+Status: 5.1.1
+`, `Subject: ${'S'.repeat(500)}
+`);
+  assert.equal(long.originalSubject.length, 300);
+  assert.equal(long.recipient.length, 320);
 });
 
 test('starred view spans Inbox and Archive (not Trash), newest first, with mailbox', async () => {
@@ -244,6 +271,7 @@ test('a conversation across Inbox and Sent: same threadId, threadCount 2, thread
   );
   await put('INBOX', await buildMime({ subject: 'Unrelated', messageId: '<other@delpat.test>' }));
 
+  await settle();
   const inbox = await list('INBOX');
   const root = inbox.messages.find((m) => m.subject === 'Budget')!;
   assert.equal(root.threadCount, 2);
@@ -274,6 +302,7 @@ test('a conversation across Inbox and Sent: same threadId, threadCount 2, thread
       lock.release();
     }
   });
+  await settle();
   assert.equal((await list('INBOX')).messages.find((m) => m.subject === 'Budget')!.threadCount, 1);
 
   assert.equal((await app.inject({ method: 'GET', url: '/api/threads/not-an-id', headers: t.headers })).statusCode, 400);
