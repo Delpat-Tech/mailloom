@@ -121,9 +121,11 @@ export async function crossFolderView(
   criteria: SearchObject,
   folders: string[],
   page: number,
-  limit: number
-): Promise<{ messages: MessageHeader[]; total: number }> {
+  limit: number,
+  maxHits = Infinity
+): Promise<{ messages: MessageHeader[]; total: number; capped?: boolean }> {
   const client = await getPooledImapClient(config);
+  let capped = false;
   const hits: Array<{ folder: string; uid: number; date: number }> = [];
   for (const folder of folders) {
     // A KEYWORD search needs a read-write select: a read-only one reports no PERMANENTFLAGS, and the
@@ -131,8 +133,13 @@ export async function crossFolderView(
     const lock = await client.getMailboxLock(folder, { readOnly: !criteria.keyword });
     try {
       if (criteria.keyword && !keywordSearchable(client, criteria.keyword)) continue;
-      const uids = ((await client.search(criteria, { uid: true })) || []) as number[];
+      let uids = ((await client.search(criteria, { uid: true })) || []) as number[];
       if (uids.length === 0) continue;
+      // Bounded work: only the newest maxHits UIDs of a folder are looked at.
+      if (uids.length > maxHits) {
+        uids = uids.sort((a, b) => b - a).slice(0, maxHits);
+        capped = true;
+      }
       for await (const m of client.fetch(uids, { uid: true, internalDate: true }, { uid: true })) {
         hits.push({ folder, uid: m.uid, date: new Date(m.internalDate || 0).getTime() });
       }
@@ -141,6 +148,10 @@ export async function crossFolderView(
     }
   }
   hits.sort((a, b) => b.date - a.date || b.uid - a.uid);
+  if (hits.length > maxHits) {
+    hits.length = maxHits;
+    capped = true;
+  }
   const pageHits = hits.slice((page - 1) * limit, (page - 1) * limit + limit);
   const out = new Map<string, MessageHeader>();
   const byFolder = new Map<string, number[]>();
@@ -158,9 +169,13 @@ export async function crossFolderView(
   }
   return {
     messages: pageHits.map((h) => out.get(`${h.folder}\u0000${h.uid}`)).filter((x): x is MessageHeader => Boolean(x)),
-    total: hits.length
+    total: hits.length,
+    ...(capped ? { capped: true } : {})
   };
 }
+
+/** A scope=all search looks at the newest this-many hits only (total says how many; capped: true when cut). */
+export const SEARCH_ALL_MAX_HITS = 500;
 
 /** One search over every selectable folder except Trash and Junk (Snoozed counts), merged newest first. */
 export async function searchAllFolders(
@@ -168,11 +183,11 @@ export async function searchAllFolders(
   criteria: SearchObject,
   page: number,
   limit: number
-): Promise<{ messages: MessageHeader[]; total: number }> {
+): Promise<{ messages: MessageHeader[]; total: number; capped?: boolean }> {
   const client = await getPooledImapClient(config);
   const folders = await resolveFolders(client);
   const searched = [...folders.viewable, ...(folders.snoozed ? [folders.snoozed] : [])];
-  return crossFolderView(config, criteria, searched, page, limit);
+  return crossFolderView(config, criteria, searched, page, limit, SEARCH_ALL_MAX_HITS);
 }
 
 // -------------------------------------------------------------

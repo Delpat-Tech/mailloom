@@ -177,6 +177,11 @@ export async function mailRoutes(
         before?: string;
       };
 
+      for (const [name, value] of Object.entries({ search, from, to, cc, subject, body })) {
+        if (typeof value !== 'string' || value.length > 200) {
+          return reply.status(400).send({ code: 'INVALID_INPUT', error: `${name} may be at most 200 characters.` });
+        }
+      }
       const pageNum = Math.max(1, parseInt(page, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
       const folderPath = path;
