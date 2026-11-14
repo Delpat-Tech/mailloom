@@ -112,7 +112,7 @@ Success:
   saved_to_sent: true|false, sent_folder: "Sent"|null, idempotent_replay: false }
 ```
 `message_id` is the same in the delivered mail and the Sent copy. Every agent mail carries
-`X-Mailloom-Agent: <key prefix>`. Guards: `AGENT_SENDS_PER_HOUR` per key (default 200, 429 + Retry-After),
+`X-Mailloom-Agent: <key id>` (the non-secret record id). Guards: `AGENT_SENDS_PER_HOUR` per key (default 200, 429 + Retry-After),
 `AGENT_MAX_RECIPIENTS` to+cc+bcc (default 100, 400).
 
 ### POST /move, /flag, /mark-read, /delete (organise)

@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
+import { sendHooks } from '../src/agent/send-adapter.js';
 import { COLLEAGUE, TESTER, TEST_PASSWORD, buildTestApp, signIn, type SignedIn } from './helpers.js';
 
 /**
@@ -272,6 +273,7 @@ describe('agent API on the mailbox', () => {
   let agent: Agent;
   let colleagueAgent: Agent;
   let keyPrefix: string;
+  let keyId: string;
 
   before(async () => {
     app = await buildTestApp({ ...AGENT_ENV, AGENT_MAX_RECIPIENTS: '5' });
@@ -280,6 +282,7 @@ describe('agent API on the mailbox', () => {
     const created = (await createKey(app, tester)).json();
     agent = agentClient(app, created.key);
     keyPrefix = created.record.prefix;
+    keyId = created.record.id;
     colleagueAgent = agentClient(app, (await createKey(app, colleague)).json().key);
   });
   after(() => app.close());
@@ -421,12 +424,12 @@ describe('agent API on the mailbox', () => {
     await new Promise((r) => setTimeout(r, 500));
     assert.equal((await findBySubject(COLLEAGUE, 'INBOX', subject)).length, 1, 'delivered exactly once');
     assert.equal(received[0]!.parsed.messageId, one.body.message_id);
-    assert.equal(received[0]!.parsed.headers.get('x-mailloom-agent'), keyPrefix);
+    assert.equal(received[0]!.parsed.headers.get('x-mailloom-agent'), keyId);
 
     const sent = await findBySubject(TESTER, one.body.sent_folder, subject);
     assert.equal(sent.length, 1);
     assert.equal(sent[0]!.parsed.messageId, one.body.message_id);
-    assert.equal(sent[0]!.parsed.headers.get('x-mailloom-agent'), keyPrefix);
+    assert.equal(sent[0]!.parsed.headers.get('x-mailloom-agent'), keyId);
 
     const audit = await app.inject({ method: 'GET', url: '/api/connections/audit', headers: tester.headers });
     const entries = audit.json().entries.filter((e: { sent_message_id: string }) => e.sent_message_id === one.body.message_id);
@@ -533,7 +536,7 @@ describe('agent API on the mailbox', () => {
     assert.equal(atts[0]!.filename, 'data.bin');
     assert.ok(atts[0]!.content.equals(content));
     assert.match(got[0]!.parsed.text || '', /FYI[\s\S]*Forwarded message[\s\S]*See attached\./);
-    assert.equal(got[0]!.parsed.headers.get('x-mailloom-agent'), keyPrefix);
+    assert.equal(got[0]!.parsed.headers.get('x-mailloom-agent'), keyId);
   });
 
   test('delete moves to Trash and never deletes permanently', async () => {
@@ -608,6 +611,35 @@ describe('agent API guard rails and broken keys', () => {
       // Reading is not limited.
       assert.equal((await a.get('/folders')).status, 200);
     } finally {
+      await app.close();
+    }
+  });
+
+  test('an error after the message data started keeps the idempotency record; an error before it frees the key', async () => {
+    const app = await buildTestApp(AGENT_ENV);
+    const fake = (err: Error & { code?: string; command?: string }) => ({ sendMail: async () => { throw err; }, close: () => undefined }) as never;
+    try {
+      const s = await signIn(app, TESTER);
+      const a = agentClient(app, (await createKey(app, s)).json().key);
+      const payload = { to: [COLLEAGUE], subject: uniq('Dropped'), text: 'x', idempotency_key: uniq('drop') };
+
+      sendHooks.createTransport = () => fake(Object.assign(new Error('Connection closed unexpectedly'), { code: 'ECONNECTION', command: 'DATA' }));
+      const first = await a.post('/send', payload);
+      assert.equal(first.status, 502);
+      sendHooks.createTransport = undefined;
+      const retry = await a.post('/send', payload);
+      assert.equal(retry.status, 409);
+      assert.equal(retry.body.code, 'IN_PROGRESS');
+      assert.equal((await findBySubject(COLLEAGUE, 'INBOX', payload.subject, 1)).length, 0, 'nothing was resent');
+
+      // Before data (connection refused): the key is free again and the retry sends.
+      const early = { ...payload, subject: uniq('Early'), idempotency_key: uniq('early') };
+      sendHooks.createTransport = () => fake(Object.assign(new Error('connect failed'), { code: 'ECONNECTION', command: 'CONN' }));
+      assert.equal((await a.post('/send', early)).status, 502);
+      sendHooks.createTransport = undefined;
+      assert.equal((await a.post('/send', early)).status, 200);
+    } finally {
+      sendHooks.createTransport = undefined;
       await app.close();
     }
   });

@@ -51,6 +51,21 @@ export class AllRecipientsRejectedError extends Error {
   }
 }
 
+/** Tests replace the transport here to simulate server failures; never set in production. */
+export const sendHooks: { createTransport?: typeof createSmtpTransport } = {};
+
+/**
+ * True only when the error proves no message data reached the server (connection, TLS, sign-in,
+ * envelope or recipient stage). Anything else, such as a drop during or after DATA, may mean the
+ * mail was delivered, so the caller must not send it again.
+ */
+export function failedBeforeData(err: unknown): boolean {
+  const e = err as { code?: string; command?: string } | null;
+  if (!e) return false;
+  if (e.code === 'EENVELOPE' || e.code === 'EAUTH' || e.code === 'EDNS' || e.code === 'ETLS') return true;
+  return typeof e.command === 'string' && /^(CONN|EHLO|HELO|STARTTLS|AUTH.*|MAIL FROM|RCPT TO)$/i.test(e.command);
+}
+
 export function isSmtpAuthError(err: unknown): boolean {
   const e = err as { code?: string; responseCode?: number } | null;
   return !!e && (e.code === 'EAUTH' || e.responseCode === 535);
@@ -115,7 +130,7 @@ export async function sendForAgent(account: AccountConfig, mail: OutgoingMail, m
     disableUrlAccess: true
   };
 
-  const transport = createSmtpTransport(account);
+  const transport = (sendHooks.createTransport ?? createSmtpTransport)(account);
   let info: { accepted?: Array<string | { address?: string }>; rejected?: Array<string | { address?: string }> };
   try {
     info = await transport.sendMail(options);
@@ -130,11 +145,17 @@ export async function sendForAgent(account: AccountConfig, mail: OutgoingMail, m
   }
 
   // The Sent copy is the same message (same Message-ID and headers), with Bcc kept for the sender's record.
-  const MailComposer = (await import('nodemailer/lib/mail-composer/index.js')).default;
-  const node = new MailComposer(options).compile();
-  (node as unknown as { keepBcc: boolean }).keepBcc = true;
-  const raw = await node.build();
-  const sent = await saveToSent(account, raw);
+  // The mail is already sent here: nothing below may throw.
+  let sent: { saved: boolean; folder: string | null } = { saved: false, folder: null };
+  try {
+    const MailComposer = (await import('nodemailer/lib/mail-composer/index.js')).default;
+    const node = new MailComposer(options).compile();
+    (node as unknown as { keepBcc: boolean }).keepBcc = true;
+    const raw = await node.build();
+    sent = await saveToSent(account, raw);
+  } catch {
+    // reported as savedToSent: false
+  }
 
   return {
     messageId: id,
