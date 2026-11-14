@@ -18,9 +18,11 @@ import {
   ShieldCheck,
   Undo2,
   PenSquare,
+  Pencil,
   Menu
 } from 'lucide-react';
 import { format, isToday, isThisYear } from 'date-fns';
+import { avatarClass, initialsOf } from '../services/avatar.js';
 import type { MessageHeader, SpecialUseFolder } from '../types.js';
 import type { SearchFilterParams } from '../services/api.js';
 
@@ -171,30 +173,30 @@ export const MessageList: React.FC<MessageListProps> = ({
   };
 
   const FIELD =
-    'w-full bg-white border border-slate-200 rounded px-2 py-1 min-h-[44px] sm:min-h-0 text-base sm:text-xs text-slate-800 focus:outline-none focus:border-sky-500';
+    'w-full bg-surface border border-line rounded px-2 py-1 min-h-[44px] sm:min-h-0 text-base sm:text-xs text-ink focus:outline-none focus:border-act';
 
   return (
     <section
       aria-label="Message list"
-      className="w-full flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-full select-none relative"
+      className="w-full flex-shrink-0 bg-surface md:border-r border-line flex flex-col h-full select-none relative"
     >
       {/* Header & Search */}
-      <div className="p-3.5 border-b border-slate-100 flex flex-col gap-2.5">
+      <div className="px-4 pt-3 pb-3 border-b border-line flex flex-col gap-2.5 max-lg:bg-rail max-lg:cut-phone max-lg:pb-6">
         <div className="flex items-center justify-between gap-1">
           <div className="flex items-center gap-2 min-w-0">
             {onOpenMobileSidebar && (
               <button
                 onClick={onOpenMobileSidebar}
-                className={`p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors lg:hidden ${TOUCH}`}
+                className={`p-1.5 text-rail-ink hover:bg-rail-hi rounded transition-colors lg:hidden ${TOUCH}`}
                 title="Open folders"
                 aria-label="Open folders"
               >
                 <Menu className="w-5 h-5" />
               </button>
             )}
-            <h1 className="text-lg font-bold text-slate-800 tracking-tight truncate">{folderName}</h1>
+            <h1 className="text-2xl font-extrabold text-ink max-lg:text-rail-ink tracking-tight truncate">{folderName}</h1>
             <span
-              className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0"
+              className="text-[13px] font-semibold text-ink-3 max-lg:text-rail-2 shrink-0 mt-1"
               aria-label={`${totalMessages} messages`}
             >
               {totalMessages}
@@ -205,7 +207,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               <button
                 onClick={onEmptyFolder}
                 title={`Permanently delete everything in ${folderName}`}
-                className="px-2 py-1 min-h-[44px] sm:min-h-0 text-[11px] font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                className="px-2 py-1 min-h-[44px] sm:min-h-0 text-xs font-bold text-warn-ink hover:bg-warn-bg max-lg:bg-surface rounded transition-colors"
               >
                 Empty {folderName}
               </button>
@@ -215,29 +217,29 @@ export const MessageList: React.FC<MessageListProps> = ({
               disabled={isLoading}
               title="Refresh messages"
               aria-label="Refresh messages"
-              className={`p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors disabled:opacity-50 ${TOUCH}`}
+              className={`p-1.5 text-ink-2 max-lg:text-rail-ink hover:text-act max-lg:hover:text-rail-ink hover:bg-hover max-lg:hover:bg-rail-hi rounded transition-colors disabled:opacity-50 ${TOUCH}`}
             >
-              <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-sky-600' : ''}`} />
+              <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin motion-reduce:animate-none' : ''}`} />
             </button>
           </div>
         </div>
 
         {/* Search Bar & Filter Toggle */}
         <div role="search" className="relative flex items-center">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-ink-3 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
           <input
             type="text"
             aria-label="Search messages"
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search sender, subject or snippet..."
-            className="w-full bg-slate-50 border border-slate-200 text-slate-800 placeholder-slate-400 text-base sm:text-xs rounded-lg pl-9 pr-24 sm:pr-16 py-2 min-h-[44px] sm:min-h-0 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all"
+            className="w-full bg-sheet border border-line text-ink placeholder:text-ink-3 text-base sm:text-[13px] rounded pl-9 pr-24 sm:pr-16 py-2 min-h-[44px] sm:min-h-[34px] focus:outline-none focus:border-focus focus:ring-1 focus:ring-focus transition-colors"
           />
           <div className="absolute right-0 sm:right-2 top-1/2 -translate-y-1/2 flex items-center gap-0 sm:gap-1">
             {searchTerm && (
               <button
                 onClick={() => onSearchChange('')}
-                className={`text-base sm:text-xs text-slate-400 hover:text-slate-600 p-0.5 ${TOUCH}`}
+                className={`text-base sm:text-xs text-ink-3 hover:text-ink-2 p-0.5 ${TOUCH}`}
                 title="Clear search"
                 aria-label="Clear search"
               >
@@ -251,14 +253,14 @@ export const MessageList: React.FC<MessageListProps> = ({
               aria-label="Filter by sender, recipient, subject or date"
               className={`p-1 rounded transition-colors relative ${TOUCH} ${
                 showFilters || hasActiveFilters
-                  ? 'text-sky-600 bg-sky-100/70'
-                  : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                  ? 'text-sel-ink bg-sel'
+                  : 'text-ink-3 hover:text-ink-2 hover:bg-hover'
               }`}
               title="Filter by From, To, Subject, or Date"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
               {hasActiveFilters && (
-                <span className="w-1.5 h-1.5 rounded-full bg-sky-600 absolute top-0.5 right-0.5 ring-1 ring-white" />
+                <span className="w-1.5 h-1.5 rounded-full bg-unread absolute top-0.5 right-0.5 ring-1 ring-surface" />
               )}
             </button>
           </div>
@@ -266,16 +268,16 @@ export const MessageList: React.FC<MessageListProps> = ({
 
         {/* Expandable IMAP Filter Panel */}
         {showFilters && (
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex flex-col gap-2 text-xs">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-200">
-              <span className="font-semibold text-[10px] text-slate-500 uppercase tracking-wider">
-                IMAP Search Filters
+          <div className="bg-surface border border-line rounded p-2.5 flex flex-col gap-2 text-xs text-ink">
+            <div className="flex items-center justify-between pb-1 border-b border-line">
+              <span className="font-bold text-xs text-ink-2">
+                Search filters
               </span>
               {hasActiveFilters && onFiltersChange && (
                 <button
                   type="button"
                   onClick={() => onFiltersChange({})}
-                  className="text-[11px] text-sky-600 hover:text-sky-700 font-medium min-h-[44px] sm:min-h-0 px-1"
+                  className="text-xs text-act hover:text-act font-bold min-h-[44px] sm:min-h-0 px-1"
                 >
                   Clear All
                 </button>
@@ -284,7 +286,7 @@ export const MessageList: React.FC<MessageListProps> = ({
 
             <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
               <div>
-                <label htmlFor="filter-from" className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">From</label>
+                <label htmlFor="filter-from" className="block text-xs font-bold text-ink-2 mb-0.5">From</label>
                 <input
                   id="filter-from"
                   type="text"
@@ -295,7 +297,7 @@ export const MessageList: React.FC<MessageListProps> = ({
                 />
               </div>
               <div>
-                <label htmlFor="filter-to" className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">To</label>
+                <label htmlFor="filter-to" className="block text-xs font-bold text-ink-2 mb-0.5">To</label>
                 <input
                   id="filter-to"
                   type="text"
@@ -308,7 +310,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             </div>
 
             <div>
-              <label htmlFor="filter-subject" className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Subject</label>
+              <label htmlFor="filter-subject" className="block text-xs font-bold text-ink-2 mb-0.5">Subject</label>
               <input
                 id="filter-subject"
                 type="text"
@@ -321,7 +323,7 @@ export const MessageList: React.FC<MessageListProps> = ({
 
             <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
               <div>
-                <label htmlFor="filter-since" className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Since (Date)</label>
+                <label htmlFor="filter-since" className="block text-xs font-bold text-ink-2 mb-0.5">Since (Date)</label>
                 <input
                   id="filter-since"
                   type="date"
@@ -331,7 +333,7 @@ export const MessageList: React.FC<MessageListProps> = ({
                 />
               </div>
               <div>
-                <label htmlFor="filter-before" className="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Before (Date)</label>
+                <label htmlFor="filter-before" className="block text-xs font-bold text-ink-2 mb-0.5">Before (Date)</label>
                 <input
                   id="filter-before"
                   type="date"
@@ -349,25 +351,25 @@ export const MessageList: React.FC<MessageListProps> = ({
       <div
         role="toolbar"
         aria-label="Actions for selected messages"
-        className="px-3 py-1 border-b border-slate-100 bg-slate-50/70 flex flex-wrap items-center justify-between gap-x-2 text-xs text-slate-600"
+        className="px-4 py-1 border-b border-line bg-sheet flex flex-wrap items-center justify-between gap-x-2 text-xs text-ink-2"
       >
         <div className="flex items-center gap-1">
           <button
             onClick={onSelectAll}
-            className={`text-slate-500 hover:text-slate-800 p-0.5 rounded transition-colors ${TOUCH}`}
+            className={`text-ink-3 hover:text-ink p-0.5 rounded transition-colors ${TOUCH}`}
             title={allSelected ? 'Deselect all' : 'Select all'}
             aria-label={allSelected ? 'Deselect all messages' : 'Select all messages'}
             aria-pressed={allSelected}
           >
             {allSelected ? (
-              <CheckSquare className="w-4 h-4 text-sky-600" />
+              <CheckSquare className="w-4 h-4 text-act" />
             ) : someSelected ? (
-              <MinusSquare className="w-4 h-4 text-sky-600" />
+              <MinusSquare className="w-4 h-4 text-act" />
             ) : (
-              <Square className="w-4 h-4 text-slate-400" />
+              <Square className="w-4 h-4 text-ink-3" />
             )}
           </button>
-          <span className="font-medium text-slate-500" aria-live="polite">
+          <span className="font-semibold text-ink-3" aria-live="polite">
             {selectedUids.size > 0 ? `${selectedUids.size} selected` : 'Select'}
           </span>
         </div>
@@ -378,7 +380,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               onClick={() => onBatchMarkRead(true)}
               title="Mark as read"
               aria-label="Mark selected as read"
-              className={`p-1 hover:bg-slate-200/70 text-slate-600 hover:text-slate-900 rounded transition-colors ${TOUCH}`}
+              className={`p-1 hover:bg-hover text-ink-2 hover:text-ink rounded transition-colors ${TOUCH}`}
             >
               <MailOpen className="w-3.5 h-3.5" />
             </button>
@@ -386,7 +388,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               onClick={() => onBatchMarkRead(false)}
               title="Mark as unread"
               aria-label="Mark selected as unread"
-              className={`p-1 hover:bg-slate-200/70 text-slate-600 hover:text-slate-900 rounded transition-colors ${TOUCH}`}
+              className={`p-1 hover:bg-hover text-ink-2 hover:text-ink rounded transition-colors ${TOUCH}`}
             >
               <Mail className="w-3.5 h-3.5" />
             </button>
@@ -395,7 +397,7 @@ export const MessageList: React.FC<MessageListProps> = ({
                 onClick={onBatchRestore}
                 title="Restore selected to Inbox"
                 aria-label="Restore selected to Inbox"
-                className={`p-1 hover:bg-sky-50 text-slate-600 hover:text-sky-700 rounded transition-colors ${TOUCH}`}
+                className={`p-1 hover:bg-sel text-ink-2 hover:text-sel-ink rounded transition-colors ${TOUCH}`}
               >
                 <Undo2 className="w-3.5 h-3.5" />
               </button>
@@ -405,7 +407,7 @@ export const MessageList: React.FC<MessageListProps> = ({
                 onClick={onBatchNotSpam}
                 title="Not spam: move selected back to Inbox"
                 aria-label="Not spam: move selected back to Inbox"
-                className={`p-1 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 rounded transition-colors ${TOUCH}`}
+                className={`p-1 hover:bg-toast-bg text-ink-2 hover:text-ok-ink rounded transition-colors ${TOUCH}`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
               </button>
@@ -414,7 +416,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               onClick={onBatchDelete}
               title={folderKind === 'Trash' ? 'Delete selected forever' : 'Move selected to Trash'}
               aria-label={folderKind === 'Trash' ? 'Delete selected forever' : 'Move selected to Trash'}
-              className={`p-1 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded transition-colors ${TOUCH}`}
+              className={`p-1 hover:bg-warn-bg text-ink-2 hover:text-warn-ink rounded transition-colors ${TOUCH}`}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -423,7 +425,7 @@ export const MessageList: React.FC<MessageListProps> = ({
                 onClick={onBatchSpam}
                 title="Mark as Spam / Move to Junk"
                 aria-label="Mark selected as spam"
-                className={`p-1 hover:bg-amber-50 text-slate-600 hover:text-amber-600 rounded transition-colors ${TOUCH}`}
+                className={`p-1 hover:bg-caution-bg text-ink-2 hover:text-caution rounded transition-colors ${TOUCH}`}
               >
                 <ShieldAlert className="w-3.5 h-3.5" />
               </button>
@@ -434,15 +436,15 @@ export const MessageList: React.FC<MessageListProps> = ({
 
       {/* Message List Stream */}
       {isLoading && messages.length === 0 ? (
-        <div className="flex-1 py-20 flex flex-col items-center justify-center text-slate-400 gap-3" role="status">
-          <RotateCw className="w-6 h-6 animate-spin text-sky-500" />
+        <div className="flex-1 py-20 flex flex-col items-center justify-center text-ink-3 gap-3" role="status">
+          <RotateCw className="w-6 h-6 animate-spin motion-reduce:animate-none text-ink-3" />
           <span className="text-xs font-medium">Fetching messages...</span>
         </div>
       ) : messages.length === 0 ? (
-        <div className="flex-1 py-20 flex flex-col items-center justify-center text-slate-400 gap-2">
-          <Inbox className="w-10 h-10 stroke-1 text-slate-300" />
-          <span className="text-sm font-semibold text-slate-600">No messages found</span>
-          <span className="text-xs text-slate-400">This mailbox folder is currently empty</span>
+        <div className="flex-1 py-20 flex flex-col items-center justify-center text-ink-3 gap-2">
+          <Inbox className="w-10 h-10 stroke-[1.4] text-ink-3" />
+          <span className="text-base font-extrabold text-ink">No messages found</span>
+          <span className="text-xs text-ink-3">This mailbox folder is currently empty</span>
         </div>
       ) : (
         <ul
@@ -452,7 +454,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           onScroll={(e) => {
             if (e.currentTarget.clientHeight > 0) savedScroll.current = e.currentTarget.scrollTop;
           }}
-          className="flex-1 overflow-y-auto divide-y divide-slate-100 list-none m-0 p-0"
+          className="flex-1 overflow-y-auto list-none m-0 p-0"
         >
           {messages.map((msg) => {
             const isSelected = selectedUid === msg.uid;
@@ -461,31 +463,30 @@ export const MessageList: React.FC<MessageListProps> = ({
             const tab = rowUid === msg.uid ? 0 : -1;
             const dateText = formatMessageDate(msg.date);
             const who = msg.from.name || msg.from.address;
+            const isDraft = folderKind === 'Drafts';
 
             return (
               <li
                 key={msg.uid}
-                className={`relative flex items-stretch transition-colors ${
-                  isSelected
-                    ? 'bg-sky-50/80 border-l-4 border-l-sky-600'
-                    : isUnread
-                    ? 'bg-white hover:bg-slate-50'
-                    : 'bg-slate-50/40 hover:bg-slate-100/60'
+                className={`relative flex items-stretch border-b border-line transition-colors ${
+                  isSelected ? 'bg-sel cut-sel' : 'bg-surface hover:bg-hover'
                 }`}
               >
+                {isUnread && (
+                  <span
+                    className="absolute left-[5px] top-6 w-[7px] h-[7px] rounded-full bg-unread shadow-[0_0_0_1px_var(--dot-ring)] pointer-events-none"
+                    aria-hidden="true"
+                  />
+                )}
                 <button
                   type="button"
                   tabIndex={tab}
                   onClick={(e) => onToggleSelectUid(msg.uid, e)}
                   aria-pressed={isChecked}
                   aria-label={`Select message from ${who}`}
-                  className="w-11 sm:w-9 shrink-0 flex items-center justify-center text-slate-400 hover:text-slate-600"
+                  className="w-10 sm:w-8 shrink-0 flex items-center justify-center text-ink-3 hover:text-ink-2"
                 >
-                  {isChecked ? (
-                    <CheckSquare className="w-3.5 h-3.5 text-sky-600" />
-                  ) : (
-                    <Square className="w-3.5 h-3.5" />
-                  )}
+                  {isChecked ? <CheckSquare className="w-3.5 h-3.5 text-act" /> : <Square className="w-3.5 h-3.5" />}
                 </button>
 
                 {/* The whole summary is one button: Enter opens the message. */}
@@ -500,36 +501,59 @@ export const MessageList: React.FC<MessageListProps> = ({
                   onFocus={() => setActiveUid(msg.uid)}
                   aria-label={rowLabel(msg, dateText)}
                   aria-current={isSelected ? 'true' : undefined}
-                  className="flex-1 min-w-0 py-3 text-left"
+                  className="flex-1 min-w-0 py-[11px] pr-1 text-left flex gap-3"
                 >
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <div className="flex items-center gap-1.5 truncate">
-                      {isUnread && <span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" aria-hidden="true" />}
+                  <span
+                    className={`cut-av mt-0.5 w-9 h-9 shrink-0 grid place-items-center text-[13px] font-extrabold tracking-wide text-white ${
+                      isDraft ? 'bg-sheet !text-draft shadow-[inset_0_0_0_1px_var(--line-2)]' : avatarClass(msg.from.address || who)
+                    }`}
+                    aria-hidden="true"
+                  >
+                    {isDraft ? <Pencil className="w-4 h-4" /> : initialsOf(who)}
+                  </span>
+                  <span className="min-w-0 flex-1 block">
+                    <span className="flex items-center justify-between gap-2">
                       <span
-                        className={`truncate text-xs ${
-                          isUnread ? 'font-bold text-slate-900' : 'font-semibold text-slate-700'
+                        className={`truncate text-sm ${
+                          isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-2'
+                        } ${isSelected ? '!text-sel-ink' : ''}`}
+                      >
+                        {isDraft ? (
+                          <span className="text-draft italic font-extrabold">Draft</span>
+                        ) : (
+                          who
+                        )}
+                      </span>
+                      <span
+                        className={`text-xs shrink-0 tabular-nums ${
+                          isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-3'
                         }`}
                       >
-                        {who}
+                        {dateText}
                       </span>
-                    </div>
-                    <span className="text-[11px] text-slate-400 shrink-0 font-medium">{dateText}</span>
-                  </div>
-
-                  <div
-                    className={`text-xs truncate mb-1 ${
-                      isUnread ? 'font-semibold text-slate-900' : 'font-medium text-slate-700'
-                    }`}
-                  >
-                    {msg.subject || '(No subject)'}
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-slate-500 truncate leading-relaxed">
+                    </span>
+                    <span
+                      className={`block text-[13.5px] truncate mt-px ${
+                        isUnread ? 'font-bold text-ink' : 'font-medium text-ink'
+                      } ${isSelected ? '!text-sel-ink' : ''}`}
+                    >
+                      {msg.subject || '(No subject)'}
+                    </span>
+                    <span className="block text-[13px] text-ink-3 truncate">
+                      {isDraft && msg.to.length > 0 && (
+                        <span className="font-medium">To {msg.to.map((t) => t.name || t.address).join(', ')}. </span>
+                      )}
                       {msg.snippet || 'No text content available'}
-                    </p>
-                    {msg.hasAttachments && <Paperclip className="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true" />}
-                  </div>
+                    </span>
+                    {msg.hasAttachments && (
+                      <span className="mt-[7px] flex">
+                        <span className="inline-flex items-center gap-1 h-[22px] pl-1.5 pr-2 border border-line-2 rounded-[3px] text-xs font-semibold text-ink-2">
+                          <Paperclip className="w-[13px] h-[13px]" aria-hidden="true" />
+                          Attachment
+                        </span>
+                      </span>
+                    )}
+                  </span>
                 </button>
 
                 <button
@@ -538,10 +562,10 @@ export const MessageList: React.FC<MessageListProps> = ({
                   onClick={(e) => onToggleFlag(msg.uid, 'isFlagged', e)}
                   aria-pressed={!!msg.isFlagged}
                   aria-label={msg.isFlagged ? `Unstar message from ${who}` : `Star message from ${who}`}
-                  className="w-11 sm:w-9 shrink-0 flex items-center justify-center text-slate-300 hover:text-amber-500 transition-colors"
+                  className="w-10 sm:w-8 shrink-0 flex items-start pt-[13px] justify-center text-ink-3 hover:text-star-line transition-colors"
                 >
                   <Star
-                    className={`w-3.5 h-3.5 ${msg.isFlagged ? 'text-amber-500 fill-amber-500' : 'stroke-[1.5]'}`}
+                    className={`w-4 h-4 ${msg.isFlagged ? 'text-star-line fill-star' : 'stroke-[1.5]'}`}
                   />
                 </button>
               </li>
@@ -551,7 +575,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       )}
 
       {/* Pagination Footer */}
-      <div className="px-3.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-xs text-slate-500 font-medium">
+      <div className="px-4 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] border-t border-line bg-surface flex items-center justify-between text-xs text-ink-3 font-semibold">
         <span>
           Page {page} of {totalPages}
         </span>
@@ -560,7 +584,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             onClick={() => onPageChange(page - 1)}
             disabled={page <= 1 || isLoading}
             aria-label="Previous page"
-            className={`p-1 hover:bg-slate-200/60 rounded disabled:opacity-40 disabled:hover:bg-transparent ${TOUCH}`}
+            className={`p-1 hover:bg-hover rounded disabled:opacity-40 disabled:hover:bg-transparent ${TOUCH}`}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -568,7 +592,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             onClick={() => onPageChange(page + 1)}
             disabled={page >= totalPages || isLoading}
             aria-label="Next page"
-            className={`p-1 hover:bg-slate-200/60 rounded disabled:opacity-40 disabled:hover:bg-transparent ${TOUCH}`}
+            className={`p-1 hover:bg-hover rounded disabled:opacity-40 disabled:hover:bg-transparent ${TOUCH}`}
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -582,9 +606,10 @@ export const MessageList: React.FC<MessageListProps> = ({
           onClick={onCompose}
           aria-label="New message"
           title="New message"
-          className="lg:hidden absolute right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 h-14 w-14 rounded-full bg-sky-600 hover:bg-sky-500 text-white shadow-lg shadow-sky-900/30 flex items-center justify-center active:scale-95 transition-transform"
+          className="lg:hidden cut-tr absolute right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 h-[52px] pl-4 pr-5 gap-2 bg-act hover:bg-act-hov text-act-ink font-extrabold text-[15px] flex items-center justify-center transition-colors"
         >
-          <PenSquare className="w-6 h-6" />
+          <PenSquare className="w-5 h-5" strokeWidth={2.2} aria-hidden="true" />
+          <span>Write</span>
         </button>
       )}
     </section>

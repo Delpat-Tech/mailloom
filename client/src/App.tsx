@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Check, AlertTriangle } from 'lucide-react';
 import { Sidebar } from './components/Sidebar.js';
+import { Logo } from './components/Logo.js';
 import { ConnectionsPanel } from './components/ConnectionsPanel.js';
 import { NotificationsPanel } from './components/NotificationsPanel.js';
 import {
@@ -953,10 +955,10 @@ export const App: React.FC = () => {
 
   if (isAuthChecking) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-slate-900 text-white">
+      <div className="h-screen w-screen flex items-center justify-center bg-rail text-rail-ink">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-semibold text-slate-300">Launching Mailloom...</span>
+          <Logo size={40} />
+          <span className="text-xs font-semibold text-rail-2">Launching Mailloom...</span>
         </div>
       </div>
     );
@@ -964,7 +966,7 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans"
+      className="h-screen w-screen flex flex-col overflow-hidden bg-surface text-ink font-sans"
       style={{ height: '100dvh' }}
     >
       {!account ? (
@@ -980,7 +982,7 @@ export const App: React.FC = () => {
           {/* Mobile/Tablet Sidebar Overlay */}
           {showMobileSidebar && (
             <div
-              className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 lg:hidden"
+              className="fixed inset-0 bg-scrim z-40 lg:hidden"
               onClick={() => setShowMobileSidebar(false)}
             />
           )}
@@ -992,7 +994,7 @@ export const App: React.FC = () => {
             aria-modal={showMobileSidebar ? true : undefined}
             aria-label={showMobileSidebar ? 'Folders and accounts' : undefined}
             className={`
-              fixed inset-y-0 left-0 z-50 w-64 transform transition-[transform,visibility] duration-200 ease-out shadow-2xl lg:shadow-none
+              fixed inset-y-0 left-0 z-50 w-56 transform transition-[transform,visibility] duration-200 ease-out shadow-2xl lg:shadow-none
               lg:relative lg:translate-x-0 lg:z-auto
               ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full max-lg:invisible'}
             `}
@@ -1031,7 +1033,7 @@ export const App: React.FC = () => {
           {/* Middle Pane: Message List */}
           <div
             className={`
-              flex-1 md:flex-none md:w-[320px] lg:w-[360px] xl:w-[420px] min-w-0 h-full
+              flex-1 md:flex-none md:w-[320px] lg:w-[360px] xl:w-[408px] min-w-0 h-full
               ${mobileView === 'message' ? 'hidden md:block' : 'block'}
             `}
           >
@@ -1186,12 +1188,17 @@ export const App: React.FC = () => {
       {toast && (
         <div
           aria-hidden="true"
-          className={`fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 w-max max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold z-[70] flex items-center gap-2 border transition-all animate-bounce motion-reduce:animate-none ${
+          className={`fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 w-max max-w-[calc(100vw-2rem)] px-4 py-3 rounded shadow-xl text-[13.5px] font-bold z-[70] flex items-start gap-3 ${
             toast.type === 'error'
-              ? 'bg-red-950 text-red-200 border-red-800'
-              : 'bg-slate-900 text-white border-slate-700'
+              ? 'bg-warn-bg text-ink border border-warn-line'
+              : 'bg-toast-bg text-toast-ink border border-line'
           }`}
         >
+          {toast.type === 'error' ? (
+            <AlertTriangle className="w-5 h-5 shrink-0 text-warn-ink" />
+          ) : (
+            <Check className="w-5 h-5 shrink-0 text-ok-ink" />
+          )}
           <span>{toast.message}</span>
         </div>
       )}

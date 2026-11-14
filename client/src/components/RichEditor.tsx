@@ -57,7 +57,7 @@ const ToolButton: React.FC<BtnProps> = ({ label, shortcut, active, disabled, onC
     onMouseDown={(e) => e.preventDefault()}
     onClick={onClick}
     className={`ml-editor-btn p-1.5 rounded min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center transition-colors disabled:opacity-40 ${
-      active ? 'is-active bg-sky-100 text-sky-800' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/60'
+      active ? 'is-active bg-sel text-sel-ink' : 'text-ink-3 hover:text-ink hover:bg-line'
     }`}
   >
     {children}
@@ -150,7 +150,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         role: 'textbox',
         'aria-multiline': 'true',
         'aria-label': ariaLabel,
-        class: `ml-editor-content focus:outline-none text-sm text-slate-800 leading-relaxed ${contentClassName}`
+        class: `ml-editor-content focus:outline-none text-sm text-ink leading-relaxed ${contentClassName}`
       },
       transformPastedHTML: (html) => cleanPastedHtml(html),
       handlePaste: (_view, event) => {
@@ -224,7 +224,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
 
   return (
     <div className="ml-editor flex flex-col min-h-0 flex-1">
-      <div role="toolbar" aria-label="Formatting" className="ml-editor-toolbar flex flex-wrap items-center gap-0.5 pb-2 border-b border-slate-100 mb-2">
+      <div role="toolbar" aria-label="Formatting" className="ml-editor-toolbar flex flex-wrap items-center gap-0.5 pb-2 border-b border-line mb-2">
         <ToolButton label="Bold" shortcut="Ctrl+B" active={editor.isActive('bold')} onClick={() => chain(editor).toggleBold().run()}>
           <Bold className="w-4 h-4" />
         </ToolButton>
@@ -270,7 +270,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
 
       {linkOpen && (
         <form onSubmit={applyLink} className="ml-editor-link flex flex-wrap items-center gap-2 pb-2 text-xs">
-          <label htmlFor="ml-link-url" className="text-slate-500 font-medium">Link address</label>
+          <label htmlFor="ml-link-url" className="text-ink-3 font-medium">Link address</label>
           <input
             id="ml-link-url"
             ref={linkInputRef}
@@ -290,9 +290,9 @@ export const RichEditor: React.FC<RichEditorProps> = ({
             placeholder="https://example.com"
             aria-invalid={linkError ? true : undefined}
             aria-describedby={linkError ? 'ml-link-error' : undefined}
-            className="flex-1 min-w-[160px] bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-sky-500"
+            className="flex-1 min-w-[160px] bg-sheet border border-line rounded px-2.5 py-1.5 focus:outline-none focus:border-act"
           />
-          <button type="submit" className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg font-medium min-h-[44px] sm:min-h-0">
+          <button type="submit" className="px-3 py-1.5 bg-act hover:bg-act-hov text-act-ink rounded font-medium min-h-[44px] sm:min-h-0">
             Apply
           </button>
           {editor.isActive('link') && (
@@ -302,7 +302,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
                 editor.chain().focus().extendMarkRange('link').unsetLink().run();
                 setLinkOpen(false);
               }}
-              className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg min-h-[44px] sm:min-h-0"
+              className="px-3 py-1.5 text-ink-2 hover:bg-hover rounded min-h-[44px] sm:min-h-0"
             >
               Remove link
             </button>
@@ -313,12 +313,12 @@ export const RichEditor: React.FC<RichEditorProps> = ({
               setLinkOpen(false);
               editor.commands.focus();
             }}
-            className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg min-h-[44px] sm:min-h-0"
+            className="px-3 py-1.5 text-ink-2 hover:bg-hover rounded min-h-[44px] sm:min-h-0"
           >
             Cancel
           </button>
           {linkError && (
-            <span id="ml-link-error" role="alert" className="w-full text-red-600">
+            <span id="ml-link-error" role="alert" className="w-full text-warn-ink">
               {linkError}
             </span>
           )}

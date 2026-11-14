@@ -28,7 +28,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim p-4"
       onClick={onClose}
       role="presentation"
     >
@@ -38,20 +38,20 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
-        className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl"
+        className="w-full max-w-sm rounded bg-surface border border-line p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="confirm-title" className="text-base font-bold text-slate-900">
+        <h2 id="confirm-title" className="text-base font-extrabold text-ink">
           {request.title}
         </h2>
-        <p id="confirm-message" className="mt-2 text-sm text-slate-600">
+        <p id="confirm-message" className="mt-2 text-sm text-ink-2">
           {request.message}
         </p>
         <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button
             ref={cancelRef}
             onClick={onClose}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            className="rounded border border-line-2 px-3 py-1.5 text-xs font-bold text-ink-2 hover:bg-hover"
           >
             {request.cancelLabel || 'Cancel'}
           </button>
@@ -62,7 +62,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
                 onClose();
                 fn();
               }}
-              className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+              className="rounded border border-line-2 bg-sel px-3 py-1.5 text-xs font-bold text-sel-ink hover:bg-hover"
             >
               {request.alternateLabel}
             </button>
@@ -73,8 +73,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
               onClose();
               fn();
             }}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white ${
-              request.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-sky-600 hover:bg-sky-700'
+            className={`cut-tr px-4 py-1.5 text-xs font-extrabold text-act-ink ${
+              request.danger ? 'bg-warn hover:brightness-110' : 'bg-act hover:bg-act-hov'
             }`}
           >
             {request.confirmLabel}

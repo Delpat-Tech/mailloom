@@ -2,10 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body {
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+/* Colour tokens: Delpat palette (sky rail). Light by default; dark follows the system unless the
+   person chose Light or Dark (data-theme on <html>, set by services/theme.ts). */
+:root {
+  --font: 'Manrope', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --r-s: 4px;
+  color-scheme: light;
+  --surface:#FFFFFF;--sheet:#F5F8FC;--line:#E0E7F1;--line-2:#C3CFE0;
+  --ink:#28306E;--ink-2:#444C7A;--ink-3:#566082;
+  --act:#2F6CB5;--act-ink:#FFFFFF;--act-hov:#255D9F;--cmp-top:#2F6CB5;--brand:#3F7CBD;
+  --unread:#F2B01E;--dot-ring:#A87400;--pill:#F2B01E;--pill-ink:#28306E;--sel:#DCEAF8;--sel-ink:#28306E;--hover:#EEF3FA;--focus:#3F7CBD;
+  --warn:#D0342C;--warn-ink:#B3261E;--warn-bg:#FDECEA;--warn-line:#F3BDB8;--draft:#6C50C6;--star:#F2B01E;--star-line:#A87400;--ok:#2E9E5B;--ok-ink:#1B6B3E;
+  --caution:#7A5200;--caution-bg:#FFF1CC;--caution-line:#EBC96A;
+  --av1:#2F6CB5;--av2:#0F7F6F;--av3:#6B4FC4;--av4:#BF4527;--av5:#8A6100;--av6:#566082;
+  --toast-bg:#E7F6EE;--toast-ink:#28306E;--toast-link:#245E9E;
+  --mk-a:#28306E;--mk-b:#3F7CBD;
+  --rail:#EAF2FB;--rail-ink:#28306E;--rail-2:#444C7A;--rail-hi:rgba(63,124,189,.14);--rail-line:#CFDCEC;--rail-on:#2F6CB5;--rail-on-ink:#FFFFFF;--rail-hov-ink:#28306E;
+  --wr-bg:#2F6CB5;--wr-ink:#FFFFFF;--wr-hov:#255D9F;--rail-ok:#1B6B3E;--rm-a:#3F7CBD;--rm-b:#28306E;--ph-on:#2F6CB5;--ph-on-ink:#FFFFFF;
+  --scrim:rgba(40,48,110,.45);--scroll:rgba(86,96,130,.35);--scroll-h:rgba(86,96,130,.6);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --surface:#111A33;--sheet:#16213F;--line:#25345C;--line-2:#35466F;
+  --ink:#EAF1FB;--ink-2:#BCC9E2;--ink-3:#96A5C7;
+  --act:#5B9BE0;--act-ink:#0B1430;--act-hov:#74ADEA;--cmp-top:#24508F;--brand:#5B9BE0;
+  --unread:#F2B01E;--dot-ring:transparent;--pill:#F2B01E;--pill-ink:#28306E;--sel:#1F3866;--sel-ink:#FFFFFF;--hover:#1A2848;--focus:#7DB2EE;
+  --warn:#FF7A70;--warn-ink:#FFA9A1;--warn-bg:#3A1B24;--warn-line:#6E2F38;--draft:#B9A4F5;--star:#F2B01E;--star-line:#F2B01E;--ok:#3DBE74;--ok-ink:#6EDBA0;
+  --caution:#FFCB5C;--caution-bg:#3B3012;--caution-line:#6B5520;
+  --av1:#2F6CB5;--av2:#0F7F6F;--av3:#6B4FC4;--av4:#BF4527;--av5:#8A6100;--av6:#566082;
+  --toast-bg:#12392A;--toast-ink:#EAF1FB;--toast-link:#F2B01E;
+  --mk-a:#5B9BE0;--mk-b:#EAF1FB;
+  --rail:#0D1630;--rail-ink:#EAF1FB;--rail-2:#AEBBD8;--rail-hi:rgba(255,255,255,.08);--rail-line:#25345C;--rail-on:#2F6CB5;--rail-on-ink:#FFFFFF;--rail-hov-ink:#FFFFFF;
+  --wr-bg:#5B9BE0;--wr-ink:#0B1430;--wr-hov:#74ADEA;--rail-ok:#6EDBA0;--rm-a:#5B9BE0;--rm-b:#EAF1FB;--ph-on:#2F6CB5;--ph-on-ink:#FFFFFF;
+  --scrim:rgba(5,9,22,.65);--scroll:rgba(150,165,199,.35);--scroll-h:rgba(150,165,199,.6);
   }
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --surface:#111A33;--sheet:#16213F;--line:#25345C;--line-2:#35466F;
+  --ink:#EAF1FB;--ink-2:#BCC9E2;--ink-3:#96A5C7;
+  --act:#5B9BE0;--act-ink:#0B1430;--act-hov:#74ADEA;--cmp-top:#24508F;--brand:#5B9BE0;
+  --unread:#F2B01E;--dot-ring:transparent;--pill:#F2B01E;--pill-ink:#28306E;--sel:#1F3866;--sel-ink:#FFFFFF;--hover:#1A2848;--focus:#7DB2EE;
+  --warn:#FF7A70;--warn-ink:#FFA9A1;--warn-bg:#3A1B24;--warn-line:#6E2F38;--draft:#B9A4F5;--star:#F2B01E;--star-line:#F2B01E;--ok:#3DBE74;--ok-ink:#6EDBA0;
+  --caution:#FFCB5C;--caution-bg:#3B3012;--caution-line:#6B5520;
+  --av1:#2F6CB5;--av2:#0F7F6F;--av3:#6B4FC4;--av4:#BF4527;--av5:#8A6100;--av6:#566082;
+  --toast-bg:#12392A;--toast-ink:#EAF1FB;--toast-link:#F2B01E;
+  --mk-a:#5B9BE0;--mk-b:#EAF1FB;
+  --rail:#0D1630;--rail-ink:#EAF1FB;--rail-2:#AEBBD8;--rail-hi:rgba(255,255,255,.08);--rail-line:#25345C;--rail-on:#2F6CB5;--rail-on-ink:#FFFFFF;--rail-hov-ink:#FFFFFF;
+  --wr-bg:#5B9BE0;--wr-ink:#0B1430;--wr-hov:#74ADEA;--rail-ok:#6EDBA0;--rm-a:#5B9BE0;--rm-b:#EAF1FB;--ph-on:#2F6CB5;--ph-on-ink:#FFFFFF;
+  --scrim:rgba(5,9,22,.65);--scroll:rgba(150,165,199,.35);--scroll-h:rgba(150,165,199,.6);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    font-family: var(--font);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+
+/* Slanted cut corners (the Slab shapes). Utilities, so lg:cut-rail and friends work. */
+@layer utilities {
+  .cut-tr { clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%); }
+  .cut-av { clip-path: polygon(0 0, 64% 0, 100% 34%, 100% 100%, 0 100%); }
+  .cut-file { clip-path: polygon(0 0, 70% 0, 100% 24%, 100% 100%, 0 100%); }
+  .cut-sel { clip-path: polygon(22px 0, 100% 0, 100% 100%, 0 100%, 0 22px); }
+  .cut-rail { clip-path: polygon(0 0, 74% 0, 100% 40px, 100% 100%, 0 100%); }
+  .cut-phone { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), 0 100%); }
+  .no-cut { clip-path: none; }
 }
 
 /* Custom scrollbars for clean desktop webmail experience */
@@ -19,21 +93,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.4);
+  background: var(--scroll);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.7);
-}
-
-/* Dark scrollbars for sidebar */
-.bg-slate-900 ::-webkit-scrollbar-thumb {
-  background: rgba(71, 85, 105, 0.5);
-}
-
-.bg-slate-900 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(71, 85, 105, 0.8);
+  background: var(--scroll-h);
 }
 
 /* ---- Rich-text editor (RichEditor.tsx): plain classes, restyle freely ---- */
@@ -41,13 +106,13 @@
 .ml-editor-content ul { list-style: disc; padding-left: 1.4rem; margin: 0 0 0.6em; }
 .ml-editor-content ol { list-style: decimal; padding-left: 1.4rem; margin: 0 0 0.6em; }
 .ml-editor-content li > p { margin: 0; }
-.ml-editor-content blockquote { margin: 0.5em 0; padding-left: 12px; border-left: 3px solid #cbd5e1; color: #475569; }
-.ml-editor-content a { color: #0369a1; text-decoration: underline; }
+.ml-editor-content blockquote { margin: 0.5em 0; padding-left: 12px; border-left: 3px solid var(--line-2); color: var(--ink-2); }
+.ml-editor-content a { color: var(--act); text-decoration: underline; }
 .ml-editor-content img { max-width: 100%; height: auto; display: inline-block; vertical-align: bottom; }
-.ml-editor-content img.ProseMirror-selectednode { outline: 2px solid #0ea5e9; outline-offset: 2px; }
+.ml-editor-content img.ProseMirror-selectednode { outline: 2px solid var(--focus); outline-offset: 2px; }
 .ml-editor-content p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  color: #94a3b8;
+  color: var(--ink-3);
   float: left;
   height: 0;
   pointer-events: none;
