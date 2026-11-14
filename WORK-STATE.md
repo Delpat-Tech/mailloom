@@ -5,17 +5,17 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- Merged and reviewed on main: sign-in and sessions, sending, organising, reading, drafts, live list, phone and
-  keyboard basics, per-person agent keys and agent API (docs/agent-api.md). Browser check 1 done (notes folder,
-  mailloom-browser-check-1.md).
+- On main, reviewed and tested (server 167, client 63): sign-in and sessions, sending, organising, reading, drafts,
+  live list, phone and keyboard basics, agent keys and API, push notifications, rich-text composer with inline images
+  and signature logo, release build (`pnpm release`), deploy runbook (docs/deploy.md), message deep links.
+- Work OS mail tools: branch mail-tools in Om/wos-mail, reviewed, 64 e2e checks + 36 live checks against real Mailloom;
+  not merged into Work OS master (waits on Om).
 
 ## Next
-1. Builder B: fix browser check 1 bugs (inline logos sent as attachment+Content-ID, desktop toolbar overlap at 1024 px,
-   unnamed buttons, state-dependent organise test).
-2. Design round 2 (round 1 rejected by Om: too dark, colours all look the same); Om picks; apply it across the app.
-3. Work OS mail tools (separate worktree of the Work OS repo, branch mail-tools), calling docs/agent-api.md.
-4. Signature logo inline, push notifications, full acceptance run, final security review.
-5. Trial on the real server with a test mailbox (waits on Om's go-ahead).
+1. Design: round 2 sent to Om (mailloom-design/round-2); waits on Om's pick, then apply it across the app.
+2. Whole-app security review of main.
+3. Full acceptance run in the browser (desktop and phone) after the design lands.
+4. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
 ## Later
 - Rich composer built on builder-b (TipTap): needs a browser check (typing, paste from Word/Gmail, picture paste/drop, signature logo, phone width).
@@ -39,3 +39,6 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Push: browser-rotated subscriptions (pushsubscriptionchange) are not re-registered; the old one 410s and is deleted,
   the person turns notifications on again (waits on real-phone use).
 - Push: 60 s poll path (servers without IDLE) not covered by a test; GreenMail has IDLE (waits on real Dovecot check).
+- Work OS: unattended dispatcher sessions can mail outside Delpat (notice only, no hold); Om said no extra limits (waits on Om if he changes his mind).
+- Deep links open only in the active account when several are signed in (waits on real use).
+- Agent API and web composer use different outgoing HTML sanitisers; align them (next agent-API touch).
