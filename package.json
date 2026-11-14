@@ -9,10 +9,12 @@
     "start": "pnpm --filter mailloom-server start",
     "test": "pnpm --filter mailloom-server test",
     "dev:server": "pnpm --filter mailloom-server dev",
-    "dev:client": "pnpm --filter mailloom-client dev"
+    "dev:client": "pnpm --filter mailloom-client dev",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
     "esbuild": "^0.28.2"
-  }
+  },
+  "type": "module"
 }

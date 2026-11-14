@@ -26,3 +26,11 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Release output (built by pnpm release, never committed)
+release/
+deploy/server.mjs
+deploy/server.bundle.mjs
+deploy/public/
+mailloom-standalone.tar.gz
+*.tar.gz

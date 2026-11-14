@@ -59,19 +59,15 @@ pnpm dev
 ```
 Open **[http://localhost:3000](http://localhost:3000)**.
 
-### 2. Production Build
+### 2. Release build (what goes on the server)
 ```bash
-pnpm build
+pnpm release
 ```
-This builds both `server/dist` and `client/dist`.
+Builds the client and the server from source, checks the bundle starts (and refuses to without secrets), and writes
+`release/mailloom-<commit>.tar.gz`. Build output is never committed. The server needs Node 22.13 or newer.
 
-### 3. Production Start (Single Self-Contained Daemon)
-Fastify serves both the REST API and the React Single Page App on port 3000:
-```bash
-pnpm start
-# or via PM2:
-pm2 start server/dist/index.js --name mailloom
-```
+### 3. Production start
+Deploying and running it with pm2 behind Nginx is described step by step in [docs/deploy.md](docs/deploy.md).
 
 ### 4. Running Integration Tests
 Verifies health, demo connect, auth recovery, mailboxes, messages, flags, send, sent-append, attachment streaming, and socket reaper:

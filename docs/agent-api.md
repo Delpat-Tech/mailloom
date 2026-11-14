@@ -53,6 +53,20 @@ images dropped (`images_removed` counts them, alt text kept as `[image: alt]`), 
 Message endpoints take either `folder` + `uid`, or `message_id` (with or without `<>`; optional `folder`
 to narrow; otherwise Inbox is searched first, then every folder). Message-ID is the stable choice.
 
+## Links to a message (`web_url`)
+
+Every message in `/search`, `/needs-attention` and `/message` responses has `web_url`: a link that opens that
+message in Mailloom, e.g. `https://webmail.delpat.in/#/m/%3Cabc123%40mail.delpat.in%3E`. Put it in the Work OS
+task made from a mail. It is built from the optional `MAILLOOM_PUBLIC_URL` setting (`<MAILLOOM_PUBLIC_URL>/#/m/<url-encoded Message-ID>`)
+and is `null` when that setting is empty or the message has no Message-ID.
+
+- The link carries only the Message-ID, so it keeps working when the message is moved to another folder.
+- The person must be signed in to Mailloom (they are asked to sign in first). Mailloom looks in INBOX first,
+  then the other folders of the signed-in mailbox. A different person's mailbox never resolves it.
+- If the message was deleted or moved out of reach, Mailloom shows "This message was moved or deleted".
+- You can build the link yourself from any `message_id`: `MAILLOOM_PUBLIC_URL + "/#/m/" + encodeURIComponent("<id>")`
+  (angle brackets optional).
+
 ## Endpoints
 
 ### GET /whoami (any scope)

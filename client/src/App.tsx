@@ -12,6 +12,7 @@ import {
 import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
 import { ComposerModal, type ComposerReplyMeta } from './components/ComposerModal.js';
+import { clearMessageLinkHash, parseMessageLinkHash } from './services/deeplink.js';
 import { planReply } from './services/reply.js';
 import { ConnectModal } from './components/ConnectModal.js';
 import { ConfirmDialog, type ConfirmRequest } from './components/ConfirmDialog.js';
@@ -28,6 +29,7 @@ import {
   touchStoredAccount,
   updateStoredAccountUnread,
   onSessionExpired,
+  isSessionEndedError,
   type SearchFilterParams,
   type SessionExpiredDetail
 } from './services/api.js';
@@ -96,6 +98,8 @@ export const App: React.FC = () => {
   // (the service worker already shows a notification for the same mail).
   const pushActiveRef = useRef(false);
   // A notification was tapped: open that mailbox, folder and message once the account is ready.
+  // "#/m/<Message-ID>": a link to one message (Work OS tasks, shared links). Resolved after sign-in.
+  const [messageLink, setMessageLink] = useState<string | null>(() => parseMessageLinkHash(window.location.hash));
   const [openTarget, setOpenTarget] = useState<OpenMessageTarget | null>(() => takeOpenTargetFromHash());
   const [composerInitial, setComposerInitial] = useState<{
     to?: string[];
@@ -872,6 +876,38 @@ export const App: React.FC = () => {
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);
   }, []);
+
+  useEffect(() => {
+    const onHash = () => {
+      const id = parseMessageLinkHash(window.location.hash);
+      if (id) setMessageLink(id);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  useEffect(() => {
+    if (!messageLink || isAuthChecking || !account) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const where = await api.locateMessage(messageLink);
+        if (cancelled) return;
+        clearMessageLinkHash();
+        setMessageLink(null);
+        if (where) setOpenTarget({ mailbox: account.email, folder: where.folder, uid: where.uid });
+        else setToast({ message: 'This message was moved or deleted', type: 'error' });
+      } catch (err) {
+        if (cancelled || isSessionEndedError(err)) return; // the sign-in prompt runs; the link stays for afterwards
+        clearMessageLinkHash();
+        setMessageLink(null);
+        setToast({ message: 'Could not look up this message. Please try again.', type: 'error' });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messageLink, account, isAuthChecking]);
 
   useEffect(() => {
     if (!openTarget || isAuthChecking || !account) return;

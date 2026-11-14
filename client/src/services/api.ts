@@ -245,6 +245,16 @@ export interface SearchFilterParams {
 }
 
 export const api = {
+  /** Finds a message of the active mailbox by Message-ID. Resolves null when it is not there (moved away or deleted). */
+  locateMessage: async (messageId: string): Promise<{ folder: string; uid: number } | null> => {
+    try {
+      return await request<{ folder: string; uid: number }>(`/messages/locate?message_id=${encodeURIComponent(messageId)}`);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 400)) return null;
+      throw err;
+    }
+  },
+
   // Auth
   /** Signs in. The server sets this account's session cookie; nothing secret is returned. */
   connect: async (data: { email: string; password: string; rememberMe: boolean }): Promise<{ account: UserAccount }> => {

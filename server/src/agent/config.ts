@@ -10,6 +10,8 @@ import { ConfigError } from '../config.js';
  *   AGENT_MAX_RECIPIENTS        to+cc+bcc per mail (default 100).
  *   AGENT_MAX_TEXT_CHARS        message text returned by get-message (default 100000 characters).
  *   AGENT_MAX_ATTACHMENT_BYTES  largest attachment returned as base64 (default 10 MB).
+ *   MAILLOOM_PUBLIC_URL         optional public address of Mailloom (https://mail.example.com, a path like /mail is
+ *                               allowed). When set, every message in agent responses carries a web_url that opens it.
  *
  * The caller's address is req.ip, so behind a proxy TRUST_PROXY must name that proxy.
  */
@@ -21,6 +23,8 @@ export interface AgentConfig {
   maxRecipients: number;
   maxTextChars: number;
   maxAttachmentBytes: number;
+  /** MAILLOOM_PUBLIC_URL without a trailing slash, or null. */
+  publicUrl: string | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -37,6 +41,32 @@ function int(env: Env, name: string, def: number): number {
 export function normaliseIp(ip: string): string {
   const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
   return m ? m[1]! : ip;
+}
+
+function parsePublicUrl(raw: string | undefined): string | null {
+  const v = raw?.trim();
+  if (!v) return null;
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    throw new ConfigError(`MAILLOOM_PUBLIC_URL "${v}" is not a web address like https://mail.example.com.`);
+  }
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) {
+    throw new ConfigError('MAILLOOM_PUBLIC_URL must start with https:// (http:// only for localhost).');
+  }
+  if (u.search || u.hash || u.username || u.password) {
+    throw new ConfigError('MAILLOOM_PUBLIC_URL must be only the address, without query, # part or login.');
+  }
+  return (u.origin + u.pathname).replace(/\/+$/, '');
+}
+
+/** Link that opens one message in the web app: <public url>/#/m/<url-encoded Message-ID>. Null when no public URL is set or the message has no id. */
+export function messageWebUrl(config: { publicUrl: string | null }, messageId: string | null | undefined): string | null {
+  if (!config.publicUrl || !messageId) return null;
+  const id = messageId.trim().replace(/^<|>$/g, '');
+  return `${config.publicUrl}/#/m/${encodeURIComponent(`<${id}>`)}`;
 }
 
 export function loadAgentConfig(env: Env): AgentConfig {
@@ -69,7 +99,8 @@ export function loadAgentConfig(env: Env): AgentConfig {
     sendsPerHour: int(env, 'AGENT_SENDS_PER_HOUR', 200),
     maxRecipients: int(env, 'AGENT_MAX_RECIPIENTS', 100),
     maxTextChars: int(env, 'AGENT_MAX_TEXT_CHARS', 100_000),
-    maxAttachmentBytes: int(env, 'AGENT_MAX_ATTACHMENT_BYTES', 10 * 1024 * 1024)
+    maxAttachmentBytes: int(env, 'AGENT_MAX_ATTACHMENT_BYTES', 10 * 1024 * 1024),
+    publicUrl: parsePublicUrl(env.MAILLOOM_PUBLIC_URL)
   };
 }
 

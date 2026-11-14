@@ -21,8 +21,10 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Drafts do not keep attachments; reopened drafts cannot restore them (needs multipart draft save).
 - Folder create/rename/delete, drag to folder (wait on v1 in daily use).
 - Mail 'Message-ID' header search for drafts on servers without UIDPLUS is untested on real Dovecot.
-- Production secrets: deploy/.env.example committed real-looking secrets; if production copied them, rotate there (waits on Om).
-- deploy/server.mjs and mailloom-standalone.tar.gz are stale (old insecure code); rebuild from source before any deploy (waits on deploy).
+- Production secrets: the old committed secrets are leaked; if production ever used them, rotate there (docs/deploy.md section 10; waits on Om).
+- Release: `pnpm release` builds and packs from source (build output no longer in git). Runbook docs/deploy.md is untested on the real server (waits on trial go-ahead).
+- Deep links `#/m/<Message-ID>` open the active account only; a link for another signed-in account shows "moved or deleted" (revisit if staff use several accounts).
+- Server HOST defaults to 0.0.0.0 when unset; the runbook sets 127.0.0.1 (consider defaulting to 127.0.0.1).
 - Threads view, contacts book, out-of-office via ManageSieve, offline reading, undo send, search all folders (wait on v1 in daily use).
 - Forwarding rules and change password need iRedAdmin access (waits on Om).
 - Per-email sign-in throttle (10/15 min) lets anyone lock a known mailbox out of sign-in; consider CAPTCHA-free alternatives (waits on real use).

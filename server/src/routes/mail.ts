@@ -19,6 +19,7 @@ import { saveLiveDraft, deleteLiveDraft } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
 import { renderEmail } from '../utils/sanitize.js';
+import { AgentError, locate } from '../agent/mail.js';
 import { sendLiveEmail, SendError, getMaxMessageBytes } from '../services/smtp.js';
 
 type AuthenticatedRequest = FastifyRequest;
@@ -60,6 +61,24 @@ export async function mailRoutes(fastify: FastifyInstance) {
       return { folders };
     } catch (err) {
       return failMail(req, reply, err, 'Could not load folders');
+    }
+  });
+
+  // Find one message of the signed-in mailbox by its Message-ID (INBOX first, then every other folder).
+  // Used by deep links (#/m/<Message-ID>). Only ever searches the session's own account.
+  fastify.get('/api/messages/locate', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+    const config = req.accountConfig!;
+    const raw = String((req.query as { message_id?: string }).message_id ?? '').trim();
+    if (!raw || raw.length > 998 || /[\s\u0000-\u001f\u007f]/.test(raw)) return reply.status(400).send({ error: 'Invalid Message-ID' });
+    if (config.isDemo) return reply.status(404).send({ code: 'MESSAGE_NOT_FOUND', error: 'Message not found' });
+    try {
+      const where = await locate(config, { messageId: raw });
+      return { folder: where.folder, uid: where.uid };
+    } catch (err) {
+      if (err instanceof AgentError && err.code === 'MESSAGE_NOT_FOUND') {
+        return reply.status(404).send({ code: 'MESSAGE_NOT_FOUND', error: 'Message not found' });
+      }
+      return failMail(req, reply, err, 'Could not search for this message');
     }
   });
 
