@@ -15,9 +15,14 @@ users tester@ and colleague@delpat.test). Never the live mail server.
   not merged into Work OS master (waits on Om).
 
 ## Next
+0. Live since 15 Nov at https://mail.delpat.in/mail/ (release v2026.11.15, 5101def), replacing the intern's build in place:
+   systemd mailloom.service (www-data, /opt/www/mailloom, .env there), Nginx /etc/nginx/templates/roundcube.tmpl
+   (/mail/ strips the prefix, /api/ added). Rollback: /opt/www/mailloom.intern and /root/roundcube.tmpl.bak.
+   Waits on Om signing in and the checklist (docs/deploy.md section 9) on desktop and phone.
 1. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
 ## Later
-- Real-server trial: Om said on 15 Nov to run locally only, no real-server test. Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).
+- Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
+- Earlier note: Om first said local only; Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).
 - ydco.in mail is on Google (MX), so it cannot sign in to Mailloom; dropped from MAIL_DOMAINS examples (builder-a).
 - Snooze wake-up without notifications on waits for the next sign-in or request for that mailbox; on time only with a stored push login (docs/organise.md; waits on real use, or on a decision to keep a separate wake-up login).
 - Labels server side (builder-a): 501 path for servers without custom keywords is untested (GreenMail and Dovecot allow them); conversation index rows are never pruned for folders renamed away or for mailboxes no longer used (waits on real use).
