@@ -157,6 +157,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const orderedFolders = orderFolders(folders);
 
+  // The folders and labels scroll on their own, between Write and the footer. A fade (not a hard cut)
+  // shows at an edge only when there is more to scroll to on that side.
+  const navRef = useRef<HTMLElement>(null);
+  const [fade, setFade] = useState({ top: 0, bottom: 0 });
+  const measureFade = React.useCallback(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const top = el.scrollTop > 2 ? 18 : 0;
+    const bottom = el.scrollHeight - el.clientHeight - el.scrollTop > 2 ? 24 : 0;
+    setFade((f) => (f.top === top && f.bottom === bottom ? f : { top, bottom }));
+  }, []);
+  useEffect(() => {
+    measureFade();
+    const el = navRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measureFade);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [measureFade, folders.length, labels.length]);
+
   const getFolderIcon = (f: MailboxFolder) => {
     switch (f.specialUse) {
       case 'Inbox':
@@ -178,9 +199,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <div className="w-56 bg-rail text-rail-2 flex flex-col h-full select-none lg:cut-rail pb-[env(safe-area-inset-bottom)]">
+    <div className="w-56 bg-rail text-rail-2 flex flex-col h-full min-h-0 overflow-hidden select-none lg:cut-rail pb-[env(safe-area-inset-bottom)]">
       {/* App branding */}
-      <div className="pl-5 pr-3 pt-5 flex items-center justify-between min-h-[44px]">
+      <div className="pl-5 pr-3 pt-5 flex items-center justify-between min-h-[44px] shrink-0">
         <div className="flex items-center gap-2.5 font-extrabold text-rail-ink text-[19px] tracking-tight leading-none">
           <Logo className="shrink-0" />
           Mailloom
@@ -202,7 +223,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Primary compose action */}
-      <div className="mx-4 mt-6 mb-5">
+      <div className="mx-4 mt-6 mb-5 shrink-0 [@media(max-height:800px)]:mt-4 [@media(max-height:800px)]:mb-3">
         <button
           onClick={onOpenComposer}
           aria-keyshortcuts="C"
@@ -215,7 +236,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Folders navigation */}
-      <nav aria-label="Folders" className="flex-1 overflow-y-auto px-2 space-y-px">
+      <nav
+        ref={navRef}
+        aria-label="Folders"
+        onScroll={measureFade}
+        style={{ ["--fade-top" as string]: `${fade.top}px`, ["--fade-bottom" as string]: `${fade.bottom}px` }}
+        className="rail-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 pb-3 space-y-px"
+      >
         {orderedFolders
           .filter((f) => f.name.toLowerCase() !== 'snoozed')
           .map((folder) => {
@@ -305,9 +332,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </nav>
 
       {/* App utilities: install and notifications */}
-      <div className="px-2 py-2 space-y-px">
+      <div className="px-2 py-2 space-y-px shrink-0">
         {canInstall && onInstallApp && (
-          <button type="button" onClick={onInstallApp} aria-label="Install desktop app" className={UTILITY}>
+          <button type="button" onClick={onInstallApp} aria-label="Install desktop app" className={`${UTILITY} [@media(max-height:780px)]:hidden`}>
             <Download className="w-4 h-4" aria-hidden="true" />
             <span>Install desktop app</span>
           </button>
@@ -336,7 +363,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Account block and multi-account switcher */}
-      <div className="px-5 pt-3.5 pb-4 border-t border-rail-line relative" ref={accountMenuRef}>
+      <div className="px-5 pt-3.5 pb-4 border-t border-rail-line relative shrink-0" ref={accountMenuRef}>
         {showAccountSwitcher && (
           <div
             role="group"

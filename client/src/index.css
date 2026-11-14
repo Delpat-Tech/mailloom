@@ -123,3 +123,10 @@
   height: 0;
   pointer-events: none;
 }
+
+
+/* Scrolling lists in the rail fade at an edge that has more to scroll to (set with --fade-top and --fade-bottom). */
+.rail-scroll {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top, 0px), #000 calc(100% - var(--fade-bottom, 0px)), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top, 0px), #000 calc(100% - var(--fade-bottom, 0px)), transparent 100%);
+}
