@@ -82,7 +82,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
   return (
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center p-4 select-none ${
-        isAddingAccount ? 'bg-scrim' : 'bg-rail'
+        isAddingAccount ? 'bg-scrim anim-scrim' : 'bg-rail'
       }`}
     >
       <div
@@ -91,7 +91,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
         aria-modal="true"
         aria-labelledby="connect-title"
         aria-describedby={errorMsg ? 'connect-error' : undefined}
-        className="w-full max-w-md bg-surface rounded shadow-2xl border border-line overflow-hidden flex flex-col max-h-full overflow-y-auto"
+        className="anim-dialog w-full max-w-md bg-surface rounded shadow-2xl border border-line overflow-hidden flex flex-col max-h-full overflow-y-auto"
       >
         {/* Header */}
         <div className="bg-rail text-rail-ink px-6 pt-6 pb-9 cut-phone relative">

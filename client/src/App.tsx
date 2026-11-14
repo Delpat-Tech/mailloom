@@ -1,7 +1,19 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Check, AlertTriangle } from 'lucide-react';
 import { Sidebar } from './components/Sidebar.js';
 import { Logo } from './components/Logo.js';
+import { MobileTabBar, type PhoneTab } from './components/MobileTabBar.js';
+import { ShortcutsSheet } from './components/ShortcutsSheet.js';
+import { LabelsManager } from './components/LabelsManager.js';
+import { labelsApi, type Label, type LabelColour } from './services/labels.js';
+import { snoozeApi } from './services/snooze.js';
+import { threadsApi, type ThreadInfo } from './services/threads.js';
+import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
+import { PendingActions } from './services/pendingActions.js';
+import { LruCache, Limiter } from './services/cache.js';
+import { actionForKey } from './services/shortcuts.js';
+import { snoozeText } from './services/time.js';
+import type { ListFilter } from './services/api.js';
 import { ConnectionsPanel } from './components/ConnectionsPanel.js';
 import { NotificationsPanel } from './components/NotificationsPanel.js';
 import {
@@ -69,9 +81,30 @@ export const App: React.FC = () => {
   // Mailboxes & Navigation
   const [folders, setFolders] = useState<MailboxFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>('INBOX');
+  const [filter, setFilter] = useState<ListFilter>('all');
+  const [labels, setLabels] = useState<Label[]>([]);
+  const [showLabelsManager, setShowLabelsManager] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [menu, setMenu] = useState<'label' | 'snooze' | null>(null);
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null);
+  // Rows that are leaving (fade and collapse) and rows already gone from the screen but not yet from the server.
+  const [leaving, setLeaving] = useState<Set<number>>(new Set());
+  const [hidden, setHidden] = useState<Set<number>>(new Set());
+  const [thread, setThread] = useState<ThreadInfo | null>(null);
+  const pending = useRef(new PendingActions()).current;
+  const [undoLatest, setUndoLatest] = useState<{ id: number; label: string } | null>(null);
+  // In-memory caches: lists per folder and opened messages, so switching back and J/K feel instant.
+  const listCache = useRef(new LruCache<{ messages: MessageHeader[]; total: number }>(40)).current;
+  const detailCache = useRef(new LruCache<{ detail: ParsedEmailMessage; peeked: boolean }>(40)).current;
+  const prefetcher = useRef(new Limiter(2)).current;
+  const messagesRef = useRef<MessageHeader[]>([]);
+  const visibleRef = useRef<MessageHeader[]>([]);
 
   // Messages in Current Folder
   const [messages, setMessages] = useState<MessageHeader[]>([]);
+  messagesRef.current = messages;
+  const visibleMessages = useMemo(() => messages.filter((m) => !hidden.has(m.uid)), [messages, hidden]);
+  visibleRef.current = visibleMessages;
   const [totalMessages, setTotalMessages] = useState(0);
   const [page, setPage] = useState(1);
   // What the user typed (searchInput/filterInput) is applied 300 ms after typing stops.
@@ -219,12 +252,17 @@ export const App: React.FC = () => {
   // 2. Fetch Folders (isolated from selectedFolder changes to prevent duplicate concurrent IMAP locks)
   const selectedFolderRef = useRef(selectedFolder);
   selectedFolderRef.current = selectedFolder;
+  /** The real folder a message lives in (views such as Starred hold messages from several folders). */
+  const boxOf = (uid: number): string =>
+    messagesRef.current.find((m) => m.uid === uid)?.mailbox ??
+    (parseViewPath(selectedFolderRef.current) ? 'INBOX' : selectedFolderRef.current);
 
   const loadFolders = useCallback(async () => {
     if (!account) return;
     try {
       const res = await api.getMailboxes();
       setFolders(res.folders);
+      setSyncedAt(new Date());
 
       // Compute total unread for account badge
       const totalUnread = res.folders.reduce((acc, f) => acc + (f.unreadCount || 0), 0);
@@ -239,7 +277,9 @@ export const App: React.FC = () => {
       // If selectedFolder doesn't exist in folder list, default to first or INBOX
       if (res.folders.length > 0) {
         const currentPath = selectedFolderRef.current;
-        const hasCurrent = res.folders.some(
+        const hasCurrent =
+          parseViewPath(currentPath) !== null ||
+          res.folders.some(
           (f) => f.path.toLowerCase() === currentPath.toLowerCase()
         );
         if (!hasCurrent) {
@@ -258,27 +298,53 @@ export const App: React.FC = () => {
     }
   }, [account, loadFolders]);
 
+  const loadLabels = useCallback(async () => {
+    if (!account) return;
+    try {
+      setLabels(await labelsApi.list());
+    } catch {
+      // Labels are optional: an older server may not have them, and the rest of the app works without.
+    }
+  }, [account]);
+  useEffect(() => {
+    void loadLabels();
+  }, [loadLabels]);
+
   // 3. Fetch Messages for Selected Folder. "silent" reloads (polling) keep the list as it is while loading.
+  // A list seen before is shown at once from memory and refreshed quietly behind it.
   const loadSeq = useRef(0);
   const loadMessages = useCallback(
     async (silent = false) => {
       if (!account || !selectedFolder) return;
       const seq = ++loadSeq.current;
-      if (!silent) setIsMessagesLoading(true);
+      const key = `${account.handle}|${selectedFolder}|${page}|${filter}|${searchTerm}|${JSON.stringify(searchFilters)}`;
+      const cached = listCache.get(key);
+      if (cached && !silent) {
+        setMessages(cached.messages);
+        setTotalMessages(cached.total);
+      }
+      const showLoading = !silent && !cached;
+      if (showLoading) setIsMessagesLoading(true);
       try {
-        const res = await api.getMessages(selectedFolder, page, 50, searchTerm, searchFilters);
+        const view = parseViewPath(selectedFolder);
+        const res = view
+          ? await loadView(view, page, 50)
+          : await api.getMessages(selectedFolder, page, 50, searchTerm, searchFilters, filter);
         if (seq !== loadSeq.current) return; // a newer request replaced this one
+        listCache.set(key, res);
         setMessages(res.messages);
         setTotalMessages(res.total);
+        setSyncedAt(new Date());
       } catch (err: unknown) {
         if (!silent && seq === loadSeq.current) {
           showToast(friendlyError(err, 'The messages could not be loaded. Try again.'), 'error');
         }
       } finally {
-        if (!silent && seq === loadSeq.current) setIsMessagesLoading(false);
+        if (showLoading && seq === loadSeq.current) setIsMessagesLoading(false);
       }
     },
-    [account, selectedFolder, page, searchTerm, searchFilters]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [account, selectedFolder, page, searchTerm, searchFilters, filter]
   );
 
   useEffect(() => {
@@ -309,6 +375,9 @@ export const App: React.FC = () => {
     detailSeq.current++; // any detail request still in flight belongs to the old folder
     setIsDetailLoading(false);
     setSelectedFolder(folderPath);
+    setFilter('all');
+    setMenu(null);
+    setThread(null);
     setPage(1);
     setSearchInput('');
     setFilterInput({});
@@ -319,24 +388,57 @@ export const App: React.FC = () => {
     setMobileView('list'); // Go back to list view on mobile
   };
 
-  // 4. Select and View Message Detail
+  // 4. Select and View Message Detail. Selection moves at once; the body comes from memory when it is there.
+  const prefetchAround = (uid: number) => {
+    const list = visibleRef.current;
+    const i = list.findIndex((m) => m.uid === uid);
+    if (i < 0 || !account) return;
+    for (const n of [list[i + 1], list[i - 1]]) {
+      if (!n) continue;
+      const box = n.mailbox ?? boxOf(n.uid);
+      const k = `${account.handle}|${box}|${n.uid}`;
+      if (detailCache.has(k)) continue;
+      // peek: read without marking as read. Bodies only, never attachments.
+      void prefetcher
+        .run(() => api.getMessageDetail(box, n.uid, { peek: true }))
+        .then((d) => detailCache.set(k, { detail: d, peeked: true }))
+        .catch(() => undefined);
+    }
+  };
+
   const handleSelectMessage = async (uid: number) => {
     const seq = ++detailSeq.current;
+    const box = boxOf(uid);
     setSelectedUid(uid);
-    setIsDetailLoading(true);
     setMobileView('message'); // Switch to message view on mobile
+    setMenu(null);
+    const wasUnread = messagesRef.current.find((m) => m.uid === uid)?.isSeen === false;
 
     // Optimistically mark as seen in message list
-    setMessages((prev) =>
-      prev.map((m) => (m.uid === uid ? { ...m, isSeen: true } : m))
-    );
+    setMessages((prev) => prev.map((m) => (m.uid === uid ? { ...m, isSeen: true } : m)));
 
+    const ck = `${account?.handle}|${box}|${uid}`;
+    const cached = detailCache.get(ck);
+    if (cached) {
+      setIsDetailLoading(false);
+      setSelectedMessage(cached.detail);
+      if (cached.peeked && wasUnread) {
+        detailCache.set(ck, { detail: cached.detail, peeked: false });
+        api.toggleFlag(box, uid, 'isSeen', true).then(() => loadFolders()).catch(() => undefined);
+      }
+      prefetchAround(uid);
+      return;
+    }
+
+    setIsDetailLoading(true);
     try {
-      const detail = await api.getMessageDetail(selectedFolder, uid);
+      const detail = await api.getMessageDetail(box, uid);
       if (seq !== detailSeq.current) return; // the user already opened another message
+      detailCache.set(ck, { detail, peeked: false });
       setSelectedMessage(detail);
       // Refresh folder counts
       loadFolders();
+      prefetchAround(uid);
     } catch (err: unknown) {
       if (seq === detailSeq.current) {
         showToast(friendlyError(err, 'This message could not be opened. Try again.'), 'error');
@@ -345,12 +447,27 @@ export const App: React.FC = () => {
       if (seq === detailSeq.current) setIsDetailLoading(false);
     }
   };
+  useEffect(() => {
+    setThread(null);
+    const m = messagesRef.current.find((x) => x.uid === selectedUid);
+    if (!account || !selectedMessage || !m?.threadId || !m.threadCount || m.threadCount < 2) return;
+    let alive = true;
+    threadsApi
+      .get(m.threadId, boxOf(m.uid))
+      .then((t) => alive && setThread(t))
+      .catch(() => undefined); // the conversation is a bonus: the message itself is already shown
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMessage?.uid, selectedUid, account]);
+
   const handleSelectMessageRef = useRef(handleSelectMessage);
   handleSelectMessageRef.current = handleSelectMessage;
 
   const handleShowImages = async (uid: number) => {
     const seq = detailSeq.current; // same guard as handleSelectMessage: a newer open or folder switch wins
-    const folder = selectedFolder;
+    const folder = boxOf(uid);
     setIsLoadingImages(true);
     try {
       const detail = await api.getMessageDetail(folder, uid, { showImages: true });
@@ -377,6 +494,8 @@ export const App: React.FC = () => {
     const currentValue = flag === 'isSeen' ? targetMsg?.isSeen : targetMsg?.isFlagged;
     const newValue = !currentValue;
 
+    detailCache.clear();
+    listCache.clear();
     // Optimistic UI updates
     setMessages((prev) =>
       prev.map((m) => (m.uid === uid ? { ...m, [flag]: newValue } : m))
@@ -386,7 +505,7 @@ export const App: React.FC = () => {
     }
 
     try {
-      await api.toggleFlag(selectedFolder, uid, flag, newValue);
+      await api.toggleFlag(boxOf(uid), uid, flag, newValue);
       loadFolders();
     } catch (err: unknown) {
       showToast(friendlyError(err, 'The change could not be saved. Try again.'), 'error');
@@ -394,6 +513,17 @@ export const App: React.FC = () => {
       loadMessages();
     }
   };
+
+  useEffect(() => {
+    const unsub = pending.subscribe(() => setUndoLatest(pending.latest));
+    const flush = () => void pending.flush();
+    window.addEventListener('pagehide', flush);
+    return () => {
+      unsub();
+      window.removeEventListener('pagehide', flush);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const selectedFolderKind = folders.find((f) => f.path === selectedFolder)?.specialUse;
 
@@ -405,10 +535,178 @@ export const App: React.FC = () => {
     }
   };
 
-  // 6. Delete Message: to Trash; inside Trash it is permanent and asks first.
-  const performDelete = async (uid: number) => {
+  // Optimistic removal (archive, delete, snooze, move): the row fades and collapses at once, the next mail opens,
+  // and an Undo toast stays for 6 s. The server call waits for that window; if it fails the row comes back.
+  const scheduleRemoval = (uids: number[], label: string, run: () => Promise<void>) => {
+    const reopen =
+      selectedUid !== null && uids.includes(selectedUid)
+        ? (() => {
+            const list = visibleRef.current;
+            const i = list.findIndex((m) => uids.includes(m.uid));
+            const rest = list.filter((m) => !uids.includes(m.uid));
+            return rest[Math.min(i, rest.length - 1)]?.uid ?? null;
+          })()
+        : undefined;
+    let undone = false;
+    const drop = (set: Set<number>) => {
+      const n = new Set(set);
+      uids.forEach((u) => n.delete(u));
+      return n;
+    };
+    pending.schedule({
+      label,
+      apply: () => {
+        setLeaving((p) => new Set([...p, ...uids]));
+        setTimeout(() => {
+          if (undone) return;
+          setHidden((p) => new Set([...p, ...uids]));
+          setLeaving(drop);
+        }, 170);
+      },
+      restore: () => {
+        undone = true;
+        setLeaving(drop);
+        setHidden(drop);
+      },
+      run,
+      onDone: () => {
+        listCache.clear();
+        setMessages((prev) => prev.filter((m) => !uids.includes(m.uid)));
+        setHidden(drop);
+        setTotalMessages((t) => Math.max(0, t - uids.length));
+        loadFolders();
+        void loadLabels();
+      },
+      onFail: (err) => showToast(friendlyError(err, 'That did not work, so the message is back. Try again.'), 'error')
+    });
+    if (reopen !== undefined) {
+      if (reopen !== null) void handleSelectMessage(reopen);
+      else {
+        detailSeq.current++;
+        setSelectedUid(null);
+        setSelectedMessage(null);
+        setMobileView('list');
+      }
+    }
+  };
+
+  const archiveFolder = folders.find((f) => f.specialUse === 'Archive');
+  const inStarredView = selectedFolder === STARRED_PATH;
+  const handleArchive = (uid: number, mailbox?: string) => {
+    if (!archiveFolder) {
+      showToast('There is no Archive folder in this mailbox.', 'error');
+      return;
+    }
+    const box = mailbox ?? boxOf(uid);
+    if (box.toLowerCase() === archiveFolder.path.toLowerCase()) return;
+    scheduleRemoval([uid], 'Archived', async () => {
+      const r = await api.moveMessage(box, uid, archiveFolder.path);
+      if (!r.success) throw new Error('The message could not be archived.');
+    });
+  };
+
+  const handleSnooze = (uid: number, until: Date, mailbox?: string) => {
+    const box = mailbox ?? boxOf(uid);
+    setMenu(null);
+    scheduleRemoval([uid], `Snoozed until ${snoozeText(until)}`, async () => {
+      const r = await snoozeApi.snooze(box, [uid], until);
+      if (!r.success) throw new Error('The message could not be snoozed.');
+    });
+  };
+
+  const handleToggleLabel = async (labelId: string, turnOn: boolean, uid: number | null = selectedUid) => {
+    if (uid === null) return;
+    const box = boxOf(uid);
+    const apply = (on: boolean) =>
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.uid !== uid) return m;
+          const rest = (m.labels ?? []).filter((id) => id !== labelId);
+          return { ...m, labels: on ? [...rest, labelId] : rest };
+        })
+      );
+    apply(turnOn);
     try {
-      const r = await api.deleteMessage(selectedFolder, uid);
+      const r = await labelsApi.apply(box, [uid], turnOn ? [labelId] : [], turnOn ? [] : [labelId]);
+      if (!r.success) throw new Error('The label could not be changed.');
+      listCache.clear();
+      void loadLabels();
+    } catch (err: unknown) {
+      apply(!turnOn);
+      showToast(friendlyError(err, 'The label could not be changed. Try again.'), 'error');
+    }
+  };
+
+  const handleCreateLabel = async (name: string, colour: LabelColour, applyToOpen = true) => {
+    try {
+      const l = await labelsApi.create(name, colour);
+      setLabels((p) => [...p, { ...l, count: l.count ?? 0 }]);
+      setMenu(null);
+      if (applyToOpen && selectedUid !== null) await handleToggleLabel(l.id, true);
+    } catch (err: unknown) {
+      showToast(friendlyError(err, 'The label could not be created. Try again.'), 'error');
+    }
+  };
+
+  const handleRenameLabel = async (id: string, name: string) => {
+    try {
+      await labelsApi.update(id, { name });
+      await loadLabels();
+    } catch (err: unknown) {
+      showToast(friendlyError(err, 'The label could not be renamed. Try again.'), 'error');
+      void loadLabels();
+    }
+  };
+  const handleRecolourLabel = async (id: string, colour: LabelColour) => {
+    setLabels((p) => p.map((l) => (l.id === id ? { ...l, colour } : l)));
+    try {
+      await labelsApi.update(id, { colour });
+    } catch (err: unknown) {
+      showToast(friendlyError(err, 'The colour could not be changed. Try again.'), 'error');
+      void loadLabels();
+    }
+  };
+  const handleDeleteLabel = async (id: string) => {
+    try {
+      await labelsApi.remove(id);
+      listCache.clear();
+      if (selectedFolder === labelPath(id)) handleSelectFolder('INBOX');
+      await loadLabels();
+      loadMessages(true);
+    } catch (err: unknown) {
+      showToast(friendlyError(err, 'The label could not be deleted. Try again.'), 'error');
+    }
+  };
+
+  /** "Not delivered": reopen the original (from Sent) as a new message. */
+  const handleRetryBounce = async () => {
+    const b = messagesRef.current.find((m) => m.uid === selectedUid)?.bounce;
+    const sent = folders.find((f) => f.specialUse === 'Sent');
+    if (!b || !sent) {
+      showToast('The original message could not be found in Sent.', 'error');
+      return;
+    }
+    try {
+      const res = await api.getMessages(sent.path, 1, 10, b.originalSubject);
+      const orig = res.messages.find((m) => m.subject.trim() === b.originalSubject.trim()) ?? res.messages[0];
+      if (!orig) throw new Error('missing');
+      const d = await api.getMessageDetail(sent.path, orig.uid, { peek: true });
+      openComposer({
+        to: d.to.map((a) => a.address).filter(Boolean),
+        cc: (d.cc || []).map((a) => a.address).filter(Boolean),
+        subject: d.subject,
+        body: d.text || '',
+        html: d.html ? bodyOfHtmlDocument(d.html) : undefined
+      });
+    } catch {
+      showToast('The original message could not be found in Sent.', 'error');
+    }
+  };
+
+  // 6. Delete Message: to Trash; inside Trash it is permanent and asks first.
+  const performDeleteNow = async (uid: number) => {
+    try {
+      const r = await api.deleteMessage(boxOf(uid), uid);
       if (!r.success) throw new Error('The message could not be deleted.');
       showToast(r.permanent ? 'Message deleted permanently' : 'Moved to Trash');
       setMessages((prev) => prev.filter((m) => m.uid !== uid));
@@ -418,6 +716,15 @@ export const App: React.FC = () => {
       showToast(friendlyError(err, 'The message could not be deleted. Try again.'), 'error');
       loadMessages(true);
     }
+  };
+
+  const performDelete = (uid: number) => {
+    if (selectedFolderKind === 'Trash') return performDeleteNow(uid);
+    const box = boxOf(uid);
+    scheduleRemoval([uid], 'Moved to Trash', async () => {
+      const r = await api.deleteMessage(box, uid);
+      if (!r.success) throw new Error('The message could not be deleted.');
+    });
   };
 
   const handleDeleteMessage = (uid: number) => {
@@ -436,7 +743,7 @@ export const App: React.FC = () => {
 
   const handleRestoreMessage = async (uid: number) => {
     try {
-      const r = await api.restoreMessage(selectedFolder, uid);
+      const r = await api.restoreMessage(boxOf(uid), uid);
       if (!r.success) throw new Error('The message could not be restored.');
       showToast('Restored to Inbox');
       setMessages((prev) => prev.filter((m) => m.uid !== uid));
@@ -450,7 +757,7 @@ export const App: React.FC = () => {
 
   const handleNotSpam = async (uid: number) => {
     try {
-      const r = await api.notSpam(selectedFolder, uid);
+      const r = await api.notSpam(boxOf(uid), uid);
       if (!r.success) throw new Error('The message could not be moved.');
       showToast('Moved back to Inbox');
       setMessages((prev) => prev.filter((m) => m.uid !== uid));
@@ -487,19 +794,13 @@ export const App: React.FC = () => {
   };
 
   // 7. Move Message
-  const handleMoveMessage = async (uid: number, targetFolder: string) => {
-    try {
-      const r = await api.moveMessage(selectedFolder, uid, targetFolder);
+  const handleMoveMessage = (uid: number, targetFolder: string) => {
+    const box = boxOf(uid);
+    const name = folders.find((f) => f.path === targetFolder)?.name || targetFolder;
+    scheduleRemoval([uid], `Moved to ${name}`, async () => {
+      const r = await api.moveMessage(box, uid, targetFolder);
       if (!r.success) throw new Error('The message could not be moved.');
-      const name = folders.find((f) => f.path === targetFolder)?.name || targetFolder;
-      showToast(`Moved to ${name}`);
-      setMessages((prev) => prev.filter((m) => m.uid !== uid));
-      clearSelectionIf([uid]);
-      loadFolders();
-    } catch (err: unknown) {
-      showToast(friendlyError(err, 'The message could not be moved. Try again.'), 'error');
-      loadMessages(true);
-    }
+    });
   };
 
   // 8. Batch Operations. Each message is tried; the result says exactly what happened.
@@ -560,7 +861,7 @@ export const App: React.FC = () => {
   };
 
   const performBatchDelete = async (uids: number[], permanent: boolean) => {
-    const r = await runBatch(uids, (uid) => api.deleteMessage(selectedFolder, uid));
+    const r = await runBatch(uids, (uid) => api.deleteMessage(boxOf(uid), uid));
     finishBatch(permanent ? 'Deleted forever' : 'Moved to Trash', uids.length, r);
   };
 
@@ -582,7 +883,7 @@ export const App: React.FC = () => {
 
   const handleBatchMarkRead = async (isSeen: boolean) => {
     const uids = Array.from(selectedUids);
-    const r = await runBatch(uids, (uid) => api.toggleFlag(selectedFolder, uid, 'isSeen', isSeen));
+    const r = await runBatch(uids, (uid) => api.toggleFlag(boxOf(uid), uid, 'isSeen', isSeen));
     finishBatch(isSeen ? 'Marked as read' : 'Marked as unread', uids.length, r, false);
     setMessages((prev) => prev.map((m) => (r.done.includes(m.uid) ? { ...m, isSeen } : m)));
   };
@@ -601,7 +902,7 @@ export const App: React.FC = () => {
   const handleMarkSpam = async (uid: number) => {
     try {
       const junkFolder = getJunkFolderPath();
-      const r = await api.markSpam(selectedFolder, uid, junkFolder);
+      const r = await api.markSpam(boxOf(uid), uid, junkFolder);
       if (!r.success) throw new Error('The message could not be moved to Junk.');
       showToast('Moved to Junk & marked as read');
       setMessages((prev) => prev.filter((m) => m.uid !== uid));
@@ -616,21 +917,21 @@ export const App: React.FC = () => {
   const handleBatchSpam = async () => {
     const uids = Array.from(selectedUids);
     const junkFolder = getJunkFolderPath();
-    const r = await runBatch(uids, (uid) => api.markSpam(selectedFolder, uid, junkFolder));
+    const r = await runBatch(uids, (uid) => api.markSpam(boxOf(uid), uid, junkFolder));
     finishBatch('Moved to Junk', uids.length, r);
   };
 
   const handleBatchRestore = async () => {
     const uids = Array.from(selectedUids);
     if (uids.length === 0) return;
-    const r = await runBatch(uids, (uid) => api.restoreMessage(selectedFolder, uid));
+    const r = await runBatch(uids, (uid) => api.restoreMessage(boxOf(uid), uid));
     finishBatch('Restored to Inbox', uids.length, r);
   };
 
   const handleBatchNotSpam = async () => {
     const uids = Array.from(selectedUids);
     if (uids.length === 0) return;
-    const r = await runBatch(uids, (uid) => api.notSpam(selectedFolder, uid));
+    const r = await runBatch(uids, (uid) => api.notSpam(boxOf(uid), uid));
     finishBatch('Moved back to Inbox', uids.length, r);
   };
 
@@ -684,7 +985,7 @@ export const App: React.FC = () => {
           .map(escapeHtml)
           .join('<br>')}</p>` + quoteHtml(message.text || ''),
       meta: {
-        forwardOf: { folder: selectedFolder, uid: message.uid },
+        forwardOf: { folder: boxOf(message.uid), uid: message.uid },
         forwardedAttachmentNames: real.map((a) => a.filename)
       }
     });
@@ -953,6 +1254,78 @@ export const App: React.FC = () => {
     showRemainingOrSignIn(getStoredAccounts());
   };
 
+  // Keyboard shortcuts. Always-current handler; the listener is added once.
+  const kbRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  kbRef.current = (e: KeyboardEvent) => {
+    if (!account) return;
+    const blocked =
+      isComposerOpen || !!confirmRequest || showConnections || showNotifications || showLabelsManager ||
+      isAddingAccount || !!reauth || showShortcuts || menu !== null || showMobileSidebar;
+    const action = actionForKey(e, { blocked });
+    if (!action) return;
+    const uid = selectedUid;
+    const list = visibleRef.current;
+    const go = (delta: number) => {
+      const i = uid === null ? (delta > 0 ? -1 : list.length) : list.findIndex((m) => m.uid === uid);
+      const target = list[Math.max(0, Math.min(list.length - 1, i + delta))];
+      if (!target || target.uid === uid) return;
+      void handleSelectMessage(target.uid);
+      requestAnimationFrame(() =>
+        document.querySelector(`[data-row-open="${target.uid}"]`)?.scrollIntoView({ block: 'nearest' })
+      );
+    };
+    switch (action) {
+      case 'write':
+        openComposer({});
+        break;
+      case 'search':
+        setMobileView('list');
+        document.querySelector<HTMLInputElement>('[data-search-input]')?.focus();
+        break;
+      case 'help':
+        setShowShortcuts((v) => !v);
+        break;
+      case 'next':
+        go(1);
+        break;
+      case 'prev':
+        go(-1);
+        break;
+      case 'open':
+        if (uid !== null) setMobileView('message');
+        break;
+      case 'close':
+        if (mobileView === 'message') setMobileView('list');
+        else return;
+        break;
+      case 'undo':
+        pending.undo();
+        break;
+      default: {
+        if (uid === null) return;
+        if (action === 'archive') {
+          if (inStarredView) return;
+          handleArchive(uid);
+        } else if (action === 'snooze') setMenu('snooze');
+        else if (action === 'label') setMenu('label');
+        else if (action === 'star') void handleToggleFlag(uid, 'isFlagged');
+        else if (action === 'unread') void handleToggleFlag(uid, 'isSeen');
+        else if (action === 'delete') handleDeleteMessage(uid);
+        else if (selectedMessage && selectedMessage.uid === uid) {
+          if (action === 'reply') handleReply(selectedMessage, false);
+          else if (action === 'replyAll') handleReply(selectedMessage, true);
+          else if (action === 'forward') handleForward(selectedMessage);
+        }
+      }
+    }
+    e.preventDefault();
+  };
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => kbRef.current(e);
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, []);
+
   if (isAuthChecking) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-rail text-rail-ink">
@@ -982,7 +1355,7 @@ export const App: React.FC = () => {
           {/* Mobile/Tablet Sidebar Overlay */}
           {showMobileSidebar && (
             <div
-              className="fixed inset-0 bg-scrim z-40 lg:hidden"
+              className="fixed inset-0 bg-scrim anim-scrim z-40 lg:hidden"
               onClick={() => setShowMobileSidebar(false)}
             />
           )}
@@ -994,12 +1367,18 @@ export const App: React.FC = () => {
             aria-modal={showMobileSidebar ? true : undefined}
             aria-label={showMobileSidebar ? 'Folders and accounts' : undefined}
             className={`
-              fixed inset-y-0 left-0 z-50 w-56 transform transition-[transform,visibility] duration-200 ease-out shadow-2xl lg:shadow-none
+              fixed inset-y-0 left-0 z-50 w-56 transform transition-[transform,visibility] duration-[220ms] ease-out shadow-2xl lg:shadow-none
               lg:relative lg:translate-x-0 lg:z-auto
               ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full max-lg:invisible'}
             `}
           >
             <Sidebar
+              labels={labels}
+              onManageLabels={() => {
+                setShowLabelsManager(true);
+                setShowMobileSidebar(false);
+              }}
+              syncedAt={syncedAt}
               account={account}
               folders={folders}
               selectedFolder={selectedFolder}
@@ -1029,20 +1408,34 @@ export const App: React.FC = () => {
             />
           </div>
 
-          <main className="flex-1 flex min-w-0 overflow-hidden">
+          <main className="flex-1 flex min-w-0 overflow-hidden relative">
           {/* Middle Pane: Message List */}
           <div
             className={`
-              flex-1 md:flex-none md:w-[320px] lg:w-[360px] xl:w-[408px] min-w-0 h-full
-              ${mobileView === 'message' ? 'hidden md:block' : 'block'}
+              list-pane flex-1 md:flex-none md:w-[320px] lg:w-[360px] xl:w-[408px] min-w-0 h-full block
             `}
+            data-covered={mobileView === 'message'}
           >
             <MessageList
               folderName={
                 folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.name ||
                 selectedFolder
               }
-              messages={messages}
+              messages={visibleMessages}
+              leavingUids={leaving}
+              labels={labels}
+              filter={filter}
+              onFilterChange={
+                parseViewPath(selectedFolder)
+                  ? undefined
+                  : (f) => {
+                      setFilter(f);
+                      setPage(1);
+                    }
+              }
+              unreadCount={folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.unreadCount ?? 0}
+              onArchive={archiveFolder && !inStarredView ? handleArchive : undefined}
+              onSnooze={handleSnooze}
               totalMessages={totalMessages}
               selectedUid={selectedUid}
               onSelectMessage={handleSelectMessage}
@@ -1066,7 +1459,6 @@ export const App: React.FC = () => {
               onBatchSpam={handleBatchSpam}
               onBatchRestore={handleBatchRestore}
               onBatchNotSpam={handleBatchNotSpam}
-              onCompose={() => openComposer({})}
               isVisible={mobileView === 'list'}
               page={page}
               limit={50}
@@ -1077,10 +1469,8 @@ export const App: React.FC = () => {
 
           {/* Right Pane: Message Viewer */}
           <div
-            className={`
-              flex-1 min-w-0
-              ${mobileView === 'list' ? 'hidden md:flex' : 'flex'}
-            `}
+            className="reader-pane flex-1 min-w-0 flex bg-sheet"
+            data-open={mobileView === 'message'}
           >
             <MessageViewer
               folderPath={selectedFolder}
@@ -1100,11 +1490,67 @@ export const App: React.FC = () => {
               onForward={handleForward}
               folders={folders}
               onBackToList={() => setMobileView('list')}
+              onArchive={archiveFolder && !inStarredView ? (uid) => handleArchive(uid) : undefined}
+              onSnooze={(uid, until) => handleSnooze(uid, until)}
+              labels={labels}
+              messageLabelIds={messages.find((m) => m.uid === selectedUid)?.labels ?? []}
+              onToggleLabel={(id, on) => void handleToggleLabel(id, on)}
+              onCreateLabel={(name, colour) => void handleCreateLabel(name, colour)}
+              menu={menu}
+              onMenuChange={setMenu}
+              position={(() => {
+                const i = visibleMessages.findIndex((m) => m.uid === selectedUid);
+                return i < 0 ? null : { index: (page - 1) * 50 + i + 1, total: Math.max(totalMessages, (page - 1) * 50 + visibleMessages.length) };
+              })()}
+              onNewer={() => {
+                const i = visibleMessages.findIndex((m) => m.uid === selectedUid);
+                if (i > 0) void handleSelectMessage(visibleMessages[i - 1].uid);
+              }}
+              onOlder={() => {
+                const i = visibleMessages.findIndex((m) => m.uid === selectedUid);
+                if (i >= 0 && i < visibleMessages.length - 1) void handleSelectMessage(visibleMessages[i + 1].uid);
+              }}
+              thread={thread}
+              bounce={messages.find((m) => m.uid === selectedUid)?.bounce}
+              onRetryBounce={() => void handleRetryBounce()}
+              myAddress={account.email}
             />
           </div>
           </main>
         </div>
       )}
+
+      {account && (
+        <MobileTabBar
+          active={
+            selectedFolder === STARRED_PATH
+              ? 'starred'
+              : folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase())?.specialUse === 'Inbox'
+                ? 'inbox'
+                : null
+          }
+          onSelect={(tab: PhoneTab) => {
+            if (tab === 'write') openComposer({});
+            else if (tab === 'inbox') handleSelectFolder(folders.find((f) => f.specialUse === 'Inbox')?.path ?? 'INBOX');
+            else if (tab === 'starred') handleSelectFolder(STARRED_PATH);
+            else if (tab === 'folders') setShowMobileSidebar(true);
+            else document.querySelector<HTMLInputElement>('[data-search-input]')?.focus();
+          }}
+        />
+      )}
+
+      {showLabelsManager && (
+        <LabelsManager
+          labels={labels}
+          onRename={(id, name) => void handleRenameLabel(id, name)}
+          onRecolour={(id, c) => void handleRecolourLabel(id, c)}
+          onDelete={(id) => void handleDeleteLabel(id)}
+          onCreate={(name, c) => void handleCreateLabel(name, c, false)}
+          requestConfirm={setConfirmRequest}
+          onClose={() => setShowLabelsManager(false)}
+        />
+      )}
+      {showShortcuts && <ShortcutsSheet onClose={() => setShowShortcuts(false)} />}
 
       {/* Add Account Modal (Overlay on active session) */}
       {isAddingAccount && (
@@ -1180,28 +1626,49 @@ export const App: React.FC = () => {
 
       {/* Toast Notification: the live regions are always present so screen readers announce changes */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {toast && toast.type === 'success' ? toast.message : ''}
+        {toast && toast.type === 'success' ? toast.message : undoLatest ? undoLatest.label + '. Press Z to undo.' : ''}
       </div>
       <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="true">
         {toast && toast.type === 'error' ? toast.message : ''}
       </div>
-      {toast && (
-        <div
-          aria-hidden="true"
-          className={`fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 w-max max-w-[calc(100vw-2rem)] px-4 py-3 rounded shadow-xl text-[13.5px] font-bold z-[70] flex items-start gap-3 ${
-            toast.type === 'error'
-              ? 'bg-warn-bg text-ink border border-warn-line'
-              : 'bg-toast-bg text-toast-ink border border-line'
-          }`}
-        >
-          {toast.type === 'error' ? (
-            <AlertTriangle className="w-5 h-5 shrink-0 text-warn-ink" />
-          ) : (
-            <Check className="w-5 h-5 shrink-0 text-ok-ink" />
-          )}
-          <span>{toast.message}</span>
-        </div>
-      )}
+      <div className="fixed z-[70] flex flex-col gap-2 items-start bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-3 right-3 md:bottom-5 md:left-4 lg:left-[15rem] md:right-auto md:max-w-[min(26rem,calc(100vw-2rem))] pointer-events-none">
+        {toast && (
+          <div
+            aria-hidden="true"
+            className={`anim-toast pointer-events-auto w-full px-4 py-3 rounded shadow-xl text-[13.5px] font-bold flex items-start gap-3 ${
+              toast.type === 'error'
+                ? 'bg-warn-bg text-ink border border-warn-line'
+                : 'bg-toast-bg text-toast-ink border border-line'
+            }`}
+          >
+            {toast.type === 'error' ? (
+              <AlertTriangle className="w-5 h-5 shrink-0 text-warn-ink" />
+            ) : (
+              <Check className="w-5 h-5 shrink-0 text-ok-ink" />
+            )}
+            <span>{toast.message}</span>
+          </div>
+        )}
+        {undoLatest && (
+          <div
+            key={undoLatest.id}
+            className="anim-toast pointer-events-auto w-full px-4 py-2 rounded shadow-xl text-[13.5px] font-bold flex items-center gap-3 bg-toast-bg text-toast-ink border border-line"
+          >
+            <Check className="w-5 h-5 shrink-0 text-ok-ink" aria-hidden="true" />
+            <span className="flex-1">{undoLatest.label}</span>
+            <button
+              type="button"
+              onClick={() => pending.undo(undoLatest.id)}
+              aria-keyshortcuts="Z"
+              aria-label={`Undo: ${undoLatest.label}`}
+              className="t-fast min-h-[44px] px-2 flex items-center gap-1.5 font-extrabold text-toast-link hover:underline"
+            >
+              Undo
+              <kbd aria-hidden="true" className="hidden lg:inline-block text-[10.5px] font-semibold leading-none px-1 py-[3px] rounded-[3px] border border-current opacity-80">Z</kbd>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

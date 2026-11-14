@@ -13,6 +13,8 @@ import {
   Info
 } from 'lucide-react';
 import { api, ApiError } from '../services/api.js';
+import { clockTime } from '../services/time.js';
+import { avatarClass, initialsOf } from '../services/avatar.js';
 import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
@@ -214,7 +216,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       }
       lastSavedSnap.current = snap;
       lastSaveAtRef.current = Date.now();
-      setDraftStatus({ text: `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, error: false });
+      setDraftStatus({ text: `Draft saved ${clockTime()}`, error: false });
       return true;
     } catch (err: unknown) {
       const tooBig = err instanceof ApiError && err.status === 413;
@@ -494,9 +496,16 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="composer-title"
-      className={`fixed z-50 transition-all duration-200 shadow-2xl rounded-t sm:rounded overflow-hidden bg-surface border border-line flex flex-col ${
+      onKeyDown={(e) => {
+        // Ctrl+Enter (Cmd+Enter on a Mac) sends from anywhere in the composer.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isSending && !isMinimized) {
+          e.preventDefault();
+          void handleSend();
+        }
+      }}
+      className={`anim-composer cmp-panel fixed z-50 shadow-2xl rounded-t sm:rounded overflow-hidden bg-surface border border-line flex flex-col ${
         isMinimized
-          ? 'bottom-0 right-4 sm:right-6 w-72 h-11'
+          ? 'cmp-min inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
           : isMaximized
           ? 'top-2 bottom-2 left-2 right-2 sm:top-4 sm:bottom-4 sm:left-12 sm:right-12'
           : 'inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 sm:bottom-0 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
@@ -538,8 +547,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         </div>
       </div>
 
-      {!isMinimized && (
-        <div className="flex-1 flex flex-col bg-surface overflow-hidden">
+      {(
+        <div aria-hidden={isMinimized || undefined} className={`cmp-content flex-1 flex flex-col bg-surface overflow-hidden ${isMinimized ? 'cmp-content-min' : ''}`}>
           {/* Error Banner */}
           {errorMsg && (
             <div role="alert" className="bg-warn-bg text-warn-ink px-4 py-2 text-xs flex items-center gap-2 border-b border-warn-line shrink-0">
@@ -562,8 +571,14 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     key={idx}
                     aria-invalid={!isValidRecipient(email) || undefined}
                     title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
-                    className={`inline-flex items-center gap-1 bg-sel text-sel-ink border border-line-2 px-2 py-0.5 rounded text-xs font-medium${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
+                    className={`inline-flex items-center gap-1.5 bg-sheet text-ink border border-line pl-[3px] pr-1.5 py-[2px] rounded-[3px] text-[13px] font-bold${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
                   >
+                    <span
+                      aria-hidden="true"
+                      className={`cut-av w-5 h-5 shrink-0 grid place-items-center text-[9px] font-extrabold text-white ${avatarClass(email)}`}
+                    >
+                      {initialsOf(email)}
+                    </span>
                     <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                     <button
                       type="button"
@@ -788,7 +803,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               <button
                 onClick={handleSend}
                 disabled={isSending}
-                className="flex items-center gap-2 bg-act hover:bg-act-hov text-act-ink font-medium text-xs px-4 py-2 min-h-[44px] sm:min-h-0 rounded shadow-sm transition-all disabled:opacity-50"
+                className="cut-tr flex items-center gap-2 bg-act hover:bg-act-hov text-act-ink font-extrabold text-[13.5px] pl-3 pr-3.5 min-h-[44px] sm:min-h-[36px] transition-colors disabled:opacity-50"
               >
                 {isSending ? (
                   <>
@@ -799,6 +814,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   <>
                     <Send className="w-3.5 h-3.5" />
                     <span>Send Message</span>
+                    <kbd className="hidden sm:inline-block text-[10.5px] font-semibold leading-none px-1 py-[3px] rounded-[3px] border border-current opacity-80">Ctrl+Enter</kbd>
                   </>
                 )}
               </button>
@@ -901,7 +917,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
       {/* Signature Settings Modal */}
       {showSigModal && (
-        <div className="fixed inset-0 z-[60] bg-scrim flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[60] bg-scrim anim-scrim flex items-center justify-center p-4">
           <div
             ref={sigRef}
             role="dialog"

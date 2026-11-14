@@ -1,4 +1,4 @@
-import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect, useEffect, useMemo } from 'react';
 import {
   Search,
   RotateCw,
@@ -19,12 +19,19 @@ import {
   Undo2,
   PenSquare,
   Pencil,
-  Menu
+  Menu,
+  Archive,
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 import { format, isToday, isThisYear } from 'date-fns';
 import { avatarClass, initialsOf } from '../services/avatar.js';
 import type { MessageHeader, SpecialUseFolder } from '../types.js';
-import type { SearchFilterParams } from '../services/api.js';
+import type { SearchFilterParams, ListFilter } from '../services/api.js';
+import type { Label } from '../services/labels.js';
+import { LabelChip } from './LabelChip.js';
+import { SnoozeMenu } from './SnoozeMenu.js';
+import { SkeletonRows, useAfterDelay } from './Skeleton.js';
 
 interface MessageListProps {
   folderName: string;
@@ -35,7 +42,7 @@ interface MessageListProps {
   selectedUids: Set<number>;
   onToggleSelectUid: (uid: number, e: React.MouseEvent) => void;
   onSelectAll: () => void;
-  onToggleFlag: (uid: number, flag: 'isSeen' | 'isFlagged', e: React.MouseEvent) => void;
+  onToggleFlag: (uid: number, flag: 'isSeen' | 'isFlagged', e?: React.MouseEvent) => void;
   onRefresh: () => void;
   isLoading: boolean;
   searchTerm: string;
@@ -60,6 +67,16 @@ interface MessageListProps {
   folderKind?: SpecialUseFolder;
   /** Empty Trash / Junk (the caller asks for confirmation). */
   onEmptyFolder?: () => void;
+  /** Filter tabs (hidden in views that span folders). */
+  filter?: ListFilter;
+  onFilterChange?: (f: ListFilter) => void;
+  /** Unread count shown on the Unread tab. */
+  unreadCount?: number;
+  labels?: Label[];
+  /** Rows that are leaving (archive, delete, snooze, move): they fade and collapse. */
+  leavingUids?: Set<number>;
+  onArchive?: (uid: number, mailbox?: string) => void;
+  onSnooze?: (uid: number, until: Date, mailbox?: string) => void;
 }
 
 const TOUCH = 'min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center';
@@ -75,6 +92,237 @@ export function rowLabel(msg: MessageHeader, dateText: string): string {
   ];
   return parts.filter(Boolean).join(', ');
 }
+
+const FILTER_TABS: { key: ListFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'unread', label: 'Unread' },
+  { key: 'starred', label: 'Starred' },
+  { key: 'attachments', label: 'With files' }
+];
+
+interface RowController {
+  check: (uid: number, e: React.MouseEvent) => void;
+  open: (uid: number) => void;
+  focus: (uid: number) => void;
+  flag: (uid: number, flag: 'isSeen' | 'isFlagged', e?: React.MouseEvent) => void;
+  archive: (uid: number, mailbox?: string) => void;
+  openSnooze: (uid: number) => void;
+  closeSnooze: () => void;
+  snooze: (uid: number, until: Date, mailbox?: string) => void;
+}
+
+interface RowProps {
+  msg: MessageHeader;
+  who: string;
+  dateText: string;
+  isSelected: boolean;
+  isChecked: boolean;
+  isUnread: boolean;
+  tab: 0 | -1;
+  isDraft: boolean;
+  leaving: boolean;
+  canArchive: boolean;
+  labelMap: Map<string, Label>;
+  snoozeOpen: boolean;
+  ctl: RowController;
+}
+
+const QUICK =
+  't-fast w-7 h-6 grid place-items-center rounded-[3px] bg-surface border border-line text-ink-2 hover:bg-hover hover:text-ink';
+
+/** One row: avatar, three lines, chips. Memoised so that a change elsewhere does not redraw every row. */
+const MessageRow = React.memo(function MessageRow({
+  msg, who, dateText, isSelected, isChecked, isUnread, tab, isDraft, leaving, canArchive, labelMap, snoozeOpen, ctl
+}: RowProps) {
+  const bounce = msg.bounce;
+  const rowLabels = (msg.labels ?? []).map((id) => labelMap.get(id)).filter((l): l is Label => !!l);
+  const shownLabels = rowLabels.slice(0, 2);
+  const snoozeBtn = useRef<HTMLButtonElement>(null);
+  return (
+    <li className="row-wrap list-none" data-leaving={leaving || undefined}>
+      <div className="row-inner">
+        <div
+          className={`relative flex items-stretch border-b border-line t-fast ${
+            isSelected ? 'bg-sel cut-sel' : 'bg-surface hover:bg-hover'
+          }`}
+        >
+          {isUnread && (
+            <span
+              className="absolute left-[5px] top-6 w-[7px] h-[7px] rounded-full bg-unread shadow-[0_0_0_1px_var(--dot-ring)] pointer-events-none"
+              aria-hidden="true"
+            />
+          )}
+          <button
+            type="button"
+            tabIndex={tab}
+            onClick={(e) => ctl.check(msg.uid, e)}
+            aria-pressed={isChecked}
+            aria-label={`Select message from ${who}`}
+            className="w-10 sm:w-8 shrink-0 flex items-center justify-center text-ink-3 hover:text-ink-2"
+          >
+            {isChecked ? <CheckSquare className="w-3.5 h-3.5 text-act" /> : <Square className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* The whole summary is one button: Enter opens the message. */}
+          <button
+            type="button"
+            data-row-open={msg.uid}
+            tabIndex={tab}
+            onClick={() => ctl.open(msg.uid)}
+            onFocus={() => ctl.focus(msg.uid)}
+            aria-label={rowLabel(msg, dateText)}
+            aria-current={isSelected ? 'true' : undefined}
+            className="flex-1 min-w-0 py-[11px] pr-1 text-left flex gap-3"
+          >
+            <span
+              className={`cut-av mt-0.5 w-9 h-9 shrink-0 grid place-items-center text-[13px] font-extrabold tracking-wide text-white ${
+                bounce
+                  ? 'bg-warn-bg !text-warn-ink'
+                  : isDraft
+                    ? 'bg-sheet !text-draft shadow-[inset_0_0_0_1px_var(--line-2)]'
+                    : avatarClass(msg.from.address || who)
+              }`}
+              aria-hidden="true"
+            >
+              {bounce ? <AlertTriangle className="w-4 h-4" /> : isDraft ? <Pencil className="w-4 h-4" /> : initialsOf(who)}
+            </span>
+            <span className="min-w-0 flex-1 block">
+              <span className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span
+                    className={`truncate text-sm ${isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-2'} ${
+                      isSelected ? '!text-sel-ink' : ''
+                    }`}
+                  >
+                    {bounce ? (
+                      <span className="text-warn-ink font-extrabold">Not delivered</span>
+                    ) : isDraft ? (
+                      <span className="text-draft italic font-extrabold">Draft</span>
+                    ) : (
+                      who
+                    )}
+                  </span>
+                  {!!msg.threadCount && msg.threadCount > 1 && (
+                    <span
+                      className="shrink-0 text-[11px] font-bold text-ink-3 border border-line-2 rounded-[3px] px-1 leading-[15px]"
+                      title={`${msg.threadCount} messages in this conversation`}
+                    >
+                      {msg.threadCount}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`row-time text-xs shrink-0 tabular-nums ${
+                    isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-3'
+                  } ${bounce ? '!text-warn-ink' : ''}`}
+                >
+                  {dateText}
+                </span>
+              </span>
+              <span
+                className={`block text-[13.5px] truncate mt-px ${isUnread ? 'font-bold text-ink' : 'font-medium text-ink'} ${
+                  bounce ? '!text-warn-ink' : isSelected ? '!text-sel-ink' : ''
+                }`}
+              >
+                {bounce ? `Could not deliver "${bounce.originalSubject}" to ${bounce.recipient}` : msg.subject || '(No subject)'}
+              </span>
+              <span className="block text-[13px] text-ink-3 truncate">
+                {bounce ? (
+                  bounce.reason
+                ) : (
+                  <>
+                    {isDraft && msg.to.length > 0 && (
+                      <span className="font-medium">To {msg.to.map((t) => t.name || t.address).join(', ')}. </span>
+                    )}
+                    {msg.snippet || 'No text content available'}
+                  </>
+                )}
+              </span>
+              {(msg.hasAttachments || shownLabels.length > 0) && (
+                <span className="mt-[7px] flex items-center gap-1.5 flex-wrap">
+                  {msg.hasAttachments && (
+                    <span className="inline-flex items-center gap-1 h-[22px] pl-1.5 pr-2 border border-line-2 rounded-[3px] text-xs font-semibold text-ink-2">
+                      <Paperclip className="w-[13px] h-[13px]" aria-hidden="true" />
+                      Attachment
+                    </span>
+                  )}
+                  {shownLabels.map((l) => (
+                    <LabelChip key={l.id} label={l} />
+                  ))}
+                  {rowLabels.length > shownLabels.length && (
+                    <span className="text-xs font-bold text-ink-3">+{rowLabels.length - shownLabels.length}</span>
+                  )}
+                </span>
+              )}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            tabIndex={tab}
+            onClick={(e) => ctl.flag(msg.uid, 'isFlagged', e)}
+            aria-pressed={!!msg.isFlagged}
+            aria-label={msg.isFlagged ? `Unstar message from ${who}` : `Star message from ${who}`}
+            className="t-fast w-10 sm:w-8 shrink-0 flex items-start pt-[13px] justify-center text-ink-3 hover:text-star-line"
+          >
+            <Star className={`w-4 h-4 ${msg.isFlagged ? 'text-star-line fill-star' : 'stroke-[1.5]'}`} />
+          </button>
+
+          {/* Quick actions: fade in on hover or keyboard focus; the space is reserved by the time. */}
+          <div className="row-quick absolute right-10 sm:right-8 top-[9px] flex gap-0.5" data-open={snoozeOpen || undefined}>
+            {canArchive && (
+              <button
+                type="button"
+                tabIndex={tab}
+                aria-label={`Archive message from ${who}`}
+                title="Archive (E)"
+                onClick={() => ctl.archive(msg.uid, msg.mailbox)}
+                className={QUICK}
+              >
+                <Archive className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              tabIndex={tab}
+              aria-label={isUnread ? `Mark message from ${who} as read` : `Mark message from ${who} as unread`}
+              title={isUnread ? 'Mark as read' : 'Mark as unread (U)'}
+              onClick={(e) => ctl.flag(msg.uid, 'isSeen', e)}
+              className={QUICK}
+            >
+              {isUnread ? <MailOpen className="w-3.5 h-3.5" /> : <Mail className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              ref={snoozeBtn}
+              type="button"
+              tabIndex={tab}
+              aria-label={`Snooze message from ${who}`}
+              aria-haspopup="dialog"
+              aria-expanded={snoozeOpen}
+              aria-keyshortcuts="H"
+              title="Snooze (H)"
+              onClick={() => (snoozeOpen ? ctl.closeSnooze() : ctl.openSnooze(msg.uid))}
+              className={QUICK}
+            >
+              <Clock className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {snoozeOpen && (
+            <SnoozeMenu
+              anchor={snoozeBtn}
+              className="right-10 top-9 origin-tr"
+              onClose={(refocus) => {
+                ctl.closeSnooze();
+                if (refocus) snoozeBtn.current?.focus();
+              }}
+              onPick={(until) => ctl.snooze(msg.uid, until, msg.mailbox)}
+            />
+          )}
+        </div>
+      </div>
+    </li>
+  );
+});
 
 export const MessageList: React.FC<MessageListProps> = ({
   folderName,
@@ -104,7 +352,14 @@ export const MessageList: React.FC<MessageListProps> = ({
   onPageChange,
   onOpenMobileSidebar,
   folderKind,
-  onEmptyFolder
+  onEmptyFolder,
+  filter = 'all',
+  onFilterChange,
+  unreadCount = 0,
+  labels = [],
+  leavingUids,
+  onArchive,
+  onSnooze
 }) => {
   const [showFilters, setShowFilters] = useState(false);
   const scrollerRef = useRef<HTMLUListElement>(null);
@@ -172,6 +427,32 @@ export const MessageList: React.FC<MessageListProps> = ({
     }
   };
 
+  const latest = useRef({ onToggleSelectUid, onSelectMessage, onToggleFlag, onArchive, onSnooze });
+  latest.current = { onToggleSelectUid, onSelectMessage, onToggleFlag, onArchive, onSnooze };
+  const ctl = useMemo<RowController>(
+    () => ({
+      check: (uid, e) => latest.current.onToggleSelectUid(uid, e),
+      open: (uid) => {
+        setActiveUid(uid);
+        latest.current.onSelectMessage(uid);
+      },
+      focus: (uid) => setActiveUid(uid),
+      flag: (uid, flag, e) => latest.current.onToggleFlag(uid, flag, e),
+      archive: (uid, mailbox) => latest.current.onArchive?.(uid, mailbox),
+      openSnooze: (uid) => setSnoozeUid(uid),
+      closeSnooze: () => setSnoozeUid(null),
+      snooze: (uid, until, mailbox) => {
+        setSnoozeUid(null);
+        latest.current.onSnooze?.(uid, until, mailbox);
+      }
+    }),
+    []
+  );
+  const showSkeleton = useAfterDelay(isLoading && messages.length === 0, 150);
+  const labelMap = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
+  const [snoozeUid, setSnoozeUid] = useState<number | null>(null);
+  const canArchive = !!onArchive && folderKind !== 'Archive' && folderKind !== 'Drafts' && folderKind !== 'Sent';
+
   const FIELD =
     'w-full bg-surface border border-line rounded px-2 py-1 min-h-[44px] sm:min-h-0 text-base sm:text-xs text-ink focus:outline-none focus:border-act';
 
@@ -230,6 +511,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           <input
             type="text"
             aria-label="Search messages"
+            data-search-input
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search sender, subject or snippet..."
@@ -345,6 +627,34 @@ export const MessageList: React.FC<MessageListProps> = ({
             </div>
           </div>
         )}
+
+        {onFilterChange && (
+          <div role="group" aria-label="Show" className="flex gap-1 flex-wrap">
+            {FILTER_TABS.map((t) => {
+              const on = (filter ?? 'all') === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => onFilterChange(t.key)}
+                  className={`t-fast min-h-[44px] sm:min-h-[28px] px-2.5 rounded-[3px] text-[12.5px] font-bold ${
+                    on
+                      ? 'bg-act text-act-ink max-lg:bg-ph-on max-lg:text-ph-on-ink'
+                      : 'text-ink-2 max-lg:text-rail-2 hover:bg-hover max-lg:hover:bg-rail-hi'
+                  }`}
+                >
+                  {t.label}
+                  {t.key === 'unread' && unreadCount > 0 && (
+                    <span className="ml-1.5 inline-block bg-pill text-pill-ink px-1.5 rounded-[3px] text-[11.5px] leading-4">
+                      {unreadCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Batch Actions Toolbar */}
@@ -436,10 +746,7 @@ export const MessageList: React.FC<MessageListProps> = ({
 
       {/* Message List Stream */}
       {isLoading && messages.length === 0 ? (
-        <div className="flex-1 py-20 flex flex-col items-center justify-center text-ink-3 gap-3" role="status">
-          <RotateCw className="w-6 h-6 animate-spin motion-reduce:animate-none text-ink-3" />
-          <span className="text-xs font-medium">Fetching messages...</span>
-        </div>
+        showSkeleton ? <SkeletonRows /> : <div className="flex-1" />
       ) : messages.length === 0 ? (
         <div className="flex-1 py-20 flex flex-col items-center justify-center text-ink-3 gap-2">
           <Inbox className="w-10 h-10 stroke-[1.4] text-ink-3" />
@@ -466,109 +773,22 @@ export const MessageList: React.FC<MessageListProps> = ({
             const isDraft = folderKind === 'Drafts';
 
             return (
-              <li
-                key={msg.uid}
-                className={`relative flex items-stretch border-b border-line transition-colors ${
-                  isSelected ? 'bg-sel cut-sel' : 'bg-surface hover:bg-hover'
-                }`}
-              >
-                {isUnread && (
-                  <span
-                    className="absolute left-[5px] top-6 w-[7px] h-[7px] rounded-full bg-unread shadow-[0_0_0_1px_var(--dot-ring)] pointer-events-none"
-                    aria-hidden="true"
-                  />
-                )}
-                <button
-                  type="button"
-                  tabIndex={tab}
-                  onClick={(e) => onToggleSelectUid(msg.uid, e)}
-                  aria-pressed={isChecked}
-                  aria-label={`Select message from ${who}`}
-                  className="w-10 sm:w-8 shrink-0 flex items-center justify-center text-ink-3 hover:text-ink-2"
-                >
-                  {isChecked ? <CheckSquare className="w-3.5 h-3.5 text-act" /> : <Square className="w-3.5 h-3.5" />}
-                </button>
-
-                {/* The whole summary is one button: Enter opens the message. */}
-                <button
-                  type="button"
-                  data-row-open={msg.uid}
-                  tabIndex={tab}
-                  onClick={() => {
-                    setActiveUid(msg.uid);
-                    onSelectMessage(msg.uid);
-                  }}
-                  onFocus={() => setActiveUid(msg.uid)}
-                  aria-label={rowLabel(msg, dateText)}
-                  aria-current={isSelected ? 'true' : undefined}
-                  className="flex-1 min-w-0 py-[11px] pr-1 text-left flex gap-3"
-                >
-                  <span
-                    className={`cut-av mt-0.5 w-9 h-9 shrink-0 grid place-items-center text-[13px] font-extrabold tracking-wide text-white ${
-                      isDraft ? 'bg-sheet !text-draft shadow-[inset_0_0_0_1px_var(--line-2)]' : avatarClass(msg.from.address || who)
-                    }`}
-                    aria-hidden="true"
-                  >
-                    {isDraft ? <Pencil className="w-4 h-4" /> : initialsOf(who)}
-                  </span>
-                  <span className="min-w-0 flex-1 block">
-                    <span className="flex items-center justify-between gap-2">
-                      <span
-                        className={`truncate text-sm ${
-                          isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-2'
-                        } ${isSelected ? '!text-sel-ink' : ''}`}
-                      >
-                        {isDraft ? (
-                          <span className="text-draft italic font-extrabold">Draft</span>
-                        ) : (
-                          who
-                        )}
-                      </span>
-                      <span
-                        className={`text-xs shrink-0 tabular-nums ${
-                          isUnread ? 'font-extrabold text-ink' : 'font-semibold text-ink-3'
-                        }`}
-                      >
-                        {dateText}
-                      </span>
-                    </span>
-                    <span
-                      className={`block text-[13.5px] truncate mt-px ${
-                        isUnread ? 'font-bold text-ink' : 'font-medium text-ink'
-                      } ${isSelected ? '!text-sel-ink' : ''}`}
-                    >
-                      {msg.subject || '(No subject)'}
-                    </span>
-                    <span className="block text-[13px] text-ink-3 truncate">
-                      {isDraft && msg.to.length > 0 && (
-                        <span className="font-medium">To {msg.to.map((t) => t.name || t.address).join(', ')}. </span>
-                      )}
-                      {msg.snippet || 'No text content available'}
-                    </span>
-                    {msg.hasAttachments && (
-                      <span className="mt-[7px] flex">
-                        <span className="inline-flex items-center gap-1 h-[22px] pl-1.5 pr-2 border border-line-2 rounded-[3px] text-xs font-semibold text-ink-2">
-                          <Paperclip className="w-[13px] h-[13px]" aria-hidden="true" />
-                          Attachment
-                        </span>
-                      </span>
-                    )}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  tabIndex={tab}
-                  onClick={(e) => onToggleFlag(msg.uid, 'isFlagged', e)}
-                  aria-pressed={!!msg.isFlagged}
-                  aria-label={msg.isFlagged ? `Unstar message from ${who}` : `Star message from ${who}`}
-                  className="w-10 sm:w-8 shrink-0 flex items-start pt-[13px] justify-center text-ink-3 hover:text-star-line transition-colors"
-                >
-                  <Star
-                    className={`w-4 h-4 ${msg.isFlagged ? 'text-star-line fill-star' : 'stroke-[1.5]'}`}
-                  />
-                </button>
-              </li>
+              <MessageRow
+                key={`${msg.mailbox ?? ''}:${msg.uid}`}
+                msg={msg}
+                who={who}
+                dateText={dateText}
+                isSelected={isSelected}
+                isChecked={isChecked}
+                isUnread={isUnread}
+                tab={tab}
+                isDraft={isDraft}
+                leaving={!!leavingUids?.has(msg.uid)}
+                canArchive={canArchive}
+                labelMap={labelMap}
+                snoozeOpen={snoozeUid === msg.uid}
+                ctl={ctl}
+              />
             );
           })}
         </ul>

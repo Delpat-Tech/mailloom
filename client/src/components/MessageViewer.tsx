@@ -18,13 +18,27 @@ import {
   Pencil,
   ImageOff,
   MoreHorizontal,
-  Archive
+  Archive,
+  Clock,
+  Tag,
+  ChevronUp,
+  AlertTriangle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import type { ParsedEmailMessage, MailboxFolder, EmailAttachment, SpecialUseFolder } from '../types.js';
 import { api } from '../services/api.js';
 import { useDialog } from '../hooks/useDialog.js';
 import { avatarClass, initialsOf } from '../services/avatar.js';
+import type { Label, LabelColour } from '../services/labels.js';
+import { labelStates } from '../services/labels.js';
+import type { ThreadInfo } from '../services/threads.js';
+import type { BounceInfo } from '../types.js';
+import { LabelChip } from './LabelChip.js';
+import { LabelMenu } from './LabelMenu.js';
+import { SnoozeMenu } from './SnoozeMenu.js';
+import { ThreadView } from './ThreadView.js';
+import { SkeletonReader } from './Skeleton.js';
+import { KeyHint } from './KeyHint.js';
 
 // Never below 32 px, never wrapping or shrinking: the toolbar moves actions into "More" instead.
 const TOUCH = 'min-h-[44px] min-w-[44px] sm:min-h-8 sm:min-w-8 flex items-center justify-center shrink-0 whitespace-nowrap';
@@ -162,14 +176,14 @@ const MoveDialog: React.FC<{
   useDialog(ref, { open, onEscape: onClose });
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-scrim p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-scrim anim-scrim p-0 sm:p-4" onClick={onClose}>
       <div
         ref={ref}
         role="dialog"
         aria-modal="true"
         aria-labelledby="move-title"
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-xs max-h-[80vh] flex flex-col rounded-t sm:rounded bg-surface shadow-2xl"
+        className="anim-dialog w-full sm:max-w-xs max-h-[80vh] flex flex-col rounded-t sm:rounded bg-surface shadow-2xl"
       >
         <h2 id="move-title" className="px-4 pt-4 pb-2 text-base font-extrabold text-ink">
           Move to
@@ -222,6 +236,27 @@ interface MessageViewerProps {
   onForward: (message: ParsedEmailMessage) => void;
   folders: MailboxFolder[];
   onBackToList?: () => void;
+  /** One-click archive (hidden when there is no Archive folder or this is it). */
+  onArchive?: (uid: number) => void;
+  /** Snooze until a time (menu opened with H). */
+  onSnooze?: (uid: number, until: Date) => void;
+  labels?: Label[];
+  /** Label ids on the open message (from its list row). */
+  messageLabelIds?: string[];
+  onToggleLabel?: (labelId: string, turnOn: boolean) => void;
+  onCreateLabel?: (name: string, colour: LabelColour) => void;
+  /** Which toolbar menu is open (controlled, so L and H can open them). */
+  menu?: 'label' | 'snooze' | null;
+  onMenuChange?: (m: 'label' | 'snooze' | null) => void;
+  /** "3 of 120" with Newer and Older. */
+  position?: { index: number; total: number } | null;
+  onNewer?: () => void;
+  onOlder?: () => void;
+  thread?: ThreadInfo | null;
+  /** Set when this message is a "not delivered" report. */
+  bounce?: BounceInfo;
+  onRetryBounce?: () => void;
+  myAddress?: string;
 }
 
 export const MessageViewer: React.FC<MessageViewerProps> = ({
@@ -241,7 +276,22 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   onReply,
   onForward,
   folders,
-  onBackToList
+  onBackToList,
+  onArchive,
+  onSnooze,
+  labels: labelList = [],
+  messageLabelIds = [],
+  onToggleLabel,
+  onCreateLabel,
+  menu = null,
+  onMenuChange,
+  position,
+  onNewer,
+  onOlder,
+  thread,
+  bounce,
+  onRetryBounce,
+  myAddress
 }) => {
   const [showMove, setShowMove] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -251,6 +301,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   const level = useToolbarLevel(toolbarRef, !!message && !isLoading);
   const full = level === 'full';
   const labels = level !== 'tight';
+  const labels_ = labels;
 
   // The mail document carries its own styles (built on the server). The frame has no scripts; it is
   // same-origin only so that we can read its height. Size it to the content: one page scroll, no inner box.
@@ -318,18 +369,17 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
 
   if (isLoading) {
     return (
-      <section aria-label="Message" className="flex-1 bg-sheet flex flex-col items-center justify-center text-ink-3 gap-3 relative" role="status">
+      <section aria-label="Message" className="flex-1 bg-sheet flex flex-col relative" aria-busy="true">
         {onBackToList && (
           <button
             onClick={onBackToList}
             aria-label="Back to message list"
-            className={`absolute top-1 left-1 p-1.5 text-ink-2 hover:text-ink hover:bg-hover rounded transition-colors md:hidden ${TOUCH}`}
+            className={`m-1 p-1.5 text-ink-2 hover:text-ink hover:bg-hover rounded transition-colors md:hidden ${TOUCH}`}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
         )}
-        <div className="w-8 h-8 rounded-full border-2 border-act border-t-transparent animate-spin motion-reduce:animate-none" />
-        <span className="text-xs font-semibold">Loading message contents...</span>
+        <SkeletonReader />
       </section>
     );
   }
@@ -431,6 +481,12 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
       onSelect: () => setViewMode(viewMode === 'html' ? 'text' : 'html')
     });
   }
+  if (onSnooze) {
+    moreItems.unshift({ key: 'snooze', label: 'Snooze', icon: <Clock className="w-4 h-4" />, onSelect: () => onMenuChange?.('snooze') });
+  }
+  if (onToggleLabel) {
+    moreItems.unshift({ key: 'label', label: 'Label', icon: <Tag className="w-4 h-4" />, onSelect: () => onMenuChange?.('label') });
+  }
   moreItems.push({ key: 'print', label: 'Print', icon: <Printer className="w-4 h-4" />, onSelect: handlePrint });
 
   return (
@@ -482,6 +538,52 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           </button>
 
           <div className="hidden sm:block h-4 w-px bg-line-2 mx-1.5 shrink-0" />
+
+          {onArchive && archiveFolder && folderKind !== 'Archive' && (
+            <button
+              onClick={() => onArchive(message.uid)}
+              title="Archive (E)"
+              aria-label="Archive"
+              aria-keyshortcuts="E"
+              className={`gap-1.5 px-2 sm:px-3 py-1.5 text-[13px] font-bold text-ink-2 hover:bg-hover rounded transition-colors ${TOUCH}`}
+            >
+              <Archive className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+              <span className={labels_ ? 'hidden sm:inline' : 'hidden'}>Archive</span>
+              <KeyHint keys="E" className={labels_ ? '' : '!hidden'} />
+            </button>
+          )}
+          {onSnooze && (
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => onMenuChange?.(menu === 'snooze' ? null : 'snooze')}
+              aria-haspopup="dialog"
+              aria-expanded={menu === 'snooze'}
+              aria-keyshortcuts="H"
+              title="Snooze (H)"
+              aria-label="Snooze"
+              className={`max-sm:hidden gap-1.5 px-2 sm:px-3 py-1.5 text-[13px] font-bold text-ink-2 hover:bg-hover rounded transition-colors ${TOUCH}`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span className={labels_ ? 'hidden sm:inline' : 'hidden'}>Snooze</span>
+              <KeyHint keys="H" className={labels_ ? '' : '!hidden'} />
+            </button>
+          )}
+          {onToggleLabel && (
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => onMenuChange?.(menu === 'label' ? null : 'label')}
+              aria-haspopup="dialog"
+              aria-expanded={menu === 'label'}
+              aria-keyshortcuts="L"
+              title="Label (L)"
+              aria-label="Label"
+              className={`max-sm:hidden gap-1.5 px-2 sm:px-3 py-1.5 text-[13px] font-bold text-ink-2 hover:bg-hover rounded transition-colors ${TOUCH}`}
+            >
+              <Tag className="w-3.5 h-3.5" />
+              <span className={labels_ ? 'hidden sm:inline' : 'hidden'}>Label</span>
+              <KeyHint keys="L" className={labels_ ? '' : '!hidden'} />
+            </button>
+          )}
 
           <button
             onClick={() => setShowMove(true)}
@@ -573,7 +675,58 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
               <Printer className="w-3.5 h-3.5" />
             </button>
           </div>
-          <MoreMenu items={moreItems} always={!full} />
+          {position && (
+            <div className="hidden sm:flex items-center gap-0.5 text-[12.5px] font-semibold text-ink-3" role="group" aria-label="Position in the list">
+              <span aria-live="polite" className="mr-1 whitespace-nowrap">
+                {position.index} of {position.total}
+              </span>
+              <button
+                type="button"
+                onClick={onNewer}
+                disabled={!onNewer || position.index <= 1}
+                aria-label="Newer message"
+                aria-keyshortcuts="K"
+                title="Newer (K)"
+                className="t-fast min-h-8 min-w-8 grid place-items-center rounded hover:bg-hover text-ink-2 disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onOlder}
+                disabled={!onOlder || position.index >= position.total}
+                aria-label="Older message"
+                aria-keyshortcuts="J"
+                title="Older (J)"
+                className="t-fast min-h-8 min-w-8 grid place-items-center rounded hover:bg-hover text-ink-2 disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          <div className="relative shrink-0">
+            <MoreMenu items={moreItems} always={!full} />
+            {menu === 'snooze' && onSnooze && (
+              <SnoozeMenu
+                className="right-0 top-full mt-1 origin-tr"
+                onClose={() => onMenuChange?.(null)}
+                onPick={(until) => {
+                  onMenuChange?.(null);
+                  onSnooze(message.uid, until);
+                }}
+              />
+            )}
+            {menu === 'label' && onToggleLabel && onCreateLabel && (
+              <LabelMenu
+                className="right-0 top-full mt-1 origin-tr"
+                labels={labelList}
+                states={labelStates(labelList, [{ labels: messageLabelIds }])}
+                onToggle={onToggleLabel}
+                onCreate={onCreateLabel}
+                onClose={() => onMenuChange?.(null)}
+              />
+            )}
+          </div>
         </div>
       </div>
 
@@ -596,13 +749,46 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 sm:px-10 py-4 sm:py-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div key={message.uid} className="anim-rise flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 sm:px-10 py-4 sm:py-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {/* Subject Header */}
         <h2 id="message-subject" className="text-[21px] sm:text-[26px] font-extrabold text-ink mb-4 sm:mb-5 tracking-tight leading-tight break-words">
           {message.subject || '(No subject)'}
         </h2>
 
+        {messageLabelIds.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 -mt-2 sm:-mt-3 mb-4" aria-label="Labels">
+            {messageLabelIds
+              .map((id) => labelList.find((l) => l.id === id))
+              .filter((l): l is Label => !!l)
+              .map((l) => (
+                <LabelChip key={l.id} label={l} />
+              ))}
+          </div>
+        )}
+
+        {thread && <ThreadView part="before" info={thread} current={{ mailbox: folderPath, uid: message.uid }} myAddress={myAddress} />}
+
         <div className="bg-surface border border-line p-4 sm:px-6 sm:py-5">
+          {bounce && (
+            <div role="alert" className="mb-4 flex items-start gap-3 rounded border border-warn-line bg-warn-bg p-3 text-[13.5px] text-ink">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-warn-ink mt-0.5" aria-hidden="true" />
+              <div className="flex-1 min-w-0">
+                <b className="block text-warn-ink">Your message was not delivered</b>
+                <p className="text-ink-2 mt-0.5">
+                  &quot;{bounce.originalSubject}&quot; could not be sent to {bounce.recipient}. {bounce.reason}
+                </p>
+              </div>
+              {onRetryBounce && (
+                <button
+                  type="button"
+                  onClick={onRetryBounce}
+                  className="cut-tr shrink-0 self-center bg-act hover:bg-act-hov text-act-ink font-extrabold text-[13px] px-3.5 min-h-[44px] sm:min-h-[36px]"
+                >
+                  Try again
+                </button>
+              )}
+            </div>
+          )}
         {/* Sender & Recipient Information */}
         <div className="flex flex-col sm:flex-row sm:items-start justify-between pb-4 border-b border-line mb-5 gap-2 sm:gap-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -736,6 +922,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           )}
         </div>
         </div>
+        {thread && <ThreadView part="after" info={thread} current={{ mailbox: folderPath, uid: message.uid }} myAddress={myAddress} />}
       </div>
     </section>
   );

@@ -15,6 +15,7 @@ export type ShortcutAction =
   | 'unread'
   | 'delete'
   | 'close'
+  | 'undo'
   | 'help';
 
 export interface ShortcutDef {
@@ -39,6 +40,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { action: 'label', keys: ['l'], hint: 'L', label: 'Label', group: 'On a message' },
   { action: 'star', keys: ['s'], hint: 'S', label: 'Star or unstar', group: 'On a message' },
   { action: 'unread', keys: ['u'], hint: 'U', label: 'Mark as unread', group: 'On a message' },
+  { action: 'undo', keys: ['z'], hint: 'Z', label: 'Undo the last archive, delete or snooze', group: 'On a message' },
   { action: 'delete', keys: ['#', 'Delete'], hint: '#', label: 'Delete', group: 'On a message' },
   { action: 'next', keys: ['j', 'ArrowDown'], hint: 'J', label: 'Next message', group: 'Move around' },
   { action: 'prev', keys: ['k', 'ArrowUp'], hint: 'K', label: 'Previous message', group: 'Move around' },

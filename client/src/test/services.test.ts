@@ -74,7 +74,7 @@ describe('threads, labels, views, time', () => {
 
 describe('keyboard shortcuts', () => {
   const press = (key: string, target: EventTarget | null = document.body, extra: Partial<KeyboardEvent> = {}) =>
-    actionForKey({ key, ctrlKey: false, metaKey: false, altKey: false, defaultPrevented: false, target, ...extra } as KeyboardEvent);
+    actionForKey({ key, ctrlKey: false, metaKey: false, altKey: false, defaultPrevented: false, target, ...extra } as unknown as unknown as KeyboardEvent);
 
   it('maps every documented key', () => {
     const expected: Record<string, string> = {
@@ -121,7 +121,7 @@ describe('keyboard shortcuts', () => {
   });
 
   it('only Escape and ? work while a dialog is open', () => {
-    const e = { key: 'c', ctrlKey: false, metaKey: false, altKey: false, defaultPrevented: false, target: document.body } as KeyboardEvent;
+    const e = { key: 'c', ctrlKey: false, metaKey: false, altKey: false, defaultPrevented: false, target: document.body } as unknown as KeyboardEvent;
     expect(actionForKey(e, { blocked: true })).toBeNull();
     expect(actionForKey({ ...e, key: 'Escape' } as KeyboardEvent, { blocked: true })).toBe('close');
   });

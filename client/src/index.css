@@ -19,6 +19,8 @@
   --mk-a:#28306E;--mk-b:#3F7CBD;
   --rail:#EAF2FB;--rail-ink:#28306E;--rail-2:#444C7A;--rail-hi:rgba(63,124,189,.14);--rail-line:#CFDCEC;--rail-on:#2F6CB5;--rail-on-ink:#FFFFFF;--rail-hov-ink:#28306E;
   --wr-bg:#2F6CB5;--wr-ink:#FFFFFF;--wr-hov:#255D9F;--rail-ok:#1B6B3E;--rm-a:#3F7CBD;--rm-b:#28306E;--ph-on:#2F6CB5;--ph-on-ink:#FFFFFF;
+  --l-client:#0A6B5C;--l-client-bg:#DFF5F1;--l-finance:#7A5200;--l-finance-bg:#FFF1CC;--l-product:#5F43B8;--l-product-bg:#EEE9FB;--l-people:#A83A20;--l-people-bg:#FDEBE6;--l-ops:#245E9E;--l-ops-bg:#E1EDF9;
+  --lr-client:#17A08C;--lr-finance:#F2B01E;--lr-product:#8A6FD6;--lr-people:#E5674B;--lr-ops:#3F7CBD;
   --scrim:rgba(40,48,110,.45);--scroll:rgba(86,96,130,.35);--scroll-h:rgba(86,96,130,.6);
 }
 @media (prefers-color-scheme: dark) {
@@ -35,6 +37,8 @@
   --mk-a:#5B9BE0;--mk-b:#EAF1FB;
   --rail:#0D1630;--rail-ink:#EAF1FB;--rail-2:#AEBBD8;--rail-hi:rgba(255,255,255,.08);--rail-line:#25345C;--rail-on:#2F6CB5;--rail-on-ink:#FFFFFF;--rail-hov-ink:#FFFFFF;
   --wr-bg:#5B9BE0;--wr-ink:#0B1430;--wr-hov:#74ADEA;--rail-ok:#6EDBA0;--rm-a:#5B9BE0;--rm-b:#EAF1FB;--ph-on:#2F6CB5;--ph-on-ink:#FFFFFF;
+  --l-client:#5FD6C3;--l-client-bg:#123A3A;--l-finance:#FFCB5C;--l-finance-bg:#3B3012;--l-product:#B9A4F5;--l-product-bg:#2B2552;--l-people:#FF9B83;--l-people-bg:#3E2224;--l-ops:#8FBDF2;--l-ops-bg:#1B3257;
+    --lr-client:#2CC4AD;--lr-finance:#F2B01E;--lr-product:#A58CF0;--lr-people:#F27C61;--lr-ops:#5B9BE0;
   --scrim:rgba(5,9,22,.65);--scroll:rgba(150,165,199,.35);--scroll-h:rgba(150,165,199,.6);
   }
 }
@@ -51,6 +55,8 @@
   --mk-a:#5B9BE0;--mk-b:#EAF1FB;
   --rail:#0D1630;--rail-ink:#EAF1FB;--rail-2:#AEBBD8;--rail-hi:rgba(255,255,255,.08);--rail-line:#25345C;--rail-on:#2F6CB5;--rail-on-ink:#FFFFFF;--rail-hov-ink:#FFFFFF;
   --wr-bg:#5B9BE0;--wr-ink:#0B1430;--wr-hov:#74ADEA;--rail-ok:#6EDBA0;--rm-a:#5B9BE0;--rm-b:#EAF1FB;--ph-on:#2F6CB5;--ph-on-ink:#FFFFFF;
+  --l-client:#5FD6C3;--l-client-bg:#123A3A;--l-finance:#FFCB5C;--l-finance-bg:#3B3012;--l-product:#B9A4F5;--l-product-bg:#2B2552;--l-people:#FF9B83;--l-people-bg:#3E2224;--l-ops:#8FBDF2;--l-ops-bg:#1B3257;
+  --lr-client:#2CC4AD;--lr-finance:#F2B01E;--lr-product:#A58CF0;--lr-people:#F27C61;--lr-ops:#5B9BE0;
   --scrim:rgba(5,9,22,.65);--scroll:rgba(150,165,199,.35);--scroll-h:rgba(150,165,199,.6);
 }
 

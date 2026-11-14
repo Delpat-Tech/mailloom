@@ -157,13 +157,13 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, o
   const canTurnOn = serverOn && availability === 'ok' && !!publicKey;
 
   return (
-    <div className="fixed inset-0 z-50 bg-scrim flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="notifications-title"
-        className="w-full max-w-lg max-h-[90vh] flex flex-col bg-surface border border-line rounded shadow-2xl overflow-hidden"
+        className="anim-dialog w-full max-w-lg max-h-[90vh] flex flex-col bg-surface border border-line rounded shadow-2xl overflow-hidden"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <div className="flex items-center gap-2.5">

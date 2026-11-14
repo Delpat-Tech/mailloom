@@ -28,7 +28,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim anim-scrim p-4"
       onClick={onClose}
       role="presentation"
     >
@@ -38,7 +38,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
-        className="w-full max-w-sm rounded bg-surface border border-line p-5 shadow-2xl"
+        className="anim-dialog w-full max-w-sm rounded bg-surface border border-line p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="confirm-title" className="text-base font-extrabold text-ink">

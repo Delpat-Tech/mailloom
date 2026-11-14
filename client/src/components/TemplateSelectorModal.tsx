@@ -115,13 +115,13 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
     : { subject: '', body: '' };
 
   return (
-    <div className="fixed inset-0 z-50 bg-scrim flex items-center justify-center p-4 select-none">
+    <div className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4 select-none">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="templates-title"
-        className="w-full max-w-3xl bg-surface rounded shadow-2xl border border-line overflow-hidden flex flex-col h-[600px] max-h-full"
+        className="anim-dialog w-full max-w-3xl bg-surface rounded shadow-2xl border border-line overflow-hidden flex flex-col h-[600px] max-h-full"
       >
         {/* Header */}
         <div className="px-5 py-3.5 bg-surface text-ink flex items-center justify-between border-b border-line">
@@ -137,7 +137,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
             <div className="bg-sheet border border-line p-0.5 rounded flex items-center text-xs">
               <button
                 onClick={() => setActiveTab('gallery')}
-                className={`px-3 py-1 min-h-[44px] sm:min-h-0 rounded font-medium transition-all ${
+                className={`px-3 py-1 min-h-[44px] sm:min-h-0 rounded font-medium transition-colors ${
                   activeTab === 'gallery' ? 'bg-act text-act-ink font-semibold' : 'text-ink-2 hover:bg-hover'
                 }`}
               >
@@ -145,7 +145,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
               </button>
               <button
                 onClick={() => setActiveTab('create')}
-                className={`px-3 py-1 min-h-[44px] sm:min-h-0 rounded font-medium transition-all flex items-center gap-1 ${
+                className={`px-3 py-1 min-h-[44px] sm:min-h-0 rounded font-medium transition-colors flex items-center gap-1 ${
                   activeTab === 'create' ? 'bg-act text-act-ink font-semibold' : 'text-ink-2 hover:bg-hover'
                 }`}
               >
@@ -194,7 +194,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                         handleSelectTemplate(tpl);
                       }
                     }}
-                    className={`w-full p-2.5 rounded text-left cursor-pointer transition-all border ${
+                    className={`w-full p-2.5 rounded text-left cursor-pointer transition-colors border ${
                       isSelected
                         ? 'bg-surface border-act shadow-sm text-ink'
                         : 'border-transparent text-ink-2 hover:bg-surface hover:border-line'
@@ -283,7 +283,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                   <button
                     type="button"
                     onClick={handleApply}
-                    className="flex items-center gap-1.5 bg-act hover:bg-act-hov text-act-ink font-semibold text-xs px-4 py-2 min-h-[44px] sm:min-h-0 rounded shadow-md transition-all"
+                    className="flex items-center gap-1.5 bg-act hover:bg-act-hov text-act-ink font-semibold text-xs px-4 py-2 min-h-[44px] sm:min-h-0 rounded shadow-md transition-colors"
                   >
                     <span>Insert into Composer</span>
                     <ChevronRight className="w-3.5 h-3.5" />
@@ -351,7 +351,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 min-h-[44px] sm:min-h-0 bg-act hover:bg-act-hov text-act-ink rounded shadow-md font-semibold transition-all"
+                className="px-5 py-2 min-h-[44px] sm:min-h-0 bg-act hover:bg-act-hov text-act-ink rounded shadow-md font-semibold transition-colors"
               >
                 Save Custom Template
               </button>

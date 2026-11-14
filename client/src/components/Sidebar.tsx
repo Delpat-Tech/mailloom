@@ -17,11 +17,19 @@ import {
   Download,
   Bell,
   BellRing,
-  KeyRound
+  KeyRound,
+  Clock,
+  RefreshCw,
+  Settings2
 } from 'lucide-react';
 import type { MailboxFolder, UserAccount, StoredAccountProfile } from '../types.js';
 import { Logo } from './Logo.js';
 import { ThemePicker } from './ThemePicker.js';
+import { TagSwatch } from './LabelChip.js';
+import type { Label } from '../services/labels.js';
+import { STARRED_PATH, SNOOZED_PATH, labelPath } from '../services/views.js';
+import { clockTime } from '../services/time.js';
+import { KeyHint } from './KeyHint.js';
 
 interface SidebarProps {
   account: UserAccount;
@@ -42,6 +50,11 @@ interface SidebarProps {
   onOpenConnections?: () => void;
   /** Opens notification settings (push while closed). Replaces the plain permission button. */
   onOpenNotifications?: () => void;
+  /** Labels with counts, shown under the folders. */
+  labels?: Label[];
+  onManageLabels?: () => void;
+  /** When the folder list and messages were last refreshed. */
+  syncedAt?: Date | null;
 }
 
 const KIND_ORDER = ['Inbox', 'Drafts', 'Sent', 'Archive', 'Junk', 'Trash'];
@@ -70,6 +83,29 @@ export function orderFolders(folders: MailboxFolder[]): MailboxFolder[] {
   return out;
 }
 
+const ViewButton: React.FC<{
+  path: string;
+  label: string;
+  icon: React.ReactNode;
+  selected: string;
+  onSelect: (path: string) => void;
+}> = ({ path, label, icon, selected, onSelect }) => {
+  const on = selected === path;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(path)}
+      aria-current={on ? 'page' : undefined}
+      className={`t-fast w-full flex items-center gap-3 pl-3 pr-3 min-h-[44px] lg:min-h-[36px] rounded text-sm ${
+        on ? 'bg-rail-on text-rail-on-ink font-extrabold' : 'font-semibold hover:bg-rail-hi hover:text-rail-hov-ink'
+      }`}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+};
+
 const UTILITY =
   'w-full flex items-center gap-3 px-3 min-h-[44px] lg:min-h-[32px] rounded text-[13.5px] font-semibold hover:bg-rail-hi hover:text-rail-hov-ink transition-colors';
 
@@ -90,7 +126,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onRequestNotifications,
   onCloseMobileSidebar,
   onOpenConnections,
-  onOpenNotifications
+  onOpenNotifications,
+  labels = [],
+  onManageLabels,
+  syncedAt
 }) => {
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -160,20 +199,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="mx-4 mt-6 mb-5">
         <button
           onClick={onOpenComposer}
+          aria-keyshortcuts="C"
           className="w-full cut-tr flex items-center gap-2 bg-wr-bg hover:bg-wr-hov text-wr-ink font-extrabold text-[14.5px] pl-3.5 pr-3 min-h-[44px] transition-colors"
         >
           <PenSquare className="w-4 h-4" strokeWidth={2.2} aria-hidden="true" />
           <span>Write</span>
+          <KeyHint keys="C" className="ml-auto !border-current !bg-transparent !text-inherit opacity-85" />
         </button>
       </div>
 
       {/* Folders navigation */}
       <nav aria-label="Folders" className="flex-1 overflow-y-auto px-2 space-y-px">
-        {orderedFolders.map((folder) => {
+        {orderedFolders
+          .filter((f) => f.name.toLowerCase() !== 'snoozed')
+          .map((folder) => {
           const isSelected = selectedFolder.toLowerCase() === folder.path.toLowerCase();
           return (
+            <React.Fragment key={folder.path}>
             <button
-              key={folder.path}
               onClick={() => onSelectFolder(folder.path)}
               style={{ paddingLeft: `${0.75 + (folder.depth || 0) * 1}rem` }}
               title={folder.path}
@@ -199,8 +242,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               )}
             </button>
+            {folder.specialUse === 'Inbox' && (
+              <>
+                <ViewButton path={STARRED_PATH} label="Starred" icon={<Star className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} />
+                <ViewButton path={SNOOZED_PATH} label="Snoozed" icon={<Clock className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} />
+              </>
+            )}
+            </React.Fragment>
           );
         })}
+
+        {(labels.length > 0 || onManageLabels) && (
+          <div className="pt-3">
+            <div className="flex items-center justify-between pl-5 pr-1 pb-1">
+              <h2 className="text-xs font-bold text-rail-2">Labels</h2>
+              {onManageLabels && (
+                <button
+                  type="button"
+                  onClick={onManageLabels}
+                  aria-label="Manage labels"
+                  title="Manage labels"
+                  className="t-fast min-h-[44px] min-w-[44px] lg:min-h-[28px] lg:min-w-[28px] grid place-items-center rounded hover:bg-rail-hi hover:text-rail-hov-ink"
+                >
+                  <Settings2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {labels.map((l) => {
+              const path = labelPath(l.id);
+              const on = selectedFolder === path;
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => onSelectFolder(path)}
+                  aria-current={on ? 'page' : undefined}
+                  aria-label={l.count > 0 ? `Label ${l.name}, ${l.count}` : `Label ${l.name}`}
+                  className={`t-fast w-full flex items-center justify-between pl-3 pr-3 min-h-[44px] lg:min-h-[32px] rounded text-[13.5px] ${
+                    on ? 'bg-rail-on text-rail-on-ink font-extrabold' : 'font-semibold hover:bg-rail-hi hover:text-rail-hov-ink'
+                  }`}
+                >
+                  <span className="flex items-center gap-3 truncate">
+                    <TagSwatch colour={l.colour} />
+                    <span className="truncate">{l.name}</span>
+                  </span>
+                  {l.count > 0 && <span className="text-xs font-bold tabular-nums">{l.count}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </nav>
 
       {/* App utilities: install and notifications */}
@@ -352,6 +443,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
+        {syncedAt && (
+          <div className="flex items-center gap-2 text-xs mb-3" role="status">
+            <RefreshCw className="w-4 h-4 text-rail-ok shrink-0" aria-hidden="true" />
+            <span>Synced at {clockTime(syncedAt)}</span>
+          </div>
+        )}
         <button
           type="button"
           onClick={() => setShowAccountSwitcher(!showAccountSwitcher)}
