@@ -142,3 +142,7 @@
 @media (max-width: 767.98px) {
   .list-pane[data-covered='true'] { visibility: hidden; transition: visibility 0s linear var(--dur-3); }
 }
+
+/* Swiped row: the action behind it shows only the part for the side being revealed. */
+.row-reveal .row-reveal-archive, .row-reveal .row-reveal-read { display: none; }
+.row-reveal[data-side='left'] .row-reveal-archive, .row-reveal[data-side='right'] .row-reveal-read { display: inline-flex; }
