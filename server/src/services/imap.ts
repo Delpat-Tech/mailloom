@@ -363,6 +363,9 @@ function toHeader(msg: FetchMessageObject, where = ''): ListItem {
       isSeen: flagsArr.includes('\\Seen'),
       isFlagged: flagsArr.includes('\\Flagged'),
       hasAttachments: parts.attachments.length > 0,
+      // First file name and how many, for the list's attachment chip (the file list itself is in the reader).
+      attachmentCount: parts.attachments.length,
+      attachmentName: (parts.attachments[0]?.filename || '').slice(0, 120) || undefined,
       size: msg.size || 0,
       snippet: '',
       labels: flagsArr.filter((f) => f.startsWith(LABEL_KEYWORD_PREFIX)).map((f) => f.slice(LABEL_KEYWORD_PREFIX.length)),

@@ -62,6 +62,9 @@ export interface MessageHeader {
   isSeen: boolean;
   isFlagged: boolean;
   hasAttachments: boolean;
+  /** How many files, and the first one's name (for the list chip). */
+  attachmentCount?: number;
+  attachmentName?: string;
   size: number;
   snippet: string;
   /** Label ids (IMAP keywords $label_<id>) known to this mailbox. */

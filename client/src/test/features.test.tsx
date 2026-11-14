@@ -285,3 +285,29 @@ describe('row time slot', () => {
     expect(slot.querySelector('.row-quick')).toBeTruthy(); // the actions live in the same slot as the time
   });
 });
+
+describe('counts, attachment chips and cold loads', () => {
+  it('the header count follows rows that leave or arrive at once', async () => {
+    const { shownTotal } = await import('../services/views.js');
+    const loaded = [msg(1), msg(2), msg(3)];
+    expect(shownTotal(3, loaded, loaded, () => false)).toBe(3);
+    // One row is leaving: it stops counting at once.
+    expect(shownTotal(3, loaded, loaded.slice(1), (m) => m.uid === 1)).toBe(2);
+    // A snoozed row stands in at once in the Snoozed view while the server still says 1.
+    expect(shownTotal(1, [msg(9)], [msg(7), msg(9)], () => false)).toBe(2);
+  });
+
+  it('the attachment chip shows the first file name and +N for more', () => {
+    list({}, [msg(1, { hasAttachments: true, attachmentName: 'contract.pdf', attachmentCount: 3 })]);
+    expect(screen.getByText('contract.pdf')).toBeTruthy();
+    expect(screen.getByText('+2')).toBeTruthy();
+    expect(screen.queryByText('Attachment')).toBeNull();
+  });
+
+  it('while the first answer is awaited there is no count and no "empty" message', () => {
+    list({ countReady: false, isLoading: false }, []);
+    expect(screen.queryByText(/0 messages/)).toBeNull();
+    expect(screen.queryByText(/is empty/)).toBeNull();
+    expect(screen.queryByText(/No mail/)).toBeNull();
+  });
+});

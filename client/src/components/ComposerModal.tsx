@@ -370,6 +370,23 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
 
+  // Phone: the composer fills the visible screen (above the on-screen keyboard), so Send stays in view.
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    const el = panelRef.current;
+    if (!vv || !el || !isOpen) return;
+    const fit = () => {
+      el.style.setProperty('--vvh', `${vv.height}px`);
+      el.style.setProperty('--vvtop', `${vv.offsetTop}px`);
+    };
+    fit();
+    vv.addEventListener('resize', fit);
+    vv.addEventListener('scroll', fit);
+    return () => {
+      vv.removeEventListener('resize', fit);
+      vv.removeEventListener('scroll', fit);
+    };
+  }, [isOpen]);
   const { mounted: cmpMounted, leaving: cmpLeaving } = usePresence(isOpen, LEAVE_COMPOSER_MS);
   if (!cmpMounted) return null;
 
@@ -566,21 +583,21 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       }}
       className={`anim-composer cmp-panel fixed z-[55] shadow-2xl rounded-t sm:rounded overflow-hidden bg-surface border border-line flex flex-col ${
         isMinimized
-          ? 'cmp-min inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
+          ? 'cmp-min inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px] max-sm:!translate-y-0 max-sm:!inset-0 max-sm:!h-[var(--vvh,100dvh)]'
           : isMaximized
           ? 'top-2 bottom-2 left-2 right-2 sm:top-4 sm:bottom-4 sm:left-12 sm:right-12'
-          : 'inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 sm:bottom-0 w-full sm:w-[580px] md:w-[640px] h-[92vh] sm:h-[540px]'
+          : 'inset-x-0 bottom-0 sm:inset-x-auto sm:right-8 sm:bottom-0 w-full sm:w-[580px] md:w-[640px] sm:h-[540px] max-sm:inset-0 max-sm:top-[var(--vvtop,0px)] max-sm:bottom-auto max-sm:h-[var(--vvh,100dvh)] max-sm:rounded-none max-sm:border-0'
       }`}
     >
       {/* Modal Header */}
-      <div className="bg-cmp-top text-white pl-4 pr-2 min-h-[42px] flex items-center justify-between select-none cursor-pointer">
-        <span id="composer-title" className="text-[13.5px] font-extrabold text-white truncate">
+      <div className="bg-cmp-top text-white pl-4 pr-2 min-h-[42px] flex items-center justify-between select-none cursor-pointer max-sm:flex-row-reverse max-sm:justify-end max-sm:gap-1 max-sm:pl-4 max-sm:pr-1 max-sm:pt-[env(safe-area-inset-top)] max-sm:min-h-[calc(52px+env(safe-area-inset-top))]">
+        <span id="composer-title" className="text-[13.5px] max-sm:text-[16px] font-extrabold text-white truncate max-sm:flex-1">
           {subject || 'New Message'}
         </span>
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setIsMinimized(!isMinimized)}
-            className="p-1 text-white hover:bg-white/15 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            className="max-sm:hidden p-1 text-white hover:bg-white/15 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title={isMinimized ? 'Expand' : 'Minimize'}
             aria-label={isMinimized ? 'Expand' : 'Minimize'}
           >
@@ -591,7 +608,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               setIsMaximized(!isMaximized);
               setIsMinimized(false);
             }}
-            className="p-1 text-white hover:bg-white/15 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            className="max-sm:hidden p-1 text-white hover:bg-white/15 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title={isMaximized ? 'Restore size' : 'Maximize'}
             aria-label={isMaximized ? 'Restore size' : 'Maximize'}
           >
@@ -603,7 +620,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             title="Close"
             aria-label="Close"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-3.5 h-3.5 max-sm:w-5 max-sm:h-5" />
           </button>
         </div>
       </div>

@@ -37,3 +37,13 @@ export async function loadView(ref: ViewRef, page: number, limit: number): Promi
   const messages = (res.messages ?? []).map((m) => (m.mailbox ? { ...m, uid: keyFor(m.mailbox, m.uid) } : m));
   return { messages, total: res.total ?? messages.length };
 }
+
+/**
+ * The count for a list's header, following optimistic changes: rows that are leaving (archived, deleted,
+ * snoozed, moved) stop counting at once, and rows added in the meantime (a snooze shown in the Snoozed view) count.
+ */
+export function shownTotal(serverTotal: number, loaded: MessageHeader[], visible: MessageHeader[], isHidden: (m: MessageHeader) => boolean): number {
+  const removed = loaded.filter(isHidden).length;
+  const added = visible.length - (loaded.length - removed);
+  return Math.max(visible.length, serverTotal - removed + added);
+}

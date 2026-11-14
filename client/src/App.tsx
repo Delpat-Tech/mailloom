@@ -14,7 +14,7 @@ import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
 import { sentToText } from './services/recipients';
 import { realUid, keyFor } from './services/uidKey.js';
-import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
+import { shownTotal, loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
 import { PendingActions } from './services/pendingActions.js';
 import { LruCache, Limiter } from './services/cache.js';
 import { actionForKey } from './services/shortcuts.js';
@@ -87,7 +87,10 @@ export const App: React.FC = () => {
   // Mailboxes & Navigation
   const [folders, setFolders] = useState<MailboxFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>('INBOX');
-  const [filter, setFilter] = useState<ListFilter>('all');
+  // The filter belongs to the folder or view it was chosen in: anywhere else it is All.
+  const [filterState, setFilterState] = useState<{ folder: string; value: ListFilter }>({ folder: '', value: 'all' });
+  const filter: ListFilter = filterState.folder === selectedFolder ? filterState.value : 'all';
+  const setFilter = (value: ListFilter) => setFilterState({ folder: selectedFolder, value });
   const [labels, setLabels] = useState<Label[]>([]);
   const [showLabelsManager, setShowLabelsManager] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -128,6 +131,8 @@ export const App: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchFilters, setSearchFilters] = useState<SearchFilterParams>({});
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+  // False until the first answer for the folder on screen: no count and no "empty" message before that.
+  const [listReady, setListReady] = useState(false);
   const prevUnreadRef = useRef<number | null>(null);
 
   // Selected Message
@@ -341,6 +346,7 @@ export const App: React.FC = () => {
       if (cached && !silent) {
         setMessages(cached.messages);
         setTotalMessages(cached.total);
+        setListReady(true);
       }
       const showLoading = !silent && !cached && !more;
       if (showLoading) setIsMessagesLoading(true);
@@ -379,6 +385,7 @@ export const App: React.FC = () => {
         }
       } finally {
         if (showLoading && seq === loadSeq.current) setIsMessagesLoading(false);
+        if (!silent && seq === loadSeq.current) setListReady(true);
         if (more && seq === loadSeq.current) setIsLoadingMore(false);
       }
     },
@@ -414,7 +421,7 @@ export const App: React.FC = () => {
     detailSeq.current++; // any detail request still in flight belongs to the old folder
     setIsDetailLoading(false);
     setSelectedFolder(folderPath);
-    setFilter('all');
+    setListReady(false);
     setMenu(null);
     setThread(null);
     setPage(1);
@@ -448,11 +455,22 @@ export const App: React.FC = () => {
   const handleSelectMessage = async (uid: number) => {
     const seq = ++detailSeq.current;
     const box = boxOf(uid);
+    // A draft opens straight in the composer (as in Gmail). Delete is in the composer.
+    if (folders.find((f) => f.path === box)?.specialUse === 'Drafts') {
+      try {
+        const d = detailCache.get(`${account?.handle}|${box}|${uid}`)?.detail ?? (await api.getMessageDetail(box, uid, { peek: true }));
+        if (seq === detailSeq.current) handleEditDraftRef.current({ ...d, uid });
+      } catch (err: unknown) {
+        if (seq === detailSeq.current) showToast(friendlyError(err, 'This draft could not be opened. Try again.'), 'error');
+      }
+      return;
+    }
     setSelectedUid(uid);
     setMobileView('message'); // Switch to message view on mobile
     setMenu(null);
     const wasUnread = messagesRef.current.find((m) => m.uid === uid)?.isSeen === false;
 
+    if (wasUnread) bumpUnread(box, -1);
     // Optimistically mark as seen in message list
     setMessages((prev) => prev.map((m) => (m.uid === uid ? { ...m, isSeen: true } : m)));
 
@@ -501,6 +519,7 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMessage?.uid, selectedUid, account]);
 
+  const handleEditDraftRef = useRef<(m: ParsedEmailMessage) => void>(() => undefined);
   const handleSelectMessageRef = useRef(handleSelectMessage);
   handleSelectMessageRef.current = handleSelectMessage;
 
@@ -522,6 +541,10 @@ export const App: React.FC = () => {
   };
 
   // 5. Toggle Flag (Star or Read/Unread)
+  /** Move a folder's unread count at once (the real number follows from the server). */
+  const bumpUnread = (box: string, delta: number) =>
+    setFolders((prev) => prev.map((f) => (f.path === box ? { ...f, unreadCount: Math.max(0, f.unreadCount + delta) } : f)));
+
   const handleToggleFlag = async (
     uid: number,
     flag: 'isSeen' | 'isFlagged',
@@ -535,6 +558,7 @@ export const App: React.FC = () => {
 
     detailCache.clear();
     listCache.clear();
+    if (flag === 'isSeen' && targetMsg) bumpUnread(boxOf(uid), newValue ? -1 : 1);
     // Optimistic UI updates
     setMessages((prev) =>
       prev.map((m) => (m.uid === uid ? { ...m, [flag]: newValue } : m))
@@ -565,6 +589,8 @@ export const App: React.FC = () => {
   }, []);
 
   const selectedFolderKind = folders.find((f) => f.path === selectedFolder)?.specialUse;
+  // The count in the header follows optimistic changes too: rows leaving or arriving count at once.
+  const shownTotalNow = shownTotal(totalMessages, messages, visibleMessages, (m) => hidden.has(m.uid));
   const inboxLike = folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase());
   const viewRef = parseViewPath(selectedFolder);
   const headerName = viewRef
@@ -597,6 +623,7 @@ export const App: React.FC = () => {
             return rest[Math.min(i, rest.length - 1)]?.uid ?? null;
           })()
         : undefined;
+    const unreadBoxes = messagesRef.current.filter((m) => uids.includes(m.uid) && !m.isSeen).map((m) => boxOf(m.uid));
     let undone = false;
     const drop = (set: Set<number>) => {
       const n = new Set(set);
@@ -606,6 +633,7 @@ export const App: React.FC = () => {
     pending.schedule({
       label,
       apply: () => {
+        unreadBoxes.forEach((b) => bumpUnread(b, -1));
         setLeaving((p) => new Set([...p, ...uids]));
         setTimeout(() => {
           if (undone) return;
@@ -615,6 +643,7 @@ export const App: React.FC = () => {
       },
       restore: () => {
         onRestore?.();
+        unreadBoxes.forEach((b) => bumpUnread(b, 1));
         undone = true;
         setLeaving(drop);
         setHidden(drop);
@@ -1088,6 +1117,7 @@ export const App: React.FC = () => {
   };
 
   const handleEditDraft = (message: ParsedEmailMessage) => {
+    setMenu(null);
     const refs = message.references || [];
     openComposer({
       to: message.to.map((a) => a.address).filter(Boolean),
@@ -1105,6 +1135,7 @@ export const App: React.FC = () => {
       }
     });
   };
+  handleEditDraftRef.current = handleEditDraft;
 
   // 10. Multi-Account Management
   const resetMailView = () => {
@@ -1113,6 +1144,7 @@ export const App: React.FC = () => {
     setSelectedUid(null);
     setSelectedMessage(null);
     setSelectedFolder('INBOX');
+    setListReady(false);
     prevUnreadRef.current = null;
   };
 
@@ -1365,6 +1397,14 @@ export const App: React.FC = () => {
       const i = uid === null ? (delta > 0 ? -1 : list.length) : list.findIndex((m) => m.uid === uid);
       const target = list[Math.max(0, Math.min(list.length - 1, i + delta))];
       if (!target || target.uid === uid) return;
+      // In Drafts, opening a row opens the composer: J and K only move to the row.
+      const inDrafts = folders.find((f) => f.path === boxOf(target.uid))?.specialUse === 'Drafts';
+      if (inDrafts) {
+        const row = document.querySelector<HTMLElement>(`[data-row-open="${target.uid}"]`);
+        row?.focus();
+        row?.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       void handleSelectMessage(target.uid);
       requestAnimationFrame(() =>
         document.querySelector(`[data-row-open="${target.uid}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -1530,7 +1570,8 @@ export const App: React.FC = () => {
               unreadCount={inboxLike?.unreadCount ?? 0}
               onArchive={archiveFolder && !inStarredView ? handleArchive : undefined}
               onSnooze={handleSnooze}
-              totalMessages={totalMessages}
+              totalMessages={shownTotalNow}
+              countReady={listReady}
               selectedUid={selectedUid}
               onSelectMessage={handleSelectMessage}
               selectedUids={selectedUids}

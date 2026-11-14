@@ -159,3 +159,16 @@ describe('composer stacking', () => {
     expect(dialog.parentElement).toBe(document.body);
   });
 });
+
+describe('composer on a phone', () => {
+  it('fills the screen, with the close button in its own top bar and Send in the footer', () => {
+    renderComposer();
+    const dialog = screen.getAllByRole('dialog')[0];
+    expect(dialog.className).toMatch(/max-sm:inset-0/);
+    expect(dialog.className).toMatch(/max-sm:rounded-none/);
+    expect(dialog.className).toMatch(/--vvh/);
+    expect(screen.getByRole('button', { name: 'Minimize' }).className).toMatch(/max-sm:hidden/);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^send/i })).toBeTruthy();
+  });
+});

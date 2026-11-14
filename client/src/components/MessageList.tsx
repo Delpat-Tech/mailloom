@@ -67,6 +67,8 @@ interface MessageListProps {
   onClearSelection?: () => void;
   /** Set in views that span folders (Starred, Snoozed, a label), for the empty message. */
   viewKind?: 'starred' | 'snoozed' | 'label';
+  /** False until the first answer for this folder: no count and no "empty" message yet. */
+  countReady?: boolean;
   folderKind?: SpecialUseFolder;
   /** Empty Trash / Junk (the caller asks for confirmation). */
   onEmptyFolder?: () => void;
@@ -308,9 +310,12 @@ const MessageRow = React.memo(function MessageRow({
                 <span className="mt-[7px] flex items-center gap-1.5 flex-wrap">
                   {msg.hasAttachments && (
                     <span className="inline-flex items-center gap-1 h-[22px] pl-1.5 pr-2 border border-line-2 rounded-[3px] text-xs font-semibold text-ink-2">
-                      <Paperclip className="w-[13px] h-[13px]" aria-hidden="true" />
-                      Attachment
+                      <Paperclip className="w-[13px] h-[13px] shrink-0" aria-hidden="true" />
+                      <span className="truncate max-w-[180px]">{msg.attachmentName || 'Attachment'}</span>
                     </span>
+                  )}
+                  {(msg.attachmentCount ?? 0) > 1 && (
+                    <span className="text-xs font-bold text-ink-3">+{(msg.attachmentCount ?? 1) - 1}</span>
                   )}
                   {shownLabels.map((l) => (
                     <LabelChip key={l.id} label={l} />
@@ -431,6 +436,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   accountLabel,
   onClearSelection,
   viewKind,
+  countReady = true,
   folderKind,
   onEmptyFolder,
   filter = 'all',
@@ -558,7 +564,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     []
   );
   const empty = emptyState({ searchTerm, hasFilters: hasActiveFilters, filter, folderKind, viewKind, folderName });
-  const showSkeleton = useAfterDelay(isLoading && messages.length === 0, 150);
+  const showSkeleton = useAfterDelay((isLoading || !countReady) && messages.length === 0, 150);
   const labelMap = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
   const [snoozeUid, setSnoozeUid] = useState<number | null>(null);
   const canArchive = !!onArchive && folderKind !== 'Archive' && folderKind !== 'Drafts' && folderKind !== 'Sent';
@@ -577,7 +583,11 @@ export const MessageList: React.FC<MessageListProps> = ({
           <div className="flex items-baseline gap-2 min-w-0">
             <h1 className="text-2xl max-lg:text-[22px] font-extrabold text-ink max-lg:text-rail-ink tracking-tight truncate">{folderName}</h1>
             <span className="text-[13px] font-semibold text-ink-3 max-lg:text-rail-2 shrink-0">
-              {unreadCount > 0 ? `${unreadCount} unread` : `${totalMessages} ${totalMessages === 1 ? 'message' : 'messages'}`}
+              {!countReady
+                ? ''
+                : unreadCount > 0
+                  ? `${unreadCount} unread`
+                  : `${totalMessages} ${totalMessages === 1 ? 'message' : 'messages'}`}
             </span>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -878,7 +888,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       )}
 
       {/* Message List Stream */}
-      {isLoading && messages.length === 0 ? (
+      {(isLoading || !countReady) && messages.length === 0 ? (
         showSkeleton ? <SkeletonRows /> : <div className="flex-1" />
       ) : messages.length === 0 ? (
         <div className="flex-1 py-20 flex flex-col items-center justify-center text-ink-3 gap-2">

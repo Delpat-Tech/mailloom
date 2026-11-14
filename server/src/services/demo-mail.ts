@@ -395,6 +395,8 @@ class DemoMailService {
       isSeen: m.isSeen,
       isFlagged: m.isFlagged,
       hasAttachments: m.attachments.length > 0,
+      attachmentCount: m.attachments.length,
+      attachmentName: m.attachments[0]?.filename,
       size: (m.text?.length || 0) + (m.html?.length || 0) + m.attachments.reduce((acc, a) => acc + a.size, 0),
       snippet: (m.text || '').replace(/\s+/g, ' ').slice(0, 100)
     }));
