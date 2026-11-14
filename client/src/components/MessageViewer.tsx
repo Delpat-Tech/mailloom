@@ -1,3 +1,4 @@
+import { realUid } from '../services/uidKey.js';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Reply,
@@ -766,7 +767,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           </div>
         )}
 
-        {thread && <ThreadView part="before" info={thread} current={{ mailbox: folderPath, uid: message.uid }} myAddress={myAddress} />}
+        {thread && <ThreadView part="before" info={thread} current={{ mailbox: folderPath, uid: realUid(message.uid) }} myAddress={myAddress} />}
 
         <div className="bg-surface border border-line p-4 sm:px-6 sm:py-5">
           {bounce && (
@@ -922,7 +923,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           )}
         </div>
         </div>
-        {thread && <ThreadView part="after" info={thread} current={{ mailbox: folderPath, uid: message.uid }} myAddress={myAddress} />}
+        {thread && <ThreadView part="after" info={thread} current={{ mailbox: folderPath, uid: realUid(message.uid) }} myAddress={myAddress} />}
       </div>
     </section>
   );

@@ -8,6 +8,7 @@ import { LabelsManager } from './components/LabelsManager.js';
 import { labelsApi, labelErrorText, type Label, type LabelColour } from './services/labels.js';
 import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
+import { realUid } from './services/uidKey.js';
 import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
 import { PendingActions } from './services/pendingActions.js';
 import { LruCache, Limiter } from './services/cache.js';
@@ -421,7 +422,7 @@ export const App: React.FC = () => {
     const cached = detailCache.get(ck);
     if (cached) {
       setIsDetailLoading(false);
-      setSelectedMessage(cached.detail);
+      setSelectedMessage({ ...cached.detail, uid });
       if (cached.peeked && wasUnread) {
         detailCache.set(ck, { detail: cached.detail, peeked: false });
         api.toggleFlag(box, uid, 'isSeen', true).then(() => loadFolders()).catch(() => undefined);
@@ -435,7 +436,7 @@ export const App: React.FC = () => {
       const detail = await api.getMessageDetail(box, uid);
       if (seq !== detailSeq.current) return; // the user already opened another message
       detailCache.set(ck, { detail, peeked: false });
-      setSelectedMessage(detail);
+      setSelectedMessage({ ...detail, uid });
       // Refresh folder counts
       loadFolders();
       prefetchAround(uid);
@@ -472,7 +473,7 @@ export const App: React.FC = () => {
     try {
       const detail = await api.getMessageDetail(folder, uid, { showImages: true });
       if (seq !== detailSeq.current) return;
-      setSelectedMessage(detail);
+      setSelectedMessage({ ...detail, uid });
     } catch (err: unknown) {
       if (seq === detailSeq.current) {
         showToast(friendlyError(err, 'The images could not be loaded. Try again.'), 'error');
@@ -1003,7 +1004,7 @@ export const App: React.FC = () => {
           .map(escapeHtml)
           .join('<br>')}</p>` + quoteHtml(message.text || ''),
       meta: {
-        forwardOf: { folder: boxOf(message.uid), uid: message.uid },
+        forwardOf: { folder: boxOf(message.uid), uid: realUid(message.uid) },
         forwardedAttachmentNames: real.map((a) => a.filename)
       }
     });
@@ -1021,7 +1022,7 @@ export const App: React.FC = () => {
       html: message.html ? bodyOfHtmlDocument(message.html) : undefined,
       isDraft: true,
       meta: {
-        draftUid: message.uid,
+        draftUid: realUid(message.uid),
         inReplyTo: refs.length > 0 ? refs[refs.length - 1] : undefined,
         references: refs.length > 0 ? refs : undefined
       }
@@ -1491,7 +1492,7 @@ export const App: React.FC = () => {
             data-open={mobileView === 'message'}
           >
             <MessageViewer
-              folderPath={selectedFolder}
+              folderPath={selectedUid !== null ? boxOf(selectedUid) : selectedFolder}
               message={selectedMessage}
               isLoading={isDetailLoading}
               onToggleFlag={(uid, flag) => handleToggleFlag(uid, flag)}

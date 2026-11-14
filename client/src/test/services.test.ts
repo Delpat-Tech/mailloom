@@ -218,3 +218,35 @@ describe('cache helpers', () => {
     expect(peak).toBe(2);
   });
 });
+
+describe('views with the same uid in two folders', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('gives each row its own key, and sends the real uid and folder to the server', async () => {
+    const { loadView } = await import('../services/views.js');
+    const { realUid } = await import('../services/uidKey.js');
+    const { snoozeApi } = await import('../services/snooze.js');
+    const calls: { url: string; body?: string }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), body: init?.body as string | undefined });
+        const body = String(url).includes('/views/')
+          ? { messages: [{ uid: 7, mailbox: 'INBOX' }, { uid: 7, mailbox: 'Work' }], total: 2 }
+          : { success: true };
+        return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      })
+    );
+    const page = await loadView({ kind: 'starred' }, 1, 50);
+    const [a, b] = page.messages;
+    expect(a.uid).not.toBe(b.uid);
+    expect(realUid(a.uid)).toBe(7);
+    expect(realUid(b.uid)).toBe(7);
+    expect(a.mailbox).toBe('INBOX');
+    expect(b.mailbox).toBe('Work');
+    await snoozeApi.snooze('Work', [b.uid], new Date(2030, 0, 1));
+    const sent = JSON.parse(calls[calls.length - 1].body!);
+    expect(sent.uids).toEqual([7]);
+    expect(sent.mailbox).toBe('Work');
+  });
+});

@@ -1,3 +1,4 @@
+import { realUid } from './uidKey.js';
 import { request } from './api.js';
 
 /** The five label colours the server accepts, and the classes that draw them. */
@@ -61,7 +62,7 @@ export const labelsApi = {
   apply: (mailbox: string, uids: number[], add: string[], remove: string[]) =>
     request<{ success: boolean }>('/messages/labels', {
       method: 'POST',
-      body: JSON.stringify({ mailbox, uids, add, remove })
+      body: JSON.stringify({ mailbox, uids: uids.map(realUid), add, remove })
     })
 };
 

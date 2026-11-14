@@ -1,5 +1,6 @@
 import { request } from './api.js';
 import type { MessageHeader } from '../types.js';
+import { keyFor } from './uidKey.js';
 
 /**
  * Views that span folders. They are shown in the folder list as virtual paths:
@@ -33,5 +34,6 @@ export async function loadView(ref: ViewRef, page: number, limit: number): Promi
         ? `/views/snoozed?${q}`
         : `/labels/${encodeURIComponent(ref.id)}/messages?${q}`;
   const res = await request<{ messages: MessageHeader[]; total: number }>(url);
-  return { messages: res.messages ?? [], total: res.total ?? res.messages?.length ?? 0 };
+  const messages = (res.messages ?? []).map((m) => (m.mailbox ? { ...m, uid: keyFor(m.mailbox, m.uid) } : m));
+  return { messages, total: res.total ?? messages.length };
 }

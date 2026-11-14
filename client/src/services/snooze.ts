@@ -1,3 +1,4 @@
+import { realUid } from './uidKey.js';
 import { request } from './api.js';
 
 export interface SnoozePreset {
@@ -37,10 +38,10 @@ export const snoozeApi = {
   snooze: (mailbox: string, uids: number[], until: Date) =>
     request<{ success: boolean }>('/messages/snooze', {
       method: 'POST',
-      body: JSON.stringify({ mailbox, uids, until: until.toISOString() })
+      body: JSON.stringify({ mailbox, uids: uids.map(realUid), until: until.toISOString() })
     }),
   unsnooze: (uids: number[]) =>
-    request<{ success: boolean }>('/messages/snooze', { method: 'DELETE', body: JSON.stringify({ uids }) })
+    request<{ success: boolean }>('/messages/snooze', { method: 'DELETE', body: JSON.stringify({ uids: uids.map(realUid) }) })
 };
 
 /** Value for an input of type datetime-local (local time, minutes). */
