@@ -184,6 +184,12 @@ export class AgentStore {
     return this.db.prepare('SELECT * FROM agent_keys WHERE id = ?').get(id) as KeyRow | undefined;
   }
 
+  /** The key whose public prefix this is (used only to attribute refused attempts in the audit). */
+  findByPrefix(prefix: string): AgentKeyRecord | null {
+    const row = this.db.prepare('SELECT * FROM agent_keys WHERE prefix = ? LIMIT 1').get(prefix) as KeyRow | undefined;
+    return row ? toRecord(row) : null;
+  }
+
   getRecord(id: string): AgentKeyRecord | null {
     const row = this.getRow(id);
     return row ? toRecord(row) : null;

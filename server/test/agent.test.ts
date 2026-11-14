@@ -261,6 +261,33 @@ describe('agent API access rules', () => {
     }
   });
 
+  test('attempts with a revoked or broken key, or from a refused address, are audited against the key', async () => {
+    const app = await buildTestApp(AGENT_ENV);
+    try {
+      const s = await signIn(app, TESTER);
+      const created = (await createKey(app, s)).json();
+      const entries = async () => (await app.inject({ method: 'GET', url: '/api/connections/audit', headers: s.headers })).json().entries as Array<{ key_prefix: string; result: string; status: number; ip: string }>;
+
+      assert.equal((await agentClient(app, created.key, '192.168.1.50').get('/whoami')).status, 403);
+      assert.ok((await entries()).some((e) => e.result === 'IP_NOT_ALLOWED' && e.key_prefix === created.record.prefix && e.ip === '192.168.1.50'));
+      // A made-up prefix is not stored.
+      const before = (await entries()).length;
+      await agentClient(app, 'mlk_zzzzzzzz' + 'A'.repeat(32), '192.168.1.50').get('/whoami');
+      assert.equal((await entries()).length, before);
+
+      await app.inject({ method: 'POST', url: `/api/connections/keys/${created.record.id}/revoke`, headers: s.headers });
+      assert.equal((await agentClient(app, created.key).get('/whoami')).status, 401);
+      assert.ok((await entries()).some((e) => e.result === 'KEY_REVOKED' && e.status === 401 && e.key_prefix === created.record.prefix));
+
+      const { key, record } = app.mailloomAgent.store.createKey({ email: TESTER, name: 'old', scopes: ['read'], password: 'old-password' });
+      await agentClient(app, key).get('/folders'); // marks it broken
+      assert.equal((await agentClient(app, key).get('/whoami')).status, 403);
+      assert.ok((await entries()).filter((e) => e.result === 'KEY_BROKEN' && e.key_prefix === record.prefix).length >= 2);
+    } finally {
+      await app.close();
+    }
+  });
+
   test('refuses to start with a bad or far too wide allow-list', async () => {
     await assert.rejects(buildTestApp({ AGENT_ALLOWED_IPS: 'not-an-ip' }), /AGENT_ALLOWED_IPS/);
     await assert.rejects(buildTestApp({ AGENT_ALLOWED_IPS: '0.0.0.0/0' }), /AGENT_ALLOWED_IPS/);
