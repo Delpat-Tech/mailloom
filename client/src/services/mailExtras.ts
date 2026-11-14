@@ -67,6 +67,8 @@ export function listLabelsWithCounts(): Promise<LabelWithCounts[]> {
   return request<LabelWithCounts[]>('/labels');
 }
 
+export const MAX_BATCH_UIDS = 5000;
+
 export type BatchAction = 'read' | 'unread' | 'flag' | 'unflag' | 'move' | 'delete' | 'archive' | 'spam';
 
 export interface BatchResponse {

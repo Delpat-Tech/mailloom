@@ -102,3 +102,32 @@ describe('search everywhere', () => {
     expect(hasSearch('x')).toBe(true);
   });
 });
+
+describe('bulk selection', () => {
+  const rows = [msg(1, 'INBOX'), msg(2, 'INBOX')];
+  it('offers "Select all N in this folder" once every loaded row is ticked', () => {
+    const onChange = vi.fn();
+    list({
+      messages: rows,
+      searchTerm: '',
+      selectedUids: new Set([1, 2]),
+      selectAllInFolder: { count: 240, active: false, onChange }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Select all 240 in this folder' }));
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it('says the whole folder is selected, and Mark all as read is a header button', () => {
+    const onMarkAllRead = vi.fn();
+    list({
+      messages: rows,
+      searchTerm: '',
+      selectedUids: new Set([1, 2]),
+      selectAllInFolder: { count: 240, active: true, onChange: () => {} },
+      onMarkAllRead
+    });
+    expect(screen.getByText(/All 240 messages in Search results are selected/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Mark all messages in .* as read/ }));
+    expect(onMarkAllRead).toHaveBeenCalled();
+  });
+});

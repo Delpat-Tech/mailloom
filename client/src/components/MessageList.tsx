@@ -20,7 +20,8 @@ import {
   Pencil,
   Archive,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  CheckCheck
 } from 'lucide-react';
 import { rowTime, untilText, dayBucket, groupHeader } from '../services/time.js';
 import { avatarClass, initialsOf } from '../services/avatar.js';
@@ -76,6 +77,10 @@ interface MessageListProps {
   onOpenMobileSidebar?: () => void;
   accountLabel?: string;
   onClearSelection?: () => void;
+  /** Set when more messages exist than are loaded: offers "Select all N in this folder". */
+  selectAllInFolder?: { count: number; active: boolean; onChange: (on: boolean) => void };
+  /** Mark every message of the open folder as read (only offered while some are unread). */
+  onMarkAllRead?: () => void;
   /** Set in views that span folders (Starred, Snoozed, a label), for the empty message. */
   viewKind?: 'starred' | 'snoozed' | 'label';
   /** False until the first answer for this folder: no count and no "empty" message yet. */
@@ -584,6 +589,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   onOpenMobileSidebar,
   accountLabel,
   onClearSelection,
+  selectAllInFolder,
+  onMarkAllRead,
   viewKind,
   countReady = true,
   folderKind,
@@ -754,6 +761,17 @@ export const MessageList: React.FC<MessageListProps> = ({
                 className="px-2 py-1 min-h-[44px] sm:min-h-0 text-xs font-bold text-warn-ink hover:bg-warn-bg max-lg:bg-surface rounded transition-colors"
               >
                 Empty {folderName}
+              </button>
+            )}
+            {onMarkAllRead && (
+              <button
+                type="button"
+                onClick={onMarkAllRead}
+                title="Mark all as read"
+                aria-label={`Mark all messages in ${folderName} as read`}
+                className={`p-1.5 text-ink-2 max-lg:text-rail-ink hover:text-act max-lg:hover:text-rail-ink hover:bg-hover max-lg:hover:bg-rail-hi rounded transition-colors ${TOUCH}`}
+              >
+                <CheckCheck className="w-4 h-4" />
               </button>
             )}
             <button
@@ -997,7 +1015,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             <Check className={`w-4 h-4 ${allSelected ? 'text-act' : ''}`} strokeWidth={allSelected ? 3 : 2} />
           </button>
           <span className="font-bold" aria-live="polite">
-            {selectedUids.size} selected
+            {selectAllInFolder?.active ? `All ${selectAllInFolder.count}` : selectedUids.size} selected
           </span>
           <button
             type="button"
@@ -1067,6 +1085,26 @@ export const MessageList: React.FC<MessageListProps> = ({
             )}
         </div>
       </div>
+      )}
+
+      {selectedUids.size > 0 && selectAllInFolder && (allSelected || selectAllInFolder.active) && (
+        <div className="px-4 py-1.5 border-b border-line bg-sheet text-xs text-ink-2 flex flex-wrap items-center gap-x-2" role="status">
+          {selectAllInFolder.active ? (
+            <>
+              <span>All {selectAllInFolder.count} messages in {folderName} are selected.</span>
+              <button type="button" onClick={onClearSelection} className="font-bold text-act underline min-h-[44px] sm:min-h-0 px-1">
+                Clear selection
+              </button>
+            </>
+          ) : (
+            <>
+              <span>{selectedUids.size} messages on this page are selected.</span>
+              <button type="button" onClick={() => selectAllInFolder.onChange(true)} className="font-bold text-act underline min-h-[44px] sm:min-h-0 px-1">
+                Select all {selectAllInFolder.count} in this folder
+              </button>
+            </>
+          )}
+        </div>
       )}
 
       {/* Message List Stream */}

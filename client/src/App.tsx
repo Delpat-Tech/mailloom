@@ -17,6 +17,7 @@ import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
 import { sentToText } from './services/recipients';
 import { realUid, keyFor } from './services/uidKey.js';
+import { batchAction, markAllRead, MAX_BATCH_UIDS, type BatchAction } from './services/mailExtras.js';
 import { hasSearch, searchEverywhere, openSearch } from './services/searchAll.js';
 import { shownTotal, loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
 import { PendingActions } from './services/pendingActions.js';
@@ -151,6 +152,11 @@ export const App: React.FC = () => {
 
   // Selection & Batch Operations
   const [selectedUids, setSelectedUids] = useState<Set<number>>(new Set());
+  // "Select all N in this folder": the actions then cover the whole folder, not only the rows loaded.
+  const [allInFolder, setAllInFolder] = useState(false);
+  useEffect(() => {
+    if (selectedUids.size === 0) setAllInFolder(false);
+  }, [selectedUids]);
 
   // Composer
   const [isComposerOpen, setIsComposerOpen] = useState(false);
@@ -998,6 +1004,7 @@ export const App: React.FC = () => {
   const lastChecked = useRef<number | null>(null);
   const handleToggleSelectUid = (uid: number, e?: { shiftKey?: boolean; stopPropagation?: () => void }) => {
     e?.stopPropagation?.();
+    setAllInFolder(false);
     const list = visibleRef.current;
     setSelectedUids((prev) => {
       const next = new Set(prev);
@@ -1015,6 +1022,7 @@ export const App: React.FC = () => {
   };
 
   const handleSelectAll = () => {
+    setAllInFolder(false);
     const allSelected = messages.length > 0 && messages.every((m) => selectedUids.has(m.uid));
     if (allSelected) {
       setSelectedUids(new Set());
@@ -1023,18 +1031,39 @@ export const App: React.FC = () => {
     }
   };
 
-  const runBatch = async (uids: number[], op: (uid: number) => Promise<{ success?: boolean } | unknown>) => {
+  /**
+   * One request per folder (and per 5000 messages) through the batch endpoint, instead of one per message.
+   * With "all in this folder" selected it is one request for the whole folder.
+   */
+  const runBatchEndpoint = async (uids: number[], action: BatchAction, options: { targetFolder?: string; junkFolder?: string } = {}) => {
     const done: number[] = [];
     const failed: number[] = [];
     const errors: string[] = [];
-    for (const uid of uids) {
+    if (allInFolder && !parseViewPath(selectedFolder)) {
       try {
-        const r = (await op(uid)) as { success?: boolean } | undefined;
-        if (r && r.success === false) throw new Error('The server did not do it.');
-        done.push(uid);
+        await batchAction(selectedFolder, action, { all: true }, options);
+        done.push(...uids);
       } catch (err: unknown) {
-        failed.push(uid);
+        failed.push(...uids);
         errors.push(friendlyError(err, 'Try again in a moment.'));
+      }
+      return { done, failed, errors };
+    }
+    const groups = new Map<string, number[]>();
+    for (const uid of uids) {
+      const box = boxOf(uid);
+      groups.set(box, [...(groups.get(box) ?? []), uid]);
+    }
+    for (const [box, list] of groups) {
+      for (let i = 0; i < list.length; i += MAX_BATCH_UIDS) {
+        const chunk = list.slice(i, i + MAX_BATCH_UIDS);
+        try {
+          await batchAction(box, action, { uids: chunk.map(realUid) }, options);
+          done.push(...chunk);
+        } catch (err: unknown) {
+          failed.push(...chunk);
+          errors.push(friendlyError(err, 'Try again in a moment.'));
+        }
       }
     }
     return { done, failed, errors };
@@ -1060,21 +1089,35 @@ export const App: React.FC = () => {
     loadFolders();
   };
 
+  /** How many messages the current bulk action covers: the whole folder, or the ticked rows. */
+  const bulkCount = (uids: number[]) => (allInFolder ? Math.max(totalMessages, uids.length) : uids.length);
+
   const performBatchDelete = async (uids: number[], permanent: boolean) => {
-    const r = await runBatch(uids, (uid) => api.deleteMessage(boxOf(uid), uid));
-    finishBatch(permanent ? 'Deleted forever' : 'Moved to Trash', uids.length, r);
+    const n = bulkCount(uids);
+    const r = await runBatchEndpoint(uids, 'delete');
+    finishBatch(permanent ? 'Deleted forever' : 'Moved to Trash', n, r);
   };
 
   const handleBatchDelete = () => {
     const uids = Array.from(selectedUids);
     if (uids.length === 0) return;
+    const n = bulkCount(uids);
+    const noun = `${n} message${n === 1 ? '' : 's'}`;
     if (selectedFolderKind === 'Trash') {
       setConfirmRequest({
-        title: `Delete ${uids.length} message${uids.length === 1 ? '' : 's'} forever?`,
+        title: `Delete ${noun} forever?`,
         message: 'They will be permanently deleted. This cannot be undone.',
         confirmLabel: 'Delete forever',
         danger: true,
         onConfirm: () => performBatchDelete(uids, true)
+      });
+    } else if (allInFolder) {
+      setConfirmRequest({
+        title: `Move all ${noun} in ${headerName} to Trash?`,
+        message: 'You can restore them from Trash until it is emptied.',
+        confirmLabel: 'Move to Trash',
+        danger: true,
+        onConfirm: () => performBatchDelete(uids, false)
       });
     } else {
       performBatchDelete(uids, false);
@@ -1083,8 +1126,9 @@ export const App: React.FC = () => {
 
   const handleBatchMarkRead = async (isSeen: boolean) => {
     const uids = Array.from(selectedUids);
-    const r = await runBatch(uids, (uid) => api.toggleFlag(boxOf(uid), uid, 'isSeen', isSeen));
-    finishBatch(isSeen ? 'Marked as read' : 'Marked as unread', uids.length, r, false);
+    const n = bulkCount(uids);
+    const r = await runBatchEndpoint(uids, isSeen ? 'read' : 'unread');
+    finishBatch(isSeen ? 'Marked as read' : 'Marked as unread', n, r, false);
     setMessages((prev) => prev.map((m) => (r.done.includes(m.uid) ? { ...m, isSeen } : m)));
   };
 
@@ -1117,22 +1161,51 @@ export const App: React.FC = () => {
   const handleBatchSpam = async () => {
     const uids = Array.from(selectedUids);
     const junkFolder = getJunkFolderPath();
-    const r = await runBatch(uids, (uid) => api.markSpam(boxOf(uid), uid, junkFolder));
-    finishBatch('Moved to Junk', uids.length, r);
+    const n = bulkCount(uids);
+    const go = async () => finishBatch('Moved to Junk', n, await runBatchEndpoint(uids, 'spam', { junkFolder }));
+    if (allInFolder) {
+      setConfirmRequest({
+        title: `Mark all ${n} message${n === 1 ? '' : 's'} in ${headerName} as spam?`,
+        message: 'They move to Junk.',
+        confirmLabel: 'Mark as spam',
+        danger: true,
+        onConfirm: () => void go()
+      });
+    } else {
+      await go();
+    }
+  };
+
+  const inboxPath = () => folders.find((f) => f.specialUse === 'Inbox')?.path ?? 'INBOX';
+
+  /** Mark everything in the open folder as read (one request). */
+  const handleMarkAllRead = async () => {
+    if (viewRef) return;
+    try {
+      const r = await markAllRead(selectedFolder);
+      showToast(r.affected > 0 ? `Marked ${r.affected} message${r.affected === 1 ? '' : 's'} as read.` : 'Everything here is already read.');
+      listCache.clear();
+      loadMessages(true);
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(friendlyError(err, 'The messages could not be marked as read. Try again.'), 'error');
+    }
   };
 
   const handleBatchRestore = async () => {
     const uids = Array.from(selectedUids);
     if (uids.length === 0) return;
-    const r = await runBatch(uids, (uid) => api.restoreMessage(boxOf(uid), uid));
-    finishBatch('Restored to Inbox', uids.length, r);
+    const n = bulkCount(uids);
+    const r = await runBatchEndpoint(uids, 'move', { targetFolder: inboxPath() });
+    finishBatch('Restored to Inbox', n, r);
   };
 
   const handleBatchNotSpam = async () => {
     const uids = Array.from(selectedUids);
     if (uids.length === 0) return;
-    const r = await runBatch(uids, (uid) => api.notSpam(boxOf(uid), uid));
-    finishBatch('Moved back to Inbox', uids.length, r);
+    const n = bulkCount(uids);
+    const r = await runBatchEndpoint(uids, 'move', { targetFolder: inboxPath() });
+    finishBatch('Moved back to Inbox', n, r);
   };
 
   // 9. Reply & Forward Composer Hooks
@@ -1695,6 +1768,12 @@ export const App: React.FC = () => {
               onOpenMobileSidebar={() => setShowMobileSidebar(true)}
               accountLabel={account?.name || account?.email}
               onClearSelection={() => setSelectedUids(new Set())}
+              selectAllInFolder={
+                !viewRef && !searchingNow && filter === 'all' && totalMessages > messages.length
+                  ? { count: totalMessages, active: allInFolder, onChange: setAllInFolder }
+                  : undefined
+              }
+              onMarkAllRead={!viewRef && !searchingNow && (inboxLike?.unreadCount ?? 0) > 0 ? () => void handleMarkAllRead() : undefined}
               viewKind={viewRef?.kind}
             />
           </div>
