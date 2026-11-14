@@ -234,36 +234,34 @@ describe('empty views say what would appear there', () => {
 });
 
 describe('one click opens a row', () => {
-  it('opens a row that was not hovered, with the pointer arriving just before the click', () => {
-    const onSelectMessage = vi.fn();
-    list({ onSelectMessage });
-    const btn = screen.getAllByRole('button', { name: /Subject 1/ })[0];
-    fireEvent.mouseEnter(btn);
-    fireEvent.pointerDown(btn, { pointerType: 'mouse', button: 0 });
-    fireEvent.mouseDown(btn);
-    fireEvent.pointerUp(btn, { pointerType: 'mouse', button: 0 });
-    fireEvent.mouseUp(btn);
-    // The browser dropped the click: the release alone has opened it.
-    expect(onSelectMessage).toHaveBeenCalledWith(1);
-    fireEvent.click(btn); // a click that does arrive does not open it twice
-    expect(onSelectMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it('opens the pressed row even if its button was redrawn before the click', () => {
-    const onSelectMessage = vi.fn();
-    list({ onSelectMessage });
-    const btn = screen.getAllByRole('button', { name: /Subject 1/ })[0];
-    fireEvent.pointerDown(btn, { pointerType: 'mouse', button: 0 });
-    fireEvent.click(screen.getByRole('list', { name: 'Inbox messages' }));
-    expect(onSelectMessage).toHaveBeenCalledWith(1);
-  });
-
-  it('a plain keyboard or script click opens it once', () => {
+  it('a click on the row button opens it once', () => {
     const onSelectMessage = vi.fn();
     list({ onSelectMessage });
     fireEvent.click(screen.getAllByRole('button', { name: /Subject 2/ })[0]);
     expect(onSelectMessage).toHaveBeenCalledTimes(1);
     expect(onSelectMessage).toHaveBeenCalledWith(2);
+  });
+
+  it('a click on the row padding opens it too, but the avatar and star do not', () => {
+    const onSelectMessage = vi.fn();
+    const onToggleFlag = vi.fn();
+    const onToggleSelectUid = vi.fn();
+    list({ onSelectMessage, onToggleFlag, onToggleSelectUid });
+    const open = screen.getAllByRole('button', { name: /Subject 1/ })[0];
+    fireEvent.click(open.parentElement!); // the row container, not a button
+    expect(onSelectMessage).toHaveBeenCalledWith(1);
+    onSelectMessage.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Select message from Sender 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Star message from Sender 1' }));
+    expect(onSelectMessage).not.toHaveBeenCalled();
+    expect(onToggleSelectUid).toHaveBeenCalled();
+    expect(onToggleFlag).toHaveBeenCalled();
+  });
+
+  it('rows do not use content-visibility (it made clicks land on the wrapper)', () => {
+    list();
+    const css = require('node:fs').readFileSync('src/motion.css', 'utf8') as string;
+    expect(css).not.toMatch(/content-visibility\s*:/);
   });
 
   it('row hover is pure CSS: no mouse enter or over handlers on rows', () => {

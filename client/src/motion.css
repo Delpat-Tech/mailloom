@@ -116,8 +116,7 @@
   animation: ml-shimmer 1.2s var(--ease-out) infinite;
 }
 
-/* Long lists: skip layout and paint work for rows that are off screen. */
-.row-wrap { content-visibility: auto; contain-intrinsic-size: auto 84px; }
+/* Long lists rely on the infinite list and memoised rows. (content-visibility on rows made clicks land on the row wrapper.) */
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

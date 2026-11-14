@@ -177,7 +177,17 @@ const MessageRow = React.memo(function MessageRow({
     <li className="row-wrap list-none" data-leaving={leaving || undefined}>
       <div className="row-inner">
         <div
-          className={`relative flex items-stretch border-b border-line t-fast ${
+          onClick={(e) => {
+            // A click anywhere on the row opens it, padding included. The avatar (selects), the star and the
+            // quick actions are their own buttons and do their own thing.
+            if ((e.target as HTMLElement).closest('button:not([data-row-open])')) return;
+            if (pressed.current) {
+              pressed.current = false;
+              return;
+            }
+            ctl.open(msg.uid);
+          }}
+          className={`relative flex items-stretch border-b border-line t-fast cursor-pointer ${
             isSelected ? 'bg-sel cut-sel' : 'bg-surface hover:bg-hover'
           }`}
         >
@@ -225,13 +235,6 @@ const MessageRow = React.memo(function MessageRow({
             type="button"
             data-row-open={msg.uid}
             tabIndex={tab}
-            onClick={() => {
-              if (pressed.current) {
-                pressed.current = false;
-                return;
-              }
-              ctl.open(msg.uid);
-            }}
             onPointerDown={(e) => {
               if (e.pointerType !== 'touch') return;
               pressed.current = false;
@@ -436,8 +439,6 @@ export const MessageList: React.FC<MessageListProps> = ({
   const [showFilters, setShowFilters] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const sentinelRef = useRef<HTMLLIElement>(null);
-  const downUid = useRef<number | null>(null);
-  const lastOpen = useRef<{ uid: number; t: number } | null>(null);
   // The Search tab and the "/" key ask for the search box (open on a phone, then focus).
   useEffect(() => {
     const open = () => {
@@ -536,9 +537,6 @@ export const MessageList: React.FC<MessageListProps> = ({
     () => ({
       check: (uid, e) => latest.current.onToggleSelectUid(uid, e),
       open: (uid) => {
-        const last = lastOpen.current;
-        if (last && last.uid === uid && Date.now() - last.t < 400) return; // pointer-up and click for one press
-        lastOpen.current = { uid, t: Date.now() };
         setActiveUid(uid);
         latest.current.onSelectMessage(uid);
       },
@@ -897,25 +895,6 @@ export const MessageList: React.FC<MessageListProps> = ({
           ref={scrollerRef}
           aria-label={`${folderName} messages`}
           onKeyDown={onRowKeyDown}
-          onPointerDown={(e) => {
-            const el = (e.target as HTMLElement).closest('[data-row-open]');
-            downUid.current = el && e.pointerType === 'mouse' && e.button === 0 ? Number(el.getAttribute('data-row-open')) : null;
-          }}
-          onPointerUp={(e) => {
-            // A mouse press and release on the same row opens it, even when the browser drops the click
-            // (the row was redrawn or the pointer had only just arrived). The real click, if it comes, is ignored.
-            const t = e.target as HTMLElement;
-            const row = t.closest('[data-row-open]');
-            const uid = row ? Number(row.getAttribute('data-row-open')) : null;
-            if (downUid.current !== null && uid === downUid.current && e.pointerType === 'mouse') ctl.open(uid);
-            downUid.current = null;
-          }}
-          onClick={(e) => {
-            // The click landed on the list itself (the pressed button had been replaced): open the pressed row.
-            const t = e.target as HTMLElement;
-            if (downUid.current !== null && !t.closest('button')) ctl.open(downUid.current);
-            downUid.current = null;
-          }}
           onScroll={(e) => {
             if (e.currentTarget.clientHeight > 0) savedScroll.current = e.currentTarget.scrollTop;
           }}
