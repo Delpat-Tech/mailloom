@@ -59,8 +59,6 @@ interface SidebarProps {
   onManageLabels?: () => void;
   /** When the folder list and messages were last refreshed. */
   syncedAt?: Date | null;
-  /** How many starred messages there are (shown beside Starred). */
-  starredCount?: number;
 }
 
 const KIND_ORDER = ['Inbox', 'Drafts', 'Sent', 'Archive', 'Junk', 'Trash'];
@@ -114,11 +112,25 @@ const ViewButton: React.FC<{
   );
 };
 
+/** The number beside a folder: unread, except Drafts (how many drafts there are). */
+export function folderCount(folder: Pick<MailboxFolder, 'specialUse' | 'unreadCount' | 'totalCount'>): number {
+  return folder.specialUse === 'Drafts' ? folder.totalCount : folder.unreadCount;
+}
+
+/** What a screen reader says for a folder: the same number as on screen, with the right word. */
+export function folderAria(folder: Pick<MailboxFolder, 'name' | 'specialUse' | 'unreadCount' | 'totalCount'>): string {
+  const name = folderLabel(folder);
+  const n = folderCount(folder);
+  if (n <= 0) return name;
+  return folder.specialUse === 'Drafts' ? `${name}, ${n} ${n === 1 ? 'draft' : 'drafts'}` : `${name}, ${n} unread`;
+}
+
+export const labelUnread = (l: { unread?: number; count: number }): number => l.unread ?? l.count;
+
 const UTILITY =
   'w-full flex items-center gap-3 px-3 min-h-[44px] lg:min-h-[32px] rounded text-[13.5px] font-semibold hover:bg-rail-hi hover:text-rail-hov-ink transition-colors';
 
 export const Sidebar: React.FC<SidebarProps> = ({
-  starredCount,
   account,
   folders,
   selectedFolder,
@@ -258,7 +270,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               style={{ paddingLeft: `${0.75 + (folder.depth || 0) * 1}rem` }}
               title={folder.path}
               aria-current={isSelected ? 'page' : undefined}
-              aria-label={folder.unreadCount > 0 ? `${folderLabel(folder)}, ${folder.unreadCount} unread` : folderLabel(folder)}
+              aria-label={folderAria(folder)}
               className={`w-full flex items-center justify-between pr-3 min-h-[44px] lg:min-h-[36px] rounded text-sm transition-colors ${
                 isSelected
                   ? 'bg-rail-on text-rail-on-ink font-extrabold'
@@ -270,8 +282,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="truncate">{folderLabel(folder)}</span>
               </div>
               {(() => {
-                // Inbox and others: unread. Drafts and Spam: how many there are, as in the design.
-                const n = folder.specialUse === 'Drafts' || folder.specialUse === 'Junk' ? folder.totalCount : folder.unreadCount;
+                // Unread everywhere; Drafts shows how many drafts there are (read and unread mean nothing there).
+                const n = folderCount(folder);
                 return n > 0 ? (
                   <span
                     className={`text-xs tabular-nums font-bold ${
@@ -285,7 +297,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             {folder.specialUse === 'Inbox' && (
               <>
-                <ViewButton path={STARRED_PATH} label="Starred" icon={<Star className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} count={starredCount} />
+                <ViewButton path={STARRED_PATH} label="Starred" icon={<Star className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} />
                 <ViewButton path={SNOOZED_PATH} label="Snoozed" icon={<Clock className="w-4 h-4 shrink-0" />} selected={selectedFolder} onSelect={onSelectFolder} />
               </>
             )}
@@ -318,7 +330,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="button"
                   onClick={() => onSelectFolder(path)}
                   aria-current={on ? 'page' : undefined}
-                  aria-label={l.count > 0 ? `Label ${l.name}, ${l.count}` : `Label ${l.name}`}
+                  aria-label={labelUnread(l) > 0 ? `Label ${l.name}, ${labelUnread(l)} unread` : `Label ${l.name}`}
                   className={`t-fast w-full flex items-center justify-between pl-3 pr-3 min-h-[44px] lg:min-h-[32px] rounded text-[13.5px] ${
                     on ? 'bg-rail-on text-rail-on-ink font-extrabold' : 'font-semibold hover:bg-rail-hi hover:text-rail-hov-ink'
                   }`}
@@ -327,7 +339,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <TagSwatch colour={l.colour} />
                     <span className="truncate">{l.name}</span>
                   </span>
-                  {l.count > 0 && <span className="text-xs font-bold tabular-nums">{l.count}</span>}
+                  {labelUnread(l) > 0 && <span className="text-xs font-bold tabular-nums">{labelUnread(l)}</span>}
                 </button>
               );
             })}

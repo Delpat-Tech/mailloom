@@ -33,7 +33,10 @@ export interface Label {
   id: string;
   name: string;
   colour: LabelColour;
+  /** Unread messages carrying the label (older servers: the only count). */
   count: number;
+  unread?: number;
+  total?: number;
 }
 
 /** Plain words for a failed label change. 409 is a name that is already used. */

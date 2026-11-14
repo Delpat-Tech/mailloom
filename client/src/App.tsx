@@ -11,6 +11,7 @@ import { threadsApi, type ThreadInfo } from './services/threads.js';
 import { useSwipeBack } from './hooks/useSwipeBack.js';
 import { useBackLayer } from './hooks/useBackLayer.js';
 import { useOnline } from './hooks/useOnline.js';
+import { useResumeRefresh } from './hooks/useResumeRefresh.js';
 import { folderLabel } from './services/folderName.js';
 import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
@@ -127,7 +128,6 @@ export const App: React.FC = () => {
   const [totalMessages, setTotalMessages] = useState(0);
   const [page, setPage] = useState(1);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [starredCount, setStarredCount] = useState(0);
   // What the user typed (searchInput/filterInput) is applied 300 ms after typing stops.
   const [searchInput, setSearchInput] = useState('');
   const [filterInput, setFilterInput] = useState<SearchFilterParams>({});
@@ -298,13 +298,15 @@ export const App: React.FC = () => {
     messagesRef.current.find((m) => m.uid === uid)?.mailbox ??
     (parseViewPath(selectedFolderRef.current) ? 'INBOX' : selectedFolderRef.current);
 
+  // Labels are reloaded with the folders (open, read/unread, poll, refresh) so their counts never lag behind.
+  const loadLabelsRef = useRef<() => Promise<void>>(async () => undefined);
   const loadFolders = useCallback(async () => {
     if (!account) return;
+    void loadLabelsRef.current();
     try {
       const res = await api.getMailboxes();
       setFolders(res.folders);
       setSyncedAt(new Date());
-      loadView({ kind: 'starred' }, 1, 1).then((r) => setStarredCount(r.total)).catch(() => undefined);
 
       // Compute total unread for account badge
       const totalUnread = res.folders.reduce((acc, f) => acc + (f.unreadCount || 0), 0);
@@ -340,14 +342,30 @@ export const App: React.FC = () => {
     }
   }, [account, loadFolders]);
 
+  // One labels request at a time; a request that arrives meanwhile asks for one more round afterwards.
+  const labelsBusy = useRef(false);
+  const labelsAgain = useRef(false);
   const loadLabels = useCallback(async () => {
     if (!account) return;
+    if (labelsBusy.current) {
+      labelsAgain.current = true;
+      return;
+    }
+    labelsBusy.current = true;
     try {
-      setLabels(await labelsApi.list());
-    } catch {
-      // Labels are optional: an older server may not have them, and the rest of the app works without.
+      do {
+        labelsAgain.current = false;
+        try {
+          setLabels(await labelsApi.list());
+        } catch {
+          // Labels are optional: an older server may not have them, and the rest of the app works without.
+        }
+      } while (labelsAgain.current);
+    } finally {
+      labelsBusy.current = false;
     }
   }, [account]);
+  loadLabelsRef.current = loadLabels;
   useEffect(() => {
     void loadLabels();
   }, [loadLabels]);
@@ -566,12 +584,12 @@ export const App: React.FC = () => {
   };
   const refreshListRef = useRef(refreshList);
   refreshListRef.current = refreshList;
-  // Back online: refresh once.
-  const wasOnline = useRef(true);
-  useEffect(() => {
-    if (online && !wasOnline.current && account) refreshListRef.current();
-    wasOnline.current = online;
-  }, [online, account]);
+  // Back on the page (tab shown again, app reopened) or back online: folders, labels and the open list refresh
+  // quietly (the scroll position stays). Events that arrive together count once.
+  useResumeRefresh(!!account, () => {
+    void loadFoldersRef.current();
+    void loadMessagesRef.current(true);
+  });
 
   const handleSelectMessageRef = useRef(handleSelectMessage);
   handleSelectMessageRef.current = handleSelectMessage;
@@ -1329,6 +1347,7 @@ export const App: React.FC = () => {
         const totalUnread = folderRes.folders.reduce((acc, f) => acc + (f.unreadCount || 0), 0);
         updateStoredAccountUnread(account.email, totalUnread);
         setSavedAccounts(getStoredAccounts());
+        void loadLabelsRef.current();
         // New mail appears in the open list without a manual refresh (always the latest loader).
         await loadMessagesRef.current(true);
       } catch {
@@ -1577,7 +1596,6 @@ export const App: React.FC = () => {
             `}
           >
             <Sidebar
-              starredCount={starredCount}
               labels={labels}
               onManageLabels={() => {
                 setShowLabelsManager(true);
