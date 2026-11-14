@@ -109,3 +109,43 @@ describe('inline viewer', () => {
     setActiveHandle(null);
   });
 });
+
+import { buildPrintDocument, fillMailHosts, splitMailDocument } from '../services/print.js';
+
+describe('print document', () => {
+  const msg = {
+    subject: 'Quarterly <report>',
+    from: { name: 'Priya Shah', address: 'priya@delpat.test' },
+    to: [{ name: '', address: 'me@delpat.test' }],
+    cc: [{ name: 'Sam', address: 'sam@delpat.test' }],
+    date: '2026-11-10T09:30:00Z',
+    html: '<html><head><style>body{color:red}p{margin:0}</style></head><body><p>Hello</p><script>alert(1)</script></body></html>',
+    attachments: [{ filename: 'plan.pdf', size: 2048 }]
+  };
+
+  it('holds subject, From/To/Cc/Date, attachments and forces light colours', () => {
+    const doc = buildPrintDocument([msg]);
+    expect(doc).toContain('Quarterly &lt;report&gt;');
+    expect(doc).toContain('Priya Shah &lt;priya@delpat.test&gt;');
+    expect(doc).toContain('Sam &lt;sam@delpat.test&gt;');
+    expect(doc).toContain('plan.pdf (2 KB)');
+    expect(doc).toContain('color-scheme: light');
+    expect(doc).not.toMatch(/overflow:\s*hidden/);
+  });
+
+  it('a conversation prints one block per message', () => {
+    const doc = buildPrintDocument([msg, { ...msg, subject: 'Re: Quarterly' }]);
+    expect(doc.match(/<article class="msg">/g)).toHaveLength(2);
+  });
+
+  it('keeps the mail body, drops scripts, and moves body{} rules onto a wrapper', () => {
+    const { css, body } = splitMailDocument(msg.html);
+    expect(body).toContain('<p>Hello</p>');
+    expect(body).not.toContain('script');
+    expect(css).toContain('.mailroot{color:red}');
+    const d = document.implementation.createHTMLDocument('p');
+    d.body.innerHTML = buildPrintDocument([msg]).replace(/^[\s\S]*<body>/, '').replace(/<\/body>[\s\S]*$/, '');
+    fillMailHosts(d, [msg]);
+    expect(d.querySelector('[data-mail="0"]')!.shadowRoot!.innerHTML).toContain('Hello');
+  });
+});

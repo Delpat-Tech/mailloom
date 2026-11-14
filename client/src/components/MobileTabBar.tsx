@@ -20,7 +20,7 @@ const ITEMS: { key: PhoneTab; label: string; Icon: typeof Inbox }[] = [
 export const MobileTabBar: React.FC<Props> = ({ active, onSelect }) => (
   <nav
     aria-label="Quick navigation"
-    className="md:hidden shrink-0 grid grid-cols-5 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]"
+    className="print-hide md:hidden shrink-0 grid grid-cols-5 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]"
   >
     {ITEMS.map(({ key, label, Icon }) => {
       const on = active === key;

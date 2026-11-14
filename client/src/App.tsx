@@ -1571,7 +1571,7 @@ export const App: React.FC = () => {
             aria-modal={showMobileSidebar ? true : undefined}
             aria-label={showMobileSidebar ? 'Folders and accounts' : undefined}
             className={`
-              fixed inset-y-0 left-0 z-50 w-56 transform transition-[transform,visibility] duration-[220ms] ease-out shadow-2xl lg:shadow-none
+              print-hide fixed inset-y-0 left-0 z-50 w-56 transform transition-[transform,visibility] duration-[220ms] ease-out shadow-2xl lg:shadow-none
               lg:relative lg:translate-x-0 lg:z-auto
               ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full max-lg:invisible'}
             `}

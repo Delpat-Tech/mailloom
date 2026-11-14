@@ -131,3 +131,25 @@
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top, 0px), #000 calc(100% - var(--fade-bottom, 0px)), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top, 0px), #000 calc(100% - var(--fade-bottom, 0px)), transparent 100%);
 }
+
+
+/* Ctrl+P on the app prints only the open message: no folders, list, toolbars or tab bar; light colours; as many pages as it needs. */
+@media print {
+  html, body, #root { height: auto !important; overflow: visible !important; background: #fff !important; color: #000 !important; }
+  #root > div, #root main, .reader-pane, .reader-pane > section, .reader-pane .overflow-y-auto {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    position: static !important;
+    transform: none !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .print-hide, .list-pane, [role='toolbar'], [role='status'], .reader-pane [aria-label='Back to message list'],
+  .reader-pane .email-body ~ div button, .reader-pane [aria-haspopup] {
+    display: none !important;
+  }
+  .reader-pane .email-body iframe { height: auto; }
+  .reader-pane a { color: #000 !important; text-decoration: underline; }
+}

@@ -43,6 +43,7 @@ import { SnoozeMenu } from './SnoozeMenu.js';
 import { ThreadView } from './ThreadView.js';
 import { SkeletonReader } from './Skeleton.js';
 import { KeyHint } from './KeyHint.js';
+import { printMessages, toPrintMessage, type PrintMessage } from '../services/print.js';
 import { AttachmentViewer, viewerKind, pdfNeedsNewTab, type ViewerTarget } from './AttachmentViewer.js';
 
 // Never below 32 px, never wrapping or shrinking: the toolbar moves actions into "More" instead.
@@ -352,6 +353,19 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
     };
   }, [message, viewMode, fitFrame]);
 
+  const printRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    if (!message) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        printRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [message]);
+
   const formatFileSize = (bytes: number): string => {
     if (!bytes || bytes <= 0) return '0 B';
     const k = 1024;
@@ -377,9 +391,32 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
     );
   };
 
+  // Print: the menu closes first, then the message (the whole conversation when one is shown) is printed
+  // from its own document, never the app screen.
   const handlePrint = () => {
-    window.print();
+    if (!message) return;
+    onMenuChange?.(null);
+    const current = toPrintMessage(message);
+    setTimeout(() => {
+      void (async () => {
+        let list: PrintMessage[] = [current];
+        const others = (thread?.messages ?? []).filter((t) => !(t.mailbox === folderPath && realUid(t.uid) === realUid(message.uid)));
+        if (thread && others.length > 0) {
+          try {
+            const details = await Promise.all(others.map((t) => api.getMessageDetail(t.mailbox, t.uid, { peek: true })));
+            const dated = [...details.map((d) => toPrintMessage(d)), current];
+            dated.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            list = dated;
+          } catch {
+            // The other messages could not be fetched: print the open one.
+          }
+        }
+        await printMessages(list).catch(() => undefined);
+      })();
+    }, 120);
   };
+
+  printRef.current = handlePrint;
 
   if (isLoading) {
     return (
