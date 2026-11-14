@@ -5,7 +5,7 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- On main, reviewed and tested (server 197, client 121): sign-in and sessions, sending, organising, reading, drafts,
+- On main and pushed to GitHub on 15 Nov, reviewed and tested (server 203, client 121): sign-in and sessions, sending, organising, reading, drafts,
   live list, phone and keyboard, agent keys and API, push notifications, rich-text composer with inline images and
   signature logo, release build, deploy runbook, deep links, whole-app security fixes, and the Sky rail design in
   Delpat colours with filters, starred and snoozed views, labels, snooze, conversations, bounce rows, shortcuts,
@@ -16,9 +16,8 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Next
 1. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
-2. Push main to GitHub (Delpat-Tech/mailloom) (waits on Om).
 ## Later
-- Real-server trial: Om said on 15 Nov to run locally only, no real-server test. Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE from builder-a covers it) (waits on Om deciding to deploy).
+- Real-server trial: Om said on 15 Nov to run locally only, no real-server test. Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).
 - ydco.in mail is on Google (MX), so it cannot sign in to Mailloom; dropped from MAIL_DOMAINS examples (builder-a).
 - Snooze wake-up without notifications on waits for the next sign-in or request for that mailbox; on time only with a stored push login (docs/organise.md; waits on real use, or on a decision to keep a separate wake-up login).
 - Labels server side (builder-a): 501 path for servers without custom keywords is untested (GreenMail and Dovecot allow them); conversation index rows are never pruned for folders renamed away or for mailboxes no longer used (waits on real use).
