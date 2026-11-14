@@ -165,10 +165,15 @@ export function isSessionEndedError(err: unknown): boolean {
 interface RequestOptions extends RequestInit {
   /** Account to act as; defaults to the active account. null sends no account. */
   account?: string | null;
+  /** Give up after this many ms (default 20 s; 120 s for uploads and sends). */
+  timeoutMs?: number;
 }
 
+export const REQUEST_TIMEOUT_MS = 20_000;
+export const UPLOAD_TIMEOUT_MS = 120_000;
+
 export async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const { account, ...init } = options;
+  const { account, timeoutMs, ...init } = options;
   const handle = account === undefined ? activeHandle : account;
   const headers = new Headers(init.headers || {});
   if (handle) {
@@ -179,17 +184,35 @@ export async function request<T>(endpoint: string, options: RequestOptions = {})
     headers.set('Content-Type', 'application/json');
   }
 
+  const limit = timeoutMs ?? (typeof FormData !== 'undefined' && init.body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, limit);
+  const outer = init.signal;
+  if (outer) {
+    if (outer.aborted) controller.abort();
+    else outer.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${endpoint}`, {
       ...init,
       headers,
-      credentials: 'same-origin'
+      credentials: 'same-origin',
+      signal: controller.signal
     });
-  } catch {
+  } catch (e) {
+    clearTimeout(timer);
+    if (timedOut) throw new ApiError('That is taking too long. Check your connection and try again.', 0, 'TIMEOUT');
+    if (outer?.aborted) throw e;
     throw new ApiError('Cannot reach Mailloom. Check your connection and try again.', 0, 'NETWORK');
   }
 
+  clearTimeout(timer);
   if (!res.ok) {
     const errorBody = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
     // Anything technical the server (or a proxy) sent is replaced by a plain sentence; status and code stay on the error.
