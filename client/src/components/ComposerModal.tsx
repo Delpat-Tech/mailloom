@@ -310,6 +310,20 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     return () => clearInterval(id);
   }, [isOpen]);
 
+  // Hiding the page (tab switch, app switch, close) may be the last chance: keep the draft now.
+  useEffect(() => {
+    if (!isOpen) return;
+    const save = () => {
+      if (document.visibilityState === 'hidden') void saveDraftRef.current();
+    };
+    document.addEventListener('visibilitychange', save);
+    window.addEventListener('pagehide', save);
+    return () => {
+      document.removeEventListener('visibilitychange', save);
+      window.removeEventListener('pagehide', save);
+    };
+  }, [isOpen]);
+
   /** Remove the saved draft (if any) and close. Stays open if the draft could not be removed. */
   const discardAndClose = async () => {
     sentRef.current = true; // no more autosaves

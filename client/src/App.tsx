@@ -611,10 +611,16 @@ export const App: React.FC = () => {
   useEffect(() => {
     const unsub = pending.subscribe(() => setUndoLatest(pending.latest));
     const flush = () => void pending.flush();
+    // Hiding the tab counts too: phones often never send pagehide when the app is switched away.
+    const flushHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
     window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flushHidden);
     return () => {
       unsub();
       window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flushHidden);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
