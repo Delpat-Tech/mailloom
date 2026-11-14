@@ -17,9 +17,13 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 ## Next
 1. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on the trial server, since phones need HTTPS).
 2. Push main to GitHub (Delpat-Tech/mailloom) (waits on Om).
-3. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
+3. Trial on the real server (Om said yes on 15 Nov). The mail server is 43.205.158.10 (mail.delpat.in, Nginx with Let's Encrypt
+   on 443; Dovecot 993 and Postfix 587 show iRedMail's self-signed certificate). Waits on Om for: SSH login with sudo to that
+   box, a DNS record webmail.delpat.in -> 43.205.158.10, a test mailbox, and whether to move Dovecot/Postfix to the Let's
+   Encrypt certificate. Meanwhile builder-a adds MAIL_TLS_CA_FILE so Mailloom can trust the self-signed one with checks on.
 
 ## Later
+- ydco.in mail is on Google (MX), so it cannot sign in to Mailloom; dropped from MAIL_DOMAINS examples (builder-a).
 - Snooze wake-up without notifications on waits for the next sign-in or request for that mailbox; on time only with a stored push login (docs/organise.md; waits on real use, or on a decision to keep a separate wake-up login).
 - Labels server side (builder-a): 501 path for servers without custom keywords is untested (GreenMail and Dovecot allow them); conversation index rows are never pruned for folders renamed away or for mailboxes no longer used (waits on real use).
 - Conversation index on a big mailbox: until the first background run ends, older threads count 1 and the thread view may miss older messages (docs/organise.md; waits on real-mailbox timing).
