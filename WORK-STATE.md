@@ -19,3 +19,4 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Production secrets: deploy/.env.example committed real-looking secrets; if production copied them, rotate there (waits on Om).
 - Threads view, contacts book, out-of-office via ManageSieve, offline reading, undo send, search all folders (wait on v1 in daily use).
 - Forwarding rules and change password need iRedAdmin access (waits on Om).
+- Per-email sign-in throttle (10/15 min) lets anyone lock a known mailbox out of sign-in; consider CAPTCHA-free alternatives (waits on real use).

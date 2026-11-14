@@ -122,6 +122,13 @@ function parseTrustProxy(raw: string | undefined): number | string | false {
   return entries.join(',');
 }
 
+function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h === '::1') return true;
+  const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  return !!m && [m[1], m[2], m[3]].every((o) => Number(o) <= 255);
+}
+
 export function loadConfig(env: Env): AppConfig {
   const problems: string[] = [];
   const collect = <T>(fn: () => T, fallback: T): T => {
@@ -208,7 +215,16 @@ export function loadConfig(env: Env): AppConfig {
     return list;
   }, [] as string[]);
 
-  const smtpAllowPlain = collect(() => flag(env, 'MAIL_SMTP_ALLOW_PLAIN', false), false);
+  const smtpAllowPlain = collect(() => {
+    const v = flag(env, 'MAIL_SMTP_ALLOW_PLAIN', false);
+    if (v && smtpHost && !isLoopbackHost(smtpHost)) {
+      throw new ConfigError(
+        `MAIL_SMTP_ALLOW_PLAIN is only allowed when MAIL_SMTP_HOST is a loopback host (127.0.0.0/8, ::1, localhost); ` +
+          `got "${smtpHost}". Sending mail without TLS to another host exposes passwords and messages. Remove MAIL_SMTP_ALLOW_PLAIN.`
+      );
+    }
+    return v;
+  }, false);
   const maxMessageBytes = collect(() => int(env, 'MAIL_MAX_MESSAGE_BYTES', 10 * 1024 * 1024), 10 * 1024 * 1024);
 
   if (problems.length > 0) {

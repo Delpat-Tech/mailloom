@@ -89,6 +89,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     fastify.log.warn('MAIL_TLS_REJECT_UNAUTHORIZED=false: mail server certificates are NOT checked (local testing only).');
   }
 
+  if (config.mail.smtpAllowPlain) {
+    fastify.log.warn('MAIL_SMTP_ALLOW_PLAIN is set: SMTP may run without TLS (loopback hosts only, local testing only).');
+  }
+
   // Remove expired sessions and their IMAP connections every 10 minutes.
   const sweeper = setInterval(() => {
     for (const key of sessions.sweep()) void closeSessionConnection(key);

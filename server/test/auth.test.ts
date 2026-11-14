@@ -42,6 +42,18 @@ describe('configuration', () => {
     );
   });
 
+  test('MAIL_SMTP_ALLOW_PLAIN is refused unless the SMTP host is loopback', async () => {
+    await assert.rejects(
+      buildApp({ env: testEnv({ MAIL_SMTP_HOST: 'mail.example.com', MAIL_SMTP_ALLOW_PLAIN: '1' }), clientDist: null }),
+      /MAIL_SMTP_ALLOW_PLAIN.*loopback/s
+    );
+    for (const host of ['127.0.0.1', '127.5.6.7', 'localhost', '::1']) {
+      const a = await buildApp({ env: testEnv({ MAIL_SMTP_HOST: host, MAIL_SMTP_ALLOW_PLAIN: '1' }), clientDist: null });
+      assert.equal(a.mailloom.config.mail.smtpAllowPlain, true, host);
+      await a.close();
+    }
+  });
+
   test('MAIL_DOMAINS is required and must hold real domains', async () => {
     await assert.rejects(buildApp({ env: testEnv({ MAIL_DOMAINS: undefined }), clientDist: null }), /MAIL_DOMAINS is not set/);
     await assert.rejects(buildApp({ env: testEnv({ MAIL_DOMAINS: 'not a domain' }), clientDist: null }), /MAIL_DOMAINS entry/);
