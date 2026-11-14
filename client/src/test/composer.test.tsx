@@ -172,3 +172,19 @@ describe('composer on a phone', () => {
     expect(screen.getByRole('button', { name: /^send/i })).toBeTruthy();
   });
 });
+
+describe('templates in the composer', () => {
+  it('blocks Send while a {{placeholder}} remains, and names it', async () => {
+    renderComposer({ initialSubject: 'Offer for {{role}}' });
+    await userEvent.click(screen.getByRole('button', { name: /^send/i }));
+    expect(await screen.findByText(/Fill in or delete \{\{role\}\} before sending/)).toBeTruthy();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('blocks Send for a placeholder left in the body', async () => {
+    renderComposer({ initialHtml: '<p>Dear {{candidate_name}},</p>' });
+    await userEvent.click(screen.getByRole('button', { name: /^send/i }));
+    expect(await screen.findByText(/\{\{candidate_name\}\}/)).toBeTruthy();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+});

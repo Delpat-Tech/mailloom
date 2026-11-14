@@ -27,6 +27,7 @@ import { api, ApiError } from '../services/api.js';
 import { clockTime } from '../services/time.js';
 import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
+import { findPlaceholder } from '../services/templates.js';
 import { RecipientField } from './RecipientField.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
 import type { ConfirmRequest } from './ConfirmDialog.js';
@@ -215,6 +216,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   });
   // Changing it starts a fresh editor (templates, switching back from plain text).
   const [editorKey, setEditorKey] = useState(0);
+  const initialBodyHtml = useRef<string | null>(null);
+  if (initialBodyHtml.current === null) initialBodyHtml.current = bodyHtml;
   const editorRef = useRef<Editor | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -456,10 +459,58 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
+  /** Puts a template in without touching the reply's quote or the signature. */
+  const applyTemplate = ({ subject: newSubject, body: newBody }: { subject: string; body: string }) => {
+    // A reply keeps its "Re:" subject; the template's subject is used only for an empty one.
+    if (!subject.trim()) setSubject(newSubject);
+    if (plainMode) {
+      const ta = bodyRef.current;
+      const at = ta ? ta.selectionStart : bodyText.length;
+      setBodyText(bodyText.slice(0, at) + newBody + bodyText.slice(ta ? ta.selectionEnd : at));
+      return;
+    }
+    const ed = editorRef.current;
+    if (!ed) return;
+    const html = plainTextToHtml(newBody);
+    const insert = () => ed.chain().focus().insertContent(html).run();
+    const typed = bodyHtml !== initialBodyHtml.current && !isEmptyHtml(bodyHtml);
+    if (!typed) {
+      insert();
+      return;
+    }
+    requestConfirm({
+      title: 'Replace the current text?',
+      message: 'The paragraph you are in is replaced by the template. Your signature and any quoted message stay as they are.',
+      confirmLabel: 'Replace',
+      alternateLabel: 'Insert at cursor',
+      onConfirm: () => {
+        const { selection } = ed.state;
+        if (!selection.empty) {
+          insert();
+          return;
+        }
+        const $from = selection.$from;
+        if ($from.depth >= 1) {
+          ed.chain().focus().deleteRange({ from: $from.before(1), to: $from.after(1) }).insertContent(html).run();
+        } else {
+          insert();
+        }
+      },
+      onAlternate: () => void insert()
+    });
+  };
+
   const handleSend = async () => {
     setErrorMsg(null);
     if (!online) {
       setErrorMsg("You're offline, so the message can't be sent yet. It is kept here.");
+      return;
+    }
+
+    const leftover = findPlaceholder(`${subject}
+${plainMode ? bodyText : htmlToPlainText(bodyHtml)}`);
+    if (leftover) {
+      setErrorMsg(`Fill in or delete ${leftover} before sending.`);
       return;
     }
 
@@ -955,15 +1006,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       <TemplateSelectorModal
         isOpen={showTemplateModal}
         onClose={() => setShowTemplateModal(false)}
-        onApplyTemplate={({ subject: newSubject, body: newBody }) => {
-          setSubject(newSubject);
-          if (plainMode) {
-            setBodyText(newBody);
-          } else {
-            setBodyHtml(plainTextToHtml(newBody));
-            setEditorKey((k) => k + 1);
-          }
-        }}
+        onApplyTemplate={applyTemplate}
       />
 
       {/* Signature Settings Modal */}

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import React, { useState } from 'react';
+import { useState } from 'react';
 
 const suggest = vi.fn();
 vi.mock('../services/mailExtras.js', () => ({ suggestContacts: (...a: unknown[]) => suggest(...a) }));

@@ -21,119 +21,118 @@ export const BUILT_IN_TEMPLATES: EmailTemplate[] = [
     id: 'offer-letter',
     name: 'Job Offer Letter',
     category: 'HR',
-    subject: 'Job Offer: {{role}} at Delpat Technologies',
+    subject: 'Job offer: {{role}}',
     variables: [
-      { key: 'candidate_name', label: 'Candidate Name', defaultValue: 'Alex' },
-      { key: 'role', label: 'Job Role / Title', defaultValue: 'Software Engineer' },
-      { key: 'ctc', label: 'Annual Compensation / CTC', defaultValue: '₹12,00,000 LPA' },
-      { key: 'start_date', label: 'Joining Date', defaultValue: 'November 15, 2026' },
-      { key: 'response_deadline', label: 'Offer Expiry Date', defaultValue: 'November 5, 2026' }
+      { key: 'candidate_name', label: 'Candidate name' },
+      { key: 'role', label: 'Role' },
+      { key: 'compensation', label: 'Compensation' },
+      { key: 'start_date', label: 'Joining date' },
+      { key: 'work_location', label: 'Work location' },
+      { key: 'response_deadline', label: 'Reply by' },
+      { key: 'sender_name', label: 'Your name' }
     ],
     body: `Dear {{candidate_name}},
 
-We are pleased to offer you the position of {{role}} at Delpat Technologies. We were very impressed with your background, skills, and technical aptitude during our interview process, and we believe you will be a fantastic addition to our engineering team.
+We are pleased to offer you the position of {{role}}.
 
-Here is a summary of your offer details:
-• Role: {{role}}
-• Annual Compensation (CTC): {{ctc}}
-• Proposed Joining Date: {{start_date}}
-• Work Location: Vadodara / Hybrid
+Offer details:
+- Role: {{role}}
+- Compensation: {{compensation}}
+- Joining date: {{start_date}}
+- Work location: {{work_location}}
 
-Please review the attached formal offer letter and employment terms. To accept, kindly sign and return a scanned copy of the agreement by {{response_deadline}}.
+Please review the attached offer and reply by {{response_deadline}}.
 
-If you have any questions regarding your package or joining procedures, please feel free to reach out. We look forward to welcoming you aboard!
+If you have any questions, please get in touch.
 
-Warm regards,
-HR Team
-Delpat Technologies
+Regards,
+{{sender_name}}
 `
   },
   {
     id: 'internship-completion',
     name: 'Internship / Project Completion Letter',
     category: 'HR',
-    subject: 'Certificate of Internship Completion - {{intern_name}}',
+    subject: 'Internship completion: {{intern_name}}',
     variables: [
-      { key: 'intern_name', label: 'Intern Name', defaultValue: 'Rohan Sharma' },
-      { key: 'domain', label: 'Project / Domain Area', defaultValue: 'Full Stack Engineering' },
-      { key: 'duration', label: 'Tenure Duration', defaultValue: '3 Months (Aug 2026 - Oct 2026)' },
-      { key: 'mentor_name', label: 'Mentor / Lead Name', defaultValue: 'Akash Patel' }
+      { key: 'intern_name', label: 'Intern name' },
+      { key: 'domain', label: 'Project or area' },
+      { key: 'duration', label: 'Period' },
+      { key: 'mentor_name', label: 'Mentor name' },
+      { key: 'sender_name', label: 'Your name' }
     ],
-    body: `To Whom It May Concern,
+    body: `To whom it may concern,
 
-This is to certify that {{intern_name}} has successfully completed an internship in {{domain}} with Delpat Technologies during the period of {{duration}}.
+This is to certify that {{intern_name}} completed an internship in {{domain}} during {{duration}}, under the supervision of {{mentor_name}}.
 
-During the internship tenure, {{intern_name}} worked diligently under the supervision of {{mentor_name}}. Key contributions included system design, API performance optimization, and reliable software delivery.
-
-We observed {{intern_name}} to be hardworking, proactive, and technically sound. We wish them all the best in their academic and future professional endeavors.
-
-Sincerely,
-Engineering Management
-Delpat Technologies
+Regards,
+{{sender_name}}
 `
   },
   {
     id: 'interview-invitation',
     name: 'Interview Invitation',
     category: 'Interviews',
-    subject: 'Interview Invitation: {{role}} at Delpat Technologies',
+    subject: 'Interview invitation: {{role}}',
     variables: [
-      { key: 'candidate_name', label: 'Candidate Name', defaultValue: 'Jordan' },
-      { key: 'role', label: 'Role Title', defaultValue: 'Senior Backend Developer' },
-      { key: 'interview_time', label: 'Interview Date & Time', defaultValue: 'Tomorrow at 3:00 PM IST' },
-      { key: 'meeting_link', label: 'Meeting Link / Platform', defaultValue: 'https://meet.google.com/xyz-abcd-efg' },
-      { key: 'interviewer_name', label: 'Interviewer Name', defaultValue: 'Akash Patel' }
+      { key: 'candidate_name', label: 'Candidate name' },
+      { key: 'role', label: 'Role' },
+      { key: 'interview_time', label: 'Date and time' },
+      { key: 'duration', label: 'Length' },
+      { key: 'meeting_link', label: 'Meeting link or place' },
+      { key: 'interviewer_name', label: 'Interviewer' },
+      { key: 'sender_name', label: 'Your name' }
     ],
     body: `Hi {{candidate_name}},
 
-Thank you for your interest in joining Delpat Technologies for the {{role}} position. We were very impressed with your profile and would love to invite you for a technical video interview.
+Thank you for your interest in the {{role}} position. We would like to invite you to an interview.
 
-Interview Details:
-• Position: {{role}}
-• Time: {{interview_time}}
-• Duration: ~45 minutes
-• Meeting Link: {{meeting_link}}
-• Interviewer: {{interviewer_name}}
+- Time: {{interview_time}}
+- Length: {{duration}}
+- Where: {{meeting_link}}
+- Interviewer: {{interviewer_name}}
 
-Please confirm if this schedule works for you, or let us know an alternative time slot if you need to reschedule.
+Please confirm that this works for you, or suggest another time.
 
-Best regards,
-Talent Acquisition Team
-Delpat Technologies
+Regards,
+{{sender_name}}
 `
   },
   {
     id: 'business-proposal',
-    name: 'General Business Proposal & Follow-up',
+    name: 'Business Proposal and Follow-up',
     category: 'Business',
-    subject: 'Quotation Proposal & Project Scope: {{project_title}}',
+    subject: 'Quotation: {{project_title}}',
     variables: [
-      { key: 'client_name', label: 'Client / Contact Name', defaultValue: 'Mr. Verma' },
-      { key: 'project_title', label: 'Project / Requirement Title', defaultValue: 'Industrial Fastener Logistics' },
-      { key: 'quote_reference', label: 'Quotation Ref #', defaultValue: 'QT-2026-9901' },
-      { key: 'valid_until', label: 'Quote Valid Until', defaultValue: 'November 30, 2026' }
+      { key: 'client_name', label: 'Contact name' },
+      { key: 'project_title', label: 'Project or requirement' },
+      { key: 'quote_reference', label: 'Quotation reference' },
+      { key: 'valid_until', label: 'Valid until' },
+      { key: 'sender_name', label: 'Your name' }
     ],
     body: `Dear {{client_name}},
 
-Thank you for taking the time to discuss your requirements for {{project_title}}.
+Thank you for discussing your requirements for {{project_title}}.
 
-Following up on our conversation, please find attached our formal quotation and project scope breakdown (Reference: {{quote_reference}}).
+Please find our quotation attached (reference {{quote_reference}}), valid until {{valid_until}}.
 
-Key Terms:
-• Scope: Complete implementation and delivery as discussed.
-• Quotation Validity: {{valid_until}}
-• Lead Time: Immediate dispatch upon confirmation.
+Let us know if you would like any changes to the specification or the terms.
 
-Please review the attached proposal and let us know if you require any adjustments to specifications or commercial terms.
-
-Looking forward to working together.
-
-Best regards,
-Business Development Team
-Delpat Technologies
+Regards,
+{{sender_name}}
 `
   }
 ];
+
+/** The first {{placeholder}} left in the text, or null. */
+export function findPlaceholder(text: string): string | null {
+  const m = /\{\{\s*[A-Za-z0-9_ -]+\s*\}\}/.exec(text);
+  return m ? m[0] : null;
+}
+
+export function hasPlaceholders(text: string): boolean {
+  return findPlaceholder(text) !== null;
+}
 
 export function getCustomTemplates(): EmailTemplate[] {
   try {
@@ -200,10 +199,12 @@ export function fillTemplateVariables(
   let body = template.body;
 
   template.variables.forEach((v) => {
-    const val = values[v.key] ?? v.defaultValue ?? `{{${v.key}}}`;
+    // An empty field leaves the {{placeholder}} in place, so it cannot be sent by mistake.
+    const typed = (values[v.key] ?? v.defaultValue ?? '').trim();
+    const val = typed || `{{${v.key}}}`;
     const pattern = new RegExp(`\\{\\{${v.key}\\}\\}`, 'g');
-    subject = subject.replace(pattern, val);
-    body = body.replace(pattern, val);
+    subject = subject.replace(pattern, () => val);
+    body = body.replace(pattern, () => val);
   });
 
   return { subject, body };

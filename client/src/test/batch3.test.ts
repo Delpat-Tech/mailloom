@@ -40,3 +40,25 @@ describe('request timeouts', () => {
     expect(((await p) as ApiError).code).toBe('TIMEOUT');
   });
 });
+
+import { BUILT_IN_TEMPLATES, fillTemplateVariables, findPlaceholder } from '../services/templates.js';
+
+describe('built-in templates', () => {
+  it('hold no made-up data: every variable is an empty {{placeholder}}', () => {
+    for (const t of BUILT_IN_TEMPLATES) {
+      for (const v of t.variables) expect(v.defaultValue).toBeUndefined();
+      const text = `${t.subject}\n${t.body}`;
+      expect(text).not.toMatch(/\d{4}|₹|https?:|@|Vadodara|Akash|Rohan|Verma|Alex/);
+      for (const v of t.variables) expect(text).toContain(`{{${v.key}}}`);
+    }
+  });
+
+  it('an empty field keeps its placeholder; a filled one is replaced', () => {
+    const t = BUILT_IN_TEMPLATES[0]!;
+    const out = fillTemplateVariables(t, { candidate_name: 'Sam', role: '  ' });
+    expect(out.body).toContain('Dear Sam,');
+    expect(out.subject).toBe('Job offer: {{role}}');
+    expect(findPlaceholder(out.body)).toBe('{{role}}');
+    expect(findPlaceholder('all filled in')).toBeNull();
+  });
+});
