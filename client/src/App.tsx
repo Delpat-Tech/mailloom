@@ -3,8 +3,12 @@ import { Sidebar } from './components/Sidebar.js';
 import { ConnectionsPanel } from './components/ConnectionsPanel.js';
 import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
-import { ComposerModal } from './components/ComposerModal.js';
+import { ComposerModal, type ComposerReplyMeta } from './components/ComposerModal.js';
+import { planReply } from './services/reply.js';
 import { ConnectModal } from './components/ConnectModal.js';
+import { ConfirmDialog, type ConfirmRequest } from './components/ConfirmDialog.js';
+import { friendlyError } from './services/errors.js';
+import { useDialog } from './hooks/useDialog.js';
 import {
   api,
   getActiveHandle,
@@ -57,6 +61,9 @@ export const App: React.FC = () => {
   const [messages, setMessages] = useState<MessageHeader[]>([]);
   const [totalMessages, setTotalMessages] = useState(0);
   const [page, setPage] = useState(1);
+  // What the user typed (searchInput/filterInput) is applied 300 ms after typing stops.
+  const [searchInput, setSearchInput] = useState('');
+  const [filterInput, setFilterInput] = useState<SearchFilterParams>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [searchFilters, setSearchFilters] = useState<SearchFilterParams>({});
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
@@ -66,6 +73,9 @@ export const App: React.FC = () => {
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<ParsedEmailMessage | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [isLoadingImages, setIsLoadingImages] = useState(false);
+  const detailSeq = useRef(0);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
   // Selection & Batch Operations
   const [selectedUids, setSelectedUids] = useState<Set<number>>(new Set());
@@ -76,9 +86,13 @@ export const App: React.FC = () => {
   const [composerInitial, setComposerInitial] = useState<{
     to?: string[];
     cc?: string[];
+    bcc?: string[];
     subject?: string;
     body?: string;
+    meta?: ComposerReplyMeta;
+    isDraft?: boolean;
   }>({});
+  const [composeId, setComposeId] = useState(0);
 
   // Toast feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -86,6 +100,8 @@ export const App: React.FC = () => {
   // Mobile responsive state
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [mobileView, setMobileView] = useState<'list' | 'message'>('list');
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useDialog(drawerRef, { open: showMobileSidebar, onEscape: () => setShowMobileSidebar(false) });
 
   // PWA & Browser Notifications State
   const [isInstalled, setIsInstalled] = useState(() => isPwaInstalled());
@@ -131,9 +147,11 @@ export const App: React.FC = () => {
     }
   };
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), type === 'error' ? 7000 : 3500);
   };
 
   // 1. Initial Authentication Check: ask the server which accounts this browser is signed in to.
@@ -207,7 +225,7 @@ export const App: React.FC = () => {
         }
       }
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to load folders', 'error');
+      showToast(friendlyError(err, 'The folder list could not be loaded. Try again.'), 'error');
     }
   }, [account]);
 
@@ -217,32 +235,60 @@ export const App: React.FC = () => {
     }
   }, [account, loadFolders]);
 
-  // 3. Fetch Messages for Selected Folder
-  const loadMessages = useCallback(async () => {
-    if (!account || !selectedFolder) return;
-    setIsMessagesLoading(true);
-    try {
-      const res = await api.getMessages(selectedFolder, page, 50, searchTerm, searchFilters);
-      setMessages(res.messages);
-      setTotalMessages(res.total);
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to load messages', 'error');
-    } finally {
-      setIsMessagesLoading(false);
-    }
-  }, [account, selectedFolder, page, searchTerm, searchFilters]);
+  // 3. Fetch Messages for Selected Folder. "silent" reloads (polling) keep the list as it is while loading.
+  const loadSeq = useRef(0);
+  const loadMessages = useCallback(
+    async (silent = false) => {
+      if (!account || !selectedFolder) return;
+      const seq = ++loadSeq.current;
+      if (!silent) setIsMessagesLoading(true);
+      try {
+        const res = await api.getMessages(selectedFolder, page, 50, searchTerm, searchFilters);
+        if (seq !== loadSeq.current) return; // a newer request replaced this one
+        setMessages(res.messages);
+        setTotalMessages(res.total);
+      } catch (err: unknown) {
+        if (!silent && seq === loadSeq.current) {
+          showToast(friendlyError(err, 'The messages could not be loaded. Try again.'), 'error');
+        }
+      } finally {
+        if (!silent && seq === loadSeq.current) setIsMessagesLoading(false);
+      }
+    },
+    [account, selectedFolder, page, searchTerm, searchFilters]
+  );
 
   useEffect(() => {
     loadMessages();
   }, [loadMessages]);
 
+  // Always-current copies for timers (the 60 s poll must not use stale closures).
+  const loadMessagesRef = useRef(loadMessages);
+  loadMessagesRef.current = loadMessages;
+
+  // Search waits 300 ms after typing stops.
+  const appliedSearchKey = useRef('');
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const key = JSON.stringify([searchInput, filterInput]);
+      if (key === appliedSearchKey.current) return;
+      appliedSearchKey.current = key;
+      setSearchTerm(searchInput);
+      setSearchFilters(filterInput);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput, filterInput]);
+
   // Reset pagination & message detail when switching folders
   const handleSelectFolder = (folderPath: string) => {
     if (folderPath.toLowerCase() === selectedFolder.toLowerCase()) return;
+    detailSeq.current++; // any detail request still in flight belongs to the old folder
+    setIsDetailLoading(false);
     setSelectedFolder(folderPath);
     setPage(1);
-    setSearchTerm('');
-    setSearchFilters({});
+    setSearchInput('');
+    setFilterInput({});
     setSelectedUid(null);
     setSelectedMessage(null);
     setSelectedUids(new Set());
@@ -252,6 +298,7 @@ export const App: React.FC = () => {
 
   // 4. Select and View Message Detail
   const handleSelectMessage = async (uid: number) => {
+    const seq = ++detailSeq.current;
     setSelectedUid(uid);
     setIsDetailLoading(true);
     setMobileView('message'); // Switch to message view on mobile
@@ -263,13 +310,35 @@ export const App: React.FC = () => {
 
     try {
       const detail = await api.getMessageDetail(selectedFolder, uid);
+      if (seq !== detailSeq.current) return; // the user already opened another message
       setSelectedMessage(detail);
       // Refresh folder counts
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to load email content', 'error');
+      if (seq === detailSeq.current) {
+        showToast(friendlyError(err, 'This message could not be opened. Try again.'), 'error');
+      }
     } finally {
-      setIsDetailLoading(false);
+      if (seq === detailSeq.current) setIsDetailLoading(false);
+    }
+  };
+  const handleSelectMessageRef = useRef(handleSelectMessage);
+  handleSelectMessageRef.current = handleSelectMessage;
+
+  const handleShowImages = async (uid: number) => {
+    const seq = detailSeq.current; // same guard as handleSelectMessage: a newer open or folder switch wins
+    const folder = selectedFolder;
+    setIsLoadingImages(true);
+    try {
+      const detail = await api.getMessageDetail(folder, uid, { showImages: true });
+      if (seq !== detailSeq.current) return;
+      setSelectedMessage(detail);
+    } catch (err: unknown) {
+      if (seq === detailSeq.current) {
+        showToast(friendlyError(err, 'The images could not be loaded. Try again.'), 'error');
+      }
+    } finally {
+      setIsLoadingImages(false);
     }
   };
 
@@ -297,45 +366,120 @@ export const App: React.FC = () => {
       await api.toggleFlag(selectedFolder, uid, flag, newValue);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to update flag', 'error');
+      showToast(friendlyError(err, 'The change could not be saved. Try again.'), 'error');
       // Revert on failure
       loadMessages();
     }
   };
 
-  // 6. Delete Message
-  const handleDeleteMessage = async (uid: number) => {
+  const selectedFolderKind = folders.find((f) => f.path === selectedFolder)?.specialUse;
+
+  const clearSelectionIf = (uids: number[]) => {
+    if (selectedUid !== null && uids.includes(selectedUid)) {
+      setSelectedUid(null);
+      setSelectedMessage(null);
+      setMobileView('list'); // the message is gone: on a phone, go back to the list
+    }
+  };
+
+  // 6. Delete Message: to Trash; inside Trash it is permanent and asks first.
+  const performDelete = async (uid: number) => {
     try {
-      await api.deleteMessage(selectedFolder, uid);
-      showToast('Message deleted');
+      const r = await api.deleteMessage(selectedFolder, uid);
+      if (!r.success) throw new Error('The message could not be deleted.');
+      showToast(r.permanent ? 'Message deleted permanently' : 'Moved to Trash');
       setMessages((prev) => prev.filter((m) => m.uid !== uid));
-      if (selectedUid === uid) {
-        setSelectedUid(null);
-        setSelectedMessage(null);
-      }
+      clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to delete message', 'error');
+      showToast(friendlyError(err, 'The message could not be deleted. Try again.'), 'error');
+      loadMessages(true);
     }
+  };
+
+  const handleDeleteMessage = (uid: number) => {
+    if (selectedFolderKind === 'Trash') {
+      setConfirmRequest({
+        title: 'Delete forever?',
+        message: 'This message will be permanently deleted. This cannot be undone.',
+        confirmLabel: 'Delete forever',
+        danger: true,
+        onConfirm: () => performDelete(uid)
+      });
+    } else {
+      performDelete(uid);
+    }
+  };
+
+  const handleRestoreMessage = async (uid: number) => {
+    try {
+      const r = await api.restoreMessage(selectedFolder, uid);
+      if (!r.success) throw new Error('The message could not be restored.');
+      showToast('Restored to Inbox');
+      setMessages((prev) => prev.filter((m) => m.uid !== uid));
+      clearSelectionIf([uid]);
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(friendlyError(err, 'The message could not be restored. Try again.'), 'error');
+      loadMessages(true);
+    }
+  };
+
+  const handleNotSpam = async (uid: number) => {
+    try {
+      const r = await api.notSpam(selectedFolder, uid);
+      if (!r.success) throw new Error('The message could not be moved.');
+      showToast('Moved back to Inbox');
+      setMessages((prev) => prev.filter((m) => m.uid !== uid));
+      clearSelectionIf([uid]);
+      loadFolders();
+    } catch (err: unknown) {
+      showToast(friendlyError(err, 'The message could not be moved. Try again.'), 'error');
+      loadMessages(true);
+    }
+  };
+
+  const handleEmptyFolder = () => {
+    const folderName = folders.find((f) => f.path === selectedFolder)?.name || selectedFolder;
+    setConfirmRequest({
+      title: `Empty ${folderName}?`,
+      message: `Every message in ${folderName} will be permanently deleted. This cannot be undone.`,
+      confirmLabel: `Delete all`,
+      danger: true,
+      onConfirm: async () => {
+        try {
+          const r = await api.emptyFolder(selectedFolder);
+          if (!r.success) throw new Error('The folder could not be emptied.');
+          showToast(`${r.deleted} message${r.deleted === 1 ? '' : 's'} deleted permanently`);
+          setSelectedUid(null);
+          setSelectedMessage(null);
+        } catch (err: unknown) {
+          showToast(friendlyError(err, 'The folder could not be emptied. Try again.'), 'error');
+        } finally {
+          loadMessages();
+          loadFolders();
+        }
+      }
+    });
   };
 
   // 7. Move Message
   const handleMoveMessage = async (uid: number, targetFolder: string) => {
     try {
-      await api.moveMessage(selectedFolder, uid, targetFolder);
-      showToast(`Moved to ${targetFolder}`);
+      const r = await api.moveMessage(selectedFolder, uid, targetFolder);
+      if (!r.success) throw new Error('The message could not be moved.');
+      const name = folders.find((f) => f.path === targetFolder)?.name || targetFolder;
+      showToast(`Moved to ${name}`);
       setMessages((prev) => prev.filter((m) => m.uid !== uid));
-      if (selectedUid === uid) {
-        setSelectedUid(null);
-        setSelectedMessage(null);
-      }
+      clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to move message', 'error');
+      showToast(friendlyError(err, 'The message could not be moved. Try again.'), 'error');
+      loadMessages(true);
     }
   };
 
-  // 8. Batch Operations
+  // 8. Batch Operations. Each message is tried; the result says exactly what happened.
   const handleToggleSelectUid = (uid: number, e: React.MouseEvent) => {
     e.stopPropagation();
     setSelectedUids((prev) => {
@@ -355,38 +499,69 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleBatchDelete = async () => {
-    const uidsToDelete = Array.from(selectedUids);
-    for (const uid of uidsToDelete) {
+  const runBatch = async (uids: number[], op: (uid: number) => Promise<{ success?: boolean } | unknown>) => {
+    const done: number[] = [];
+    const failed: number[] = [];
+    const errors: string[] = [];
+    for (const uid of uids) {
       try {
-        await api.deleteMessage(selectedFolder, uid);
-      } catch {
-        // Continue deleting rest
+        const r = (await op(uid)) as { success?: boolean } | undefined;
+        if (r && r.success === false) throw new Error('The server did not do it.');
+        done.push(uid);
+      } catch (err: unknown) {
+        failed.push(uid);
+        errors.push(friendlyError(err, 'Try again in a moment.'));
       }
     }
-    showToast(`Deleted ${uidsToDelete.length} messages`);
-    setSelectedUids(new Set());
+    return { done, failed, errors };
+  };
+
+  // Says exactly what happened: all done, some done (the failed ones stay selected to retry), or none.
+  const finishBatch = (
+    past: string,
+    total: number,
+    r: { done: number[]; failed: number[]; errors: string[] },
+    remove = true
+  ) => {
+    const n = (c: number) => `${c} message${c === 1 ? '' : 's'}`;
+    if (r.failed.length === 0) showToast(`${past}: ${n(r.done.length)}.`);
+    else if (r.done.length === 0) showToast(`Nothing was changed for ${n(total)}. ${r.errors[0]}`, 'error');
+    else showToast(`${past}: ${r.done.length} of ${n(total)}. ${r.failed.length} could not be done and stay selected. ${r.errors[0]}`, 'error');
+    setSelectedUids(new Set(r.failed));
+    if (remove) {
+      setMessages((prev) => prev.filter((m) => !r.done.includes(m.uid)));
+      clearSelectionIf(r.done);
+    }
     loadMessages();
     loadFolders();
-    if (selectedUid && uidsToDelete.includes(selectedUid)) {
-      setSelectedUid(null);
-      setSelectedMessage(null);
+  };
+
+  const performBatchDelete = async (uids: number[], permanent: boolean) => {
+    const r = await runBatch(uids, (uid) => api.deleteMessage(selectedFolder, uid));
+    finishBatch(permanent ? 'Deleted forever' : 'Moved to Trash', uids.length, r);
+  };
+
+  const handleBatchDelete = () => {
+    const uids = Array.from(selectedUids);
+    if (uids.length === 0) return;
+    if (selectedFolderKind === 'Trash') {
+      setConfirmRequest({
+        title: `Delete ${uids.length} message${uids.length === 1 ? '' : 's'} forever?`,
+        message: 'They will be permanently deleted. This cannot be undone.',
+        confirmLabel: 'Delete forever',
+        danger: true,
+        onConfirm: () => performBatchDelete(uids, true)
+      });
+    } else {
+      performBatchDelete(uids, false);
     }
   };
 
   const handleBatchMarkRead = async (isSeen: boolean) => {
     const uids = Array.from(selectedUids);
-    for (const uid of uids) {
-      try {
-        await api.toggleFlag(selectedFolder, uid, 'isSeen', isSeen);
-      } catch {
-        // Continue
-      }
-    }
-    showToast(`Marked ${uids.length} messages as ${isSeen ? 'read' : 'unread'}`);
-    setSelectedUids(new Set());
-    loadMessages();
-    loadFolders();
+    const r = await runBatch(uids, (uid) => api.toggleFlag(selectedFolder, uid, 'isSeen', isSeen));
+    finishBatch(isSeen ? 'Marked as read' : 'Marked as unread', uids.length, r, false);
+    setMessages((prev) => prev.map((m) => (r.done.includes(m.uid) ? { ...m, isSeen } : m)));
   };
 
   const getJunkFolderPath = () => {
@@ -403,59 +578,60 @@ export const App: React.FC = () => {
   const handleMarkSpam = async (uid: number) => {
     try {
       const junkFolder = getJunkFolderPath();
-      await api.markSpam(selectedFolder, uid, junkFolder);
+      const r = await api.markSpam(selectedFolder, uid, junkFolder);
+      if (!r.success) throw new Error('The message could not be moved to Junk.');
       showToast('Moved to Junk & marked as read');
       setMessages((prev) => prev.filter((m) => m.uid !== uid));
-      if (selectedUid === uid) {
-        setSelectedUid(null);
-        setSelectedMessage(null);
-      }
+      clearSelectionIf([uid]);
       loadFolders();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to mark as spam', 'error');
+      showToast(friendlyError(err, 'The message could not be moved to Junk. Try again.'), 'error');
+      loadMessages(true);
     }
   };
 
   const handleBatchSpam = async () => {
-    const uidsToSpam = Array.from(selectedUids);
+    const uids = Array.from(selectedUids);
     const junkFolder = getJunkFolderPath();
-    for (const uid of uidsToSpam) {
-      try {
-        await api.markSpam(selectedFolder, uid, junkFolder);
-      } catch {
-        // Continue
-      }
-    }
-    showToast(`Moved ${uidsToSpam.length} messages to Junk`);
-    setSelectedUids(new Set());
-    loadMessages();
-    loadFolders();
-    if (selectedUid && uidsToSpam.includes(selectedUid)) {
-      setSelectedUid(null);
-      setSelectedMessage(null);
-    }
+    const r = await runBatch(uids, (uid) => api.markSpam(selectedFolder, uid, junkFolder));
+    finishBatch('Moved to Junk', uids.length, r);
+  };
+
+  const handleBatchRestore = async () => {
+    const uids = Array.from(selectedUids);
+    if (uids.length === 0) return;
+    const r = await runBatch(uids, (uid) => api.restoreMessage(selectedFolder, uid));
+    finishBatch('Restored to Inbox', uids.length, r);
+  };
+
+  const handleBatchNotSpam = async () => {
+    const uids = Array.from(selectedUids);
+    if (uids.length === 0) return;
+    const r = await runBatch(uids, (uid) => api.notSpam(selectedFolder, uid));
+    finishBatch('Moved back to Inbox', uids.length, r);
   };
 
   // 9. Reply & Forward Composer Hooks
-  const handleReply = (message: ParsedEmailMessage, replyAll = false) => {
-    const sender = message.from.address;
-    const recipients = replyAll
-      ? [sender, ...message.to.map((t) => t.address).filter((a) => a !== account?.email)]
-      : [sender];
-    const cc = replyAll && message.cc ? message.cc.map((c) => c.address) : [];
+  const openComposer = (initial: typeof composerInitial) => {
+    setComposerInitial(initial);
+    setComposeId((n) => n + 1); // fresh form: nothing left from the previous message
+    setIsComposerOpen(true);
+  };
 
+  const handleReply = (message: ParsedEmailMessage, replyAll = false) => {
+    const plan = planReply(message, account?.email || '', replyAll);
     const dateStr = new Date(message.date).toLocaleString();
-    const quote = `\n\n--- On ${dateStr}, ${message.from.name || sender} wrote: ---\n> ${
+    const quote = `\n\n--- On ${dateStr}, ${message.from.name || message.from.address} wrote: ---\n> ${
       message.text ? message.text.replace(/\n/g, '\n> ') : ''
     }`;
 
-    setComposerInitial({
-      to: recipients,
-      cc,
-      subject: message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`,
-      body: quote
+    openComposer({
+      to: plan.to,
+      cc: plan.cc,
+      subject: plan.subject,
+      body: quote,
+      meta: { inReplyTo: plan.inReplyTo, references: plan.references }
     });
-    setIsComposerOpen(true);
   };
 
   const handleForward = (message: ParsedEmailMessage) => {
@@ -466,12 +642,33 @@ export const App: React.FC = () => {
       .map((t) => t.address)
       .join(', ')}\n\n${message.text || ''}`;
 
-    setComposerInitial({
+    const real = message.attachments.filter((a) => !a.isInline);
+    openComposer({
       to: [],
-      subject: message.subject.startsWith('Fwd:') ? message.subject : `Fwd: ${message.subject}`,
-      body: forwardHeader
+      subject: /^fwd?:/i.test(message.subject) ? message.subject : `Fwd: ${message.subject}`,
+      body: forwardHeader,
+      meta: {
+        forwardOf: { folder: selectedFolder, uid: message.uid },
+        forwardedAttachmentNames: real.map((a) => a.filename)
+      }
     });
-    setIsComposerOpen(true);
+  };
+
+  const handleEditDraft = (message: ParsedEmailMessage) => {
+    const refs = message.references || [];
+    openComposer({
+      to: message.to.map((a) => a.address).filter(Boolean),
+      cc: (message.cc || []).map((a) => a.address).filter(Boolean),
+      bcc: (message.bcc || []).map((a) => a.address).filter(Boolean),
+      subject: message.subject === '(No Subject)' ? '' : message.subject,
+      body: message.text || '',
+      isDraft: true,
+      meta: {
+        draftUid: message.uid,
+        inReplyTo: refs.length > 0 ? refs[refs.length - 1] : undefined,
+        references: refs.length > 0 ? refs : undefined
+      }
+    });
   };
 
   // 10. Multi-Account Management
@@ -511,7 +708,7 @@ export const App: React.FC = () => {
       showToast(`Switched to ${targetEmail}`);
     } catch (err) {
       // A 401 also raises the sign-in prompt for that account.
-      showToast(`Could not switch to ${targetEmail}: ${err instanceof Error ? err.message : 'unknown error'}`, 'error');
+      showToast(`Couldn't sign in to ${targetEmail}. ${friendlyError(err)}`, 'error');
     } finally {
       setIsMessagesLoading(false);
     }
@@ -589,7 +786,7 @@ export const App: React.FC = () => {
               body: newest.subject || '(No subject)',
               onClick: () => {
                 setSelectedFolder('INBOX');
-                handleSelectMessage(newest.uid);
+                handleSelectMessageRef.current(newest.uid);
               }
             });
           }
@@ -600,6 +797,8 @@ export const App: React.FC = () => {
         const totalUnread = folderRes.folders.reduce((acc, f) => acc + (f.unreadCount || 0), 0);
         updateStoredAccountUnread(account.email, totalUnread);
         setSavedAccounts(getStoredAccounts());
+        // New mail appears in the open list without a manual refresh (always the latest loader).
+        await loadMessagesRef.current(true);
       } catch {
         // Silently ignore background polling errors
       }
@@ -627,7 +826,10 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans">
+    <div
+      className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 text-slate-900 font-sans"
+      style={{ height: '100dvh' }}
+    >
       {!account ? (
         <ConnectModal
           onConnected={handleConnected}
@@ -648,10 +850,14 @@ export const App: React.FC = () => {
 
           {/* Left Pane: Mailbox Navigation & Multi-Account Switcher */}
           <div
+            ref={drawerRef}
+            role={showMobileSidebar ? 'dialog' : undefined}
+            aria-modal={showMobileSidebar ? true : undefined}
+            aria-label={showMobileSidebar ? 'Folders and accounts' : undefined}
             className={`
-              fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-200 ease-out shadow-2xl lg:shadow-none
+              fixed inset-y-0 left-0 z-50 w-64 transform transition-[transform,visibility] duration-200 ease-out shadow-2xl lg:shadow-none
               lg:relative lg:translate-x-0 lg:z-auto
-              ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full'}
+              ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full max-lg:invisible'}
             `}
           >
             <Sidebar
@@ -660,8 +866,7 @@ export const App: React.FC = () => {
               selectedFolder={selectedFolder}
               onSelectFolder={handleSelectFolder}
               onOpenComposer={() => {
-                setComposerInitial({});
-                setIsComposerOpen(true);
+                openComposer({});
                 setShowMobileSidebar(false);
               }}
               onLogout={handleLogout}
@@ -681,6 +886,7 @@ export const App: React.FC = () => {
             />
           </div>
 
+          <main className="flex-1 flex min-w-0 overflow-hidden">
           {/* Middle Pane: Message List */}
           <div
             className={`
@@ -705,14 +911,20 @@ export const App: React.FC = () => {
                 loadMessages();
                 loadFolders();
               }}
+              folderKind={selectedFolderKind}
+              onEmptyFolder={handleEmptyFolder}
               isLoading={isMessagesLoading}
-              searchTerm={searchTerm}
-              onSearchChange={setSearchTerm}
-              filters={searchFilters}
-              onFiltersChange={setSearchFilters}
+              searchTerm={searchInput}
+              onSearchChange={setSearchInput}
+              filters={filterInput}
+              onFiltersChange={setFilterInput}
               onBatchDelete={handleBatchDelete}
               onBatchMarkRead={handleBatchMarkRead}
               onBatchSpam={handleBatchSpam}
+              onBatchRestore={handleBatchRestore}
+              onBatchNotSpam={handleBatchNotSpam}
+              onCompose={() => openComposer({})}
+              isVisible={mobileView === 'list'}
               page={page}
               limit={50}
               onPageChange={setPage}
@@ -735,12 +947,19 @@ export const App: React.FC = () => {
               onDelete={handleDeleteMessage}
               onMove={handleMoveMessage}
               onMarkSpam={handleMarkSpam}
+              folderKind={selectedFolderKind}
+              onRestore={handleRestoreMessage}
+              onNotSpam={handleNotSpam}
+              onEditDraft={handleEditDraft}
+              onShowImages={handleShowImages}
+              isLoadingImages={isLoadingImages}
               onReply={handleReply}
               onForward={handleForward}
               folders={folders}
               onBackToList={() => setMobileView('list')}
             />
           </div>
+          </main>
         </div>
       )}
 
@@ -773,10 +992,18 @@ export const App: React.FC = () => {
 
       {/* Floating Composer Modal */}
       <ComposerModal
+        key={composeId}
         isOpen={isComposerOpen}
-        onClose={() => setIsComposerOpen(false)}
-        onSentSuccess={() => {
-          showToast('Email sent successfully');
+        onClose={() => {
+          setIsComposerOpen(false);
+          loadFolders();
+          if (selectedFolderRef.current.toLowerCase().includes('draft')) loadMessages(true);
+        }}
+        requestConfirm={setConfirmRequest}
+        onSentSuccess={(info) => {
+          if (info?.error) showToast(info.error, 'error');
+          else if (info?.warning) showToast(info.warning, 'error');
+          else showToast('Email sent successfully');
           loadFolders();
           if (selectedFolder.toLowerCase().includes('sent')) {
             loadMessages();
@@ -784,16 +1011,28 @@ export const App: React.FC = () => {
         }}
         initialTo={composerInitial.to}
         initialCc={composerInitial.cc}
+        initialBcc={composerInitial.bcc}
+        isDraft={composerInitial.isDraft}
         initialSubject={composerInitial.subject}
         initialBody={composerInitial.body}
+        replyMeta={composerInitial.meta}
         accountEmail={account?.email}
         accountName={account?.name}
       />
 
-      {/* Toast Notification */}
+      <ConfirmDialog request={confirmRequest} onClose={() => setConfirmRequest(null)} />
+
+      {/* Toast Notification: the live regions are always present so screen readers announce changes */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {toast && toast.type === 'success' ? toast.message : ''}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="true">
+        {toast && toast.type === 'error' ? toast.message : ''}
+      </div>
       {toast && (
         <div
-          className={`fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold z-50 flex items-center gap-2 border transition-all animate-bounce ${
+          aria-hidden="true"
+          className={`fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 w-max max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold z-[70] flex items-center gap-2 border transition-all animate-bounce motion-reduce:animate-none ${
             toast.type === 'error'
               ? 'bg-red-950 text-red-200 border-red-800'
               : 'bg-slate-900 text-white border-slate-700'

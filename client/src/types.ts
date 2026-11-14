@@ -13,6 +13,8 @@ export interface MailboxFolder {
   specialUse?: SpecialUseFolder;
   unreadCount: number;
   totalCount: number;
+  depth?: number;
+  parentPath?: string;
 }
 
 export interface MessageHeader {
@@ -49,6 +51,9 @@ export interface ParsedEmailMessage {
   to: EmailAddress[];
   cc?: EmailAddress[];
   bcc?: EmailAddress[];
+  replyTo?: EmailAddress[];
+  messageId?: string;
+  references?: string[];
   date: string;
   flags: string[];
   isSeen: boolean;
@@ -56,6 +61,7 @@ export interface ParsedEmailMessage {
   html?: string;
   text?: string;
   attachments: EmailAttachment[];
+  blockedImages?: number;
 }
 
 export interface UserAccount {

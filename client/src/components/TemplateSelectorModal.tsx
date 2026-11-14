@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useDialog } from '../hooks/useDialog.js';
 import {
   X,
   FileSpreadsheet,
@@ -104,6 +105,9 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
     }
   };
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, { open: isOpen, onEscape: onClose });
+
   if (!isOpen) return null;
 
   const currentPreview = selectedTemplate
@@ -112,7 +116,13 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 select-none">
-      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[600px]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="templates-title"
+        className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[600px] max-h-full"
+      >
         {/* Header */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-2">
@@ -120,7 +130,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
               <FileSpreadsheet className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold tracking-tight">Email Templates & Canned Responses</h3>
+              <h3 id="templates-title" className="text-sm font-bold tracking-tight">Email Templates & Canned Responses</h3>
               <p className="text-[11px] text-slate-400">Insert pre-written business letters or create custom drafts</p>
             </div>
           </div>
@@ -129,7 +139,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
             <div className="bg-slate-800 p-0.5 rounded-lg flex items-center text-xs">
               <button
                 onClick={() => setActiveTab('gallery')}
-                className={`px-3 py-1 rounded-md font-medium transition-all ${
+                className={`px-3 py-1 min-h-[44px] sm:min-h-0 rounded-md font-medium transition-all ${
                   activeTab === 'gallery' ? 'bg-sky-500 text-white font-semibold' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -137,7 +147,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
               </button>
               <button
                 onClick={() => setActiveTab('create')}
-                className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1 ${
+                className={`px-3 py-1 min-h-[44px] sm:min-h-0 rounded-md font-medium transition-all flex items-center gap-1 ${
                   activeTab === 'create' ? 'bg-sky-500 text-white font-semibold' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -148,7 +158,8 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
 
             <button
               onClick={onClose}
-              className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors ml-2"
+              aria-label="Close templates"
+              className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors ml-2 min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             >
               <X className="w-4 h-4" />
             </button>
@@ -164,9 +175,9 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
 
         {/* Tab 1: Gallery */}
         {activeTab === 'gallery' ? (
-          <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 flex flex-col sm:flex-row overflow-hidden">
             {/* Left Column: Template List */}
-            <div className="w-64 border-r border-slate-200 bg-slate-50/50 p-3 overflow-y-auto space-y-1">
+            <div className="w-full sm:w-64 max-h-40 sm:max-h-none shrink-0 border-b sm:border-b-0 sm:border-r border-r-0 border-slate-200 bg-slate-50/50 p-3 overflow-y-auto space-y-1">
               <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 Available Templates
               </div>
@@ -176,6 +187,15 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                   <div
                     key={tpl.id}
                     onClick={() => handleSelectTemplate(tpl)}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    onKeyDown={(e) => {
+                      if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        handleSelectTemplate(tpl);
+                      }
+                    }}
                     className={`w-full p-2.5 rounded-xl text-left cursor-pointer transition-all border ${
                       isSelected
                         ? 'bg-white border-sky-300 shadow-sm text-slate-900'
@@ -192,6 +212,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                           onClick={(e) => handleDeleteCustom(tpl.id, e)}
                           className="text-slate-300 hover:text-red-500 p-0.5"
                           title="Delete custom template"
+                          aria-label={`Delete template ${tpl.name}`}
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -228,10 +249,11 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                         {selectedTemplate.variables.map((v) => (
                           <div key={v.key}>
-                            <label className="block text-[10px] font-semibold text-slate-600 mb-0.5 capitalize">
+                            <label htmlFor={`tpl-var-${v.key}`} className="block text-[10px] font-semibold text-slate-600 mb-0.5 capitalize">
                               {v.label}
                             </label>
                             <input
+                              id={`tpl-var-${v.key}`}
                               type="text"
                               value={variableValues[v.key] ?? ''}
                               onChange={(e) => handleVariableChange(v.key, e.target.value)}
@@ -263,7 +285,7 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                   <button
                     type="button"
                     onClick={handleApply}
-                    className="flex items-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs px-4 py-2 rounded-xl shadow-md shadow-sky-600/20 transition-all active:scale-[0.98]"
+                    className="flex items-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs px-4 py-2 min-h-[44px] sm:min-h-0 rounded-xl shadow-md shadow-sky-600/20 transition-all active:scale-[0.98]"
                   >
                     <span>Insert into Composer</span>
                     <ChevronRight className="w-3.5 h-3.5" />
@@ -280,8 +302,9 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
           /* Tab 2: Create Custom Template */
           <form onSubmit={handleCreateCustom} className="flex-1 p-6 overflow-y-auto space-y-4 text-xs">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Template Name *</label>
+              <label htmlFor="tpl-name" className="block font-semibold text-slate-700 mb-1">Template Name *</label>
               <input
+                id="tpl-name"
                 type="text"
                 required
                 value={customName}
@@ -292,8 +315,9 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Subject Line *</label>
+              <label htmlFor="tpl-subject" className="block font-semibold text-slate-700 mb-1">Subject Line *</label>
               <input
+                id="tpl-subject"
                 type="text"
                 required
                 value={customSubject}
@@ -307,8 +331,9 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
             </div>
 
             <div className="flex-1 flex flex-col">
-              <label className="block font-semibold text-slate-700 mb-1">Message Body *</label>
+              <label htmlFor="tpl-body" className="block font-semibold text-slate-700 mb-1">Message Body *</label>
               <textarea
+                id="tpl-body"
                 required
                 rows={8}
                 value={customBody}
@@ -322,13 +347,13 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('gallery')}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-colors font-medium"
+                className="px-4 py-2 min-h-[44px] sm:min-h-0 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-colors font-medium"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl shadow-md shadow-sky-600/20 font-semibold transition-all active:scale-[0.98]"
+                className="px-5 py-2 min-h-[44px] sm:min-h-0 bg-sky-600 hover:bg-sky-500 text-white rounded-xl shadow-md shadow-sky-600/20 font-semibold transition-all active:scale-[0.98]"
               >
                 Save Custom Template
               </button>

@@ -15,11 +15,164 @@ import {
   ChevronDown,
   FolderInput,
   ShieldAlert,
-  ArrowLeft
+  ShieldCheck,
+  ArrowLeft,
+  Undo2,
+  Pencil,
+  ImageOff,
+  MoreHorizontal,
+  Archive
 } from 'lucide-react';
 import { format } from 'date-fns';
-import type { ParsedEmailMessage, MailboxFolder, EmailAttachment } from '../types.js';
+import type { ParsedEmailMessage, MailboxFolder, EmailAttachment, SpecialUseFolder } from '../types.js';
 import { api } from '../services/api.js';
+import { useDialog } from '../hooks/useDialog.js';
+
+const TOUCH = 'min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center';
+
+interface MenuItem {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+  onSelect: () => void;
+}
+
+/** The "More" menu: the actions that do not fit on a phone toolbar. */
+const MoreMenu: React.FC<{ items: MenuItem[] }> = ({ items }) => {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const entries = () => Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') || []);
+    entries()[0]?.focus();
+    const close = (refocus: boolean) => {
+      setOpen(false);
+      if (refocus) btnRef.current?.focus();
+    };
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const t = e.target as Node;
+      if (!menuRef.current?.contains(t) && !btnRef.current?.contains(t)) close(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close(true);
+      } else if (e.key === 'Tab') {
+        close(false);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const list = entries();
+        const i = list.indexOf(document.activeElement as HTMLElement);
+        const next = e.key === 'ArrowDown' ? (i + 1) % list.length : (i - 1 + list.length) % list.length;
+        list[next]?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative sm:hidden">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More actions"
+        title="More"
+        className={`p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
+      >
+        <MoreHorizontal className="w-5 h-5" />
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="More actions"
+          className="absolute right-0 mt-1 w-56 max-w-[calc(100vw-1rem)] bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-30"
+        >
+          {items.map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                it.onSelect();
+                btnRef.current?.focus();
+              }}
+              className="w-full min-h-[44px] text-left px-3 py-2 text-sm text-slate-700 hover:bg-sky-50 hover:text-sky-700 flex items-center gap-3"
+            >
+              {it.icon}
+              <span>{it.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** Pick the folder to move the message to. */
+const MoveDialog: React.FC<{
+  open: boolean;
+  folders: MailboxFolder[];
+  currentFolder: string;
+  onPick: (path: string) => void;
+  onClose: () => void;
+}> = ({ open, folders, currentFolder, onPick, onClose }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  useDialog(ref, { open, onEscape: onClose });
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/50 p-0 sm:p-4" onClick={onClose}>
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="move-title"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-xs max-h-[80vh] flex flex-col rounded-t-2xl sm:rounded-xl bg-white shadow-2xl"
+      >
+        <h2 id="move-title" className="px-4 pt-4 pb-2 text-base font-bold text-slate-900">
+          Move to
+        </h2>
+        <div className="flex-1 overflow-y-auto px-2 pb-1">
+          {folders
+            .filter((f) => f.path.toLowerCase() !== currentFolder.toLowerCase())
+            .map((f) => (
+              <button
+                key={f.path}
+                type="button"
+                onClick={() => onPick(f.path)}
+                className="w-full min-h-[44px] text-left px-3 py-2 text-sm text-slate-700 hover:bg-sky-50 hover:text-sky-700 rounded-lg"
+              >
+                <span className="truncate block">{f.name}</span>
+              </button>
+            ))}
+        </div>
+        <div className="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-100 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-[44px] sm:min-h-0 rounded-lg border border-slate-200 px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface MessageViewerProps {
   folderPath: string;
@@ -29,6 +182,14 @@ interface MessageViewerProps {
   onDelete: (uid: number) => void;
   onMove: (uid: number, targetFolder: string) => void;
   onMarkSpam?: (uid: number) => void;
+  /** Kind of the open folder (Trash, Junk, Drafts ...) */
+  folderKind?: SpecialUseFolder;
+  onRestore?: (uid: number) => void;
+  onNotSpam?: (uid: number) => void;
+  onEditDraft?: (message: ParsedEmailMessage) => void;
+  /** Reload this message with remote images allowed. */
+  onShowImages?: (uid: number) => void;
+  isLoadingImages?: boolean;
   onReply: (message: ParsedEmailMessage, replyAll: boolean) => void;
   onForward: (message: ParsedEmailMessage) => void;
   folders: MailboxFolder[];
@@ -43,61 +204,56 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   onDelete,
   onMove,
   onMarkSpam,
+  folderKind,
+  onRestore,
+  onNotSpam,
+  onEditDraft,
+  onShowImages,
+  isLoadingImages,
   onReply,
   onForward,
   folders,
   onBackToList
 }) => {
-  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const [showMove, setShowMove] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [viewMode, setViewMode] = useState<'html' | 'text'>('html');
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Resize iframe to fit content automatically
+  // The mail document carries its own styles (built on the server). The frame has no scripts; it is
+  // same-origin only so that we can read its height. Size it to the content: one page scroll, no inner box.
+  const fitFrame = React.useCallback(() => {
+    const iframe = iframeRef.current;
+    const doc = iframe?.contentDocument;
+    if (!iframe || !doc?.documentElement) return;
+    iframe.style.height = `${Math.max(60, doc.documentElement.scrollHeight)}px`;
+  }, []);
+
   useEffect(() => {
     if (!message || viewMode !== 'html') return;
     const iframe = iframeRef.current;
     if (!iframe) return;
-
-    const handleLoad = () => {
-      try {
-        if (iframe.contentWindow?.document?.body) {
-          const doc = iframe.contentWindow.document;
-          // Apply basic styling to ensure it looks modern and readable
-          const style = doc.createElement('style');
-          style.textContent = `
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-              color: #1e293b;
-              line-height: 1.6;
-              padding: 16px 8px;
-              margin: 0;
-              word-break: break-word;
-            }
-            img { max-width: 100%; height: auto; }
-            a { color: #0284c7; text-decoration: underline; }
-            table { max-width: 100% !important; }
-            blockquote {
-              border-left: 3px solid #cbd5e1;
-              margin: 0.5em 0;
-              padding-left: 12px;
-              color: #64748b;
-            }
-          `;
-          doc.head.appendChild(style);
-
-          // Adjust height
-          const newHeight = Math.max(300, doc.documentElement.scrollHeight);
-          iframe.style.height = `${newHeight}px`;
-        }
-      } catch {
-        // Cross-origin restriction if any
+    let observer: ResizeObserver | undefined;
+    const attach = () => {
+      fitFrame();
+      const doc = iframe.contentDocument;
+      if (!doc?.documentElement) return;
+      observer?.disconnect();
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(fitFrame);
+        observer.observe(doc.documentElement);
+        if (doc.body) observer.observe(doc.body);
       }
     };
-
-    iframe.addEventListener('load', handleLoad);
-    return () => iframe.removeEventListener('load', handleLoad);
-  }, [message, viewMode]);
+    iframe.addEventListener('load', attach);
+    window.addEventListener('resize', fitFrame);
+    if (iframe.contentDocument?.readyState === 'complete') attach();
+    return () => {
+      iframe.removeEventListener('load', attach);
+      window.removeEventListener('resize', fitFrame);
+      observer?.disconnect();
+    };
+  }, [message, viewMode, fitFrame]);
 
   const formatFileSize = (bytes: number): string => {
     if (!bytes || bytes <= 0) return '0 B';
@@ -123,28 +279,30 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
 
   if (isLoading) {
     return (
-      <div className="flex-1 bg-white flex flex-col items-center justify-center text-slate-400 gap-3">
+      <section aria-label="Message" className="flex-1 bg-white flex flex-col items-center justify-center text-slate-400 gap-3 relative" role="status">
         {onBackToList && (
           <button
             onClick={onBackToList}
-            className="absolute top-3 left-3 p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden"
+            aria-label="Back to message list"
+            className={`absolute top-1 left-1 p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden ${TOUCH}`}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
         )}
         <div className="w-8 h-8 rounded-full border-2 border-sky-500 border-t-transparent animate-spin" />
         <span className="text-xs font-medium">Loading message contents...</span>
-      </div>
+      </section>
     );
   }
 
   if (!message) {
     return (
-      <div className="flex-1 bg-slate-50/50 flex flex-col items-center justify-center p-8 text-center select-none relative">
+      <section aria-label="Message" className="flex-1 bg-slate-50/50 flex flex-col items-center justify-center p-8 text-center select-none relative">
         {onBackToList && (
           <button
             onClick={onBackToList}
-            className="absolute top-3 left-3 p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden"
+            aria-label="Back to message list"
+            className={`absolute top-1 left-1 p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden ${TOUCH}`}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -156,7 +314,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
         <p className="text-xs text-slate-400 max-w-xs">
           Choose a message from the list to preview details, inspect attachments, or compose replies.
         </p>
-      </div>
+      </section>
     );
   }
 
@@ -168,184 +326,274 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
     }
   })();
 
+  const archiveFolder = folders.find((f) => f.specialUse === 'Archive');
+  const ctx =
+    folderKind === 'Trash' && onRestore
+      ? { label: 'Restore to Inbox', short: 'Restore', run: () => onRestore(message.uid), icon: Undo2, tone: 'text-sky-700 hover:bg-sky-50 border-sky-200/60' }
+      : folderKind === 'Junk' && onNotSpam
+      ? { label: 'Not spam: move back to Inbox', short: 'Not spam', run: () => onNotSpam(message.uid), icon: ShieldCheck, tone: 'text-emerald-700 hover:bg-emerald-50 border-emerald-200/60' }
+      : folderKind === 'Drafts' && onEditDraft
+      ? { label: 'Continue writing this draft', short: 'Edit draft', run: () => onEditDraft(message), icon: Pencil, tone: 'text-sky-700 hover:bg-sky-50 border-sky-200/60' }
+      : null;
+  const contextAction = ctx ? (
+    <button
+      onClick={ctx.run}
+      title={ctx.label}
+      className={`flex items-center gap-1 px-2 py-1 text-xs rounded-lg transition-colors border ${ctx.tone}`}
+    >
+      <ctx.icon className="w-3.5 h-3.5" />
+      <span className="hidden md:inline font-medium">{ctx.short}</span>
+      <span className="sr-only md:hidden">{ctx.short}</span>
+    </button>
+  ) : null;
+  const contextActionWide = ctx ? (
+    <button
+      onClick={ctx.run}
+      className={`flex items-center gap-2 px-3 min-h-[44px] text-sm font-medium rounded-lg transition-colors border ${ctx.tone}`}
+    >
+      <ctx.icon className="w-4 h-4" />
+      <span>{ctx.short}</span>
+    </button>
+  ) : null;
+
+  const moreItems: MenuItem[] = [
+    {
+      key: 'unread',
+      label: 'Mark as unread',
+      icon: <Mail className="w-4 h-4" />,
+      onSelect: () => onToggleFlag(message.uid, 'isSeen')
+    },
+    {
+      key: 'star',
+      label: message.isFlagged ? 'Remove star' : 'Add star',
+      icon: <Star className={`w-4 h-4 ${message.isFlagged ? 'text-amber-500 fill-amber-500' : ''}`} />,
+      onSelect: () => onToggleFlag(message.uid, 'isFlagged')
+    }
+  ];
+  if (archiveFolder && folderKind !== 'Archive') {
+    moreItems.push({
+      key: 'archive',
+      label: 'Archive',
+      icon: <Archive className="w-4 h-4" />,
+      onSelect: () => onMove(message.uid, archiveFolder.path)
+    });
+  }
+  if (onMarkSpam && folderKind !== 'Junk' && folderKind !== 'Drafts') {
+    moreItems.push({
+      key: 'spam',
+      label: 'Mark as spam',
+      icon: <ShieldAlert className="w-4 h-4 text-amber-600" />,
+      onSelect: () => onMarkSpam(message.uid)
+    });
+  }
+  if (message.html && message.text) {
+    moreItems.push({
+      key: 'format',
+      label: viewMode === 'html' ? 'View as plain text' : 'View as HTML',
+      icon: <FileText className="w-4 h-4" />,
+      onSelect: () => setViewMode(viewMode === 'html' ? 'text' : 'html')
+    });
+  }
+  moreItems.push({ key: 'print', label: 'Print', icon: <Printer className="w-4 h-4" />, onSelect: handlePrint });
+
   return (
-    <div className="flex-1 bg-white flex flex-col h-full overflow-hidden">
-      {/* Top Action Toolbar */}
-      <div className="px-3 sm:px-6 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
-        <div className="flex items-center gap-1">
+    <section aria-labelledby="message-subject" className="flex-1 min-w-0 bg-white flex flex-col h-full overflow-hidden">
+      {/* Top Action Toolbar: on a phone only the main actions show; the rest are under "More" */}
+      <div
+        role="toolbar"
+        aria-label="Message actions"
+        className="px-1 sm:px-6 py-1 sm:py-2.5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0"
+      >
+        <div className="flex items-center gap-0 sm:gap-1 min-w-0">
           {onBackToList && (
             <button
               onClick={onBackToList}
               title="Back to list"
-              className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden mr-1"
+              aria-label="Back to message list"
+              className={`text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors md:hidden sm:mr-1 ${TOUCH}`}
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-5 h-5" />
             </button>
           )}
           <button
             onClick={() => onReply(message, false)}
             title="Reply"
-            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            aria-label="Reply"
+            className={`gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
           >
-            <Reply className="w-3.5 h-3.5" />
+            <Reply className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             <span className="hidden sm:inline">Reply</span>
           </button>
           <button
             onClick={() => onReply(message, true)}
             title="Reply All"
-            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            aria-label="Reply all"
+            className={`gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
           >
-            <ReplyAll className="w-3.5 h-3.5" />
+            <ReplyAll className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             <span className="hidden sm:inline">Reply All</span>
           </button>
           <button
             onClick={() => onForward(message)}
             title="Forward"
-            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            aria-label="Forward"
+            className={`gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
           >
-            <Forward className="w-3.5 h-3.5" />
+            <Forward className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             <span className="hidden sm:inline">Forward</span>
           </button>
 
-          <div className="h-4 w-[1px] bg-slate-200 mx-1.5" />
-
-          {/* Move to Folder Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowMoveMenu(!showMoveMenu)}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-              title="Move to folder"
-            >
-              <FolderInput className="w-3.5 h-3.5" />
-              <ChevronDown className="w-3 h-3 text-slate-400" />
-            </button>
-            {showMoveMenu && (
-              <div className="absolute left-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-20">
-                <div className="px-3 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Move to
-                </div>
-                {folders
-                  .filter((f) => f.path.toLowerCase() !== folderPath.toLowerCase())
-                  .map((f) => (
-                    <button
-                      key={f.path}
-                      onClick={() => {
-                        onMove(message.uid, f.path);
-                        setShowMoveMenu(false);
-                      }}
-                      className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-sky-50 hover:text-sky-700 flex items-center gap-2"
-                    >
-                      <span className="truncate">{f.name}</span>
-                    </button>
-                  ))}
-              </div>
-            )}
-          </div>
+          <div className="hidden sm:block h-4 w-[1px] bg-slate-200 mx-1.5" />
 
           <button
-            onClick={() => onToggleFlag(message.uid, 'isSeen')}
-            title="Mark as unread"
-            className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+            onClick={() => setShowMove(true)}
+            aria-haspopup="dialog"
+            className={`gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors ${TOUCH}`}
+            title="Move to folder"
+            aria-label="Move to folder"
           >
-            <Mail className="w-3.5 h-3.5" />
+            <FolderInput className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+            <ChevronDown className="w-3 h-3 text-slate-400 hidden sm:block" />
           </button>
-          <button
-            onClick={() => onToggleFlag(message.uid, 'isFlagged')}
-            title={message.isFlagged ? 'Unstar' : 'Star'}
-            className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <Star
-              className={`w-3.5 h-3.5 ${
-                message.isFlagged ? 'text-amber-500 fill-amber-500' : 'text-slate-400'
-              }`}
-            />
-          </button>
+
           <button
             onClick={() => onDelete(message.uid)}
-            title="Delete"
-            className="p-1.5 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            title={folderKind === 'Trash' ? 'Delete forever' : 'Move to Trash'}
+            aria-label={folderKind === 'Trash' ? 'Delete forever' : 'Move to Trash'}
+            className={`p-1.5 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors sm:order-last ${TOUCH}`}
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
           </button>
-          {onMarkSpam && (
+
+          {/* Wider screens: the rest of the actions stay on the toolbar */}
+          <div className="hidden sm:contents">
             <button
-              onClick={() => onMarkSpam(message.uid)}
-              title="Mark as Spam / Move to Junk"
-              className="flex items-center gap-1 px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded-lg transition-colors border border-amber-200/50"
+              onClick={() => onToggleFlag(message.uid, 'isSeen')}
+              title="Mark as unread"
+              aria-label="Mark as unread"
+              className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
             >
-              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-              <span className="hidden md:inline font-medium">Spam</span>
+              <Mail className="w-3.5 h-3.5" />
             </button>
-          )}
+            <button
+              onClick={() => onToggleFlag(message.uid, 'isFlagged')}
+              title={message.isFlagged ? 'Unstar' : 'Star'}
+              aria-label={message.isFlagged ? 'Unstar' : 'Star'}
+              aria-pressed={!!message.isFlagged}
+              className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+            >
+              <Star
+                className={`w-3.5 h-3.5 ${
+                  message.isFlagged ? 'text-amber-500 fill-amber-500' : 'text-slate-400'
+                }`}
+              />
+            </button>
+            {contextAction}
+            {onMarkSpam && folderKind !== 'Junk' && folderKind !== 'Drafts' && (
+              <button
+                onClick={() => onMarkSpam(message.uid)}
+                title="Mark as Spam / Move to Junk"
+                className="flex items-center gap-1 px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded-lg transition-colors border border-amber-200/50"
+              >
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                <span className="hidden md:inline font-medium">Spam</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {message.html && message.text && (
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-[11px] font-medium text-slate-600">
-              <button
-                onClick={() => setViewMode('html')}
-                className={`px-2 py-0.5 rounded ${
-                  viewMode === 'html' ? 'bg-white shadow-sm font-semibold text-sky-700' : ''
-                }`}
-              >
-                HTML
-              </button>
-              <button
-                onClick={() => setViewMode('text')}
-                className={`px-2 py-0.5 rounded ${
-                  viewMode === 'text' ? 'bg-white shadow-sm font-semibold text-sky-700' : ''
-                }`}
-              >
-                Plain Text
-              </button>
-            </div>
-          )}
-          <button
-            onClick={handlePrint}
-            title="Print message"
-            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <Printer className="w-3.5 h-3.5" />
-          </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="hidden sm:flex items-center gap-2">
+            {message.html && message.text && (
+              <div role="group" aria-label="Message format" className="flex items-center bg-slate-100 p-0.5 rounded-lg text-[11px] font-medium text-slate-600">
+                <button
+                  onClick={() => setViewMode('html')}
+                  aria-pressed={viewMode === 'html'}
+                  className={`px-2 py-0.5 rounded ${
+                    viewMode === 'html' ? 'bg-white shadow-sm font-semibold text-sky-700' : ''
+                  }`}
+                >
+                  HTML
+                </button>
+                <button
+                  onClick={() => setViewMode('text')}
+                  aria-pressed={viewMode === 'text'}
+                  className={`px-2 py-0.5 rounded ${
+                    viewMode === 'text' ? 'bg-white shadow-sm font-semibold text-sky-700' : ''
+                  }`}
+                >
+                  Plain Text
+                </button>
+              </div>
+            )}
+            <button
+              onClick={handlePrint}
+              title="Print message"
+              aria-label="Print message"
+              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+            >
+              <Printer className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <MoreMenu items={moreItems} />
         </div>
       </div>
 
+      {/* Phone: the one action this folder is mostly for (Restore, Not spam, Edit draft) */}
+      {contextAction && (
+        <div className="sm:hidden px-3 py-1 border-b border-slate-100 flex items-center gap-2 bg-white shrink-0">
+          {contextActionWide}
+        </div>
+      )}
+
+      <MoveDialog
+        open={showMove}
+        folders={folders}
+        currentFolder={folderPath}
+        onClose={() => setShowMove(false)}
+        onPick={(path) => {
+          setShowMove(false);
+          onMove(message.uid, path);
+        }}
+      />
+
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-4 sm:py-6">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 sm:px-8 py-4 sm:py-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {/* Subject Header */}
-        <h2 className="text-lg sm:text-xl font-bold text-slate-900 mb-4 tracking-tight leading-snug">
+        <h2 id="message-subject" className="text-lg sm:text-xl font-bold text-slate-900 mb-4 tracking-tight leading-snug break-words">
           {message.subject || '(No subject)'}
         </h2>
 
         {/* Sender & Recipient Information */}
         <div className="flex flex-col sm:flex-row sm:items-start justify-between pb-4 border-b border-slate-100 mb-6 gap-2 sm:gap-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-sm">
               {(message.from.name || message.from.address || '?').charAt(0).toUpperCase()}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-sm text-slate-900">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2">
+                <span className="font-bold text-sm text-slate-900 break-words">
                   {message.from.name || message.from.address}
                 </span>
-                <span className="text-xs text-slate-400">&lt;{message.from.address}&gt;</span>
+                <span className="text-xs text-slate-400 break-all">&lt;{message.from.address}&gt;</span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-0.5">
                 <span>to</span>
-                <span className="font-medium text-slate-700">
+                <span className="font-medium text-slate-700 break-words min-w-0">
                   {message.to.map((t) => t.name || t.address).join(', ')}
                 </span>
                 {(message.cc && message.cc.length > 0) || (message.bcc && message.bcc.length > 0) ? (
                   <button
                     onClick={() => setShowDetails(!showDetails)}
-                    className="text-sky-600 hover:underline text-[11px] ml-1 font-medium"
+                    aria-expanded={showDetails}
+                    className="text-sky-600 hover:underline text-[11px] ml-1 font-medium min-h-[44px] sm:min-h-0 px-1"
                   >
                     {showDetails ? 'Hide details' : 'Show details'}
                   </button>
                 ) : null}
               </div>
               {showDetails && (
-                <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-200/60 space-y-1">
+                <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-200/60 space-y-1 break-words">
                   <div>
                     <span className="font-semibold text-slate-600">From:</span> {message.from.name}{' '}
                     &lt;{message.from.address}&gt;
@@ -391,10 +639,11 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
                   <a
                     key={att.partId}
                     href={downloadUrl}
-                    download={att.filename}
+                    download
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-sky-300 hover:shadow-sm transition-all group"
+                    aria-label={`Download ${att.filename}, ${formatFileSize(att.size)}`}
+                    className="flex items-center gap-3 p-3 min-h-[44px] bg-white rounded-lg border border-slate-200 hover:border-sky-300 hover:shadow-sm transition-all group"
                   >
                     <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-sky-50 transition-colors">
                       {getAttachmentIcon(att)}
@@ -414,23 +663,38 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
         )}
 
         {/* Email Body */}
-        <div className="email-body min-h-[300px]">
+        <div className="email-body">
+          {viewMode === 'html' && message.html && (message.blockedImages || 0) > 0 && onShowImages && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <ImageOff className="w-4 h-4 shrink-0" />
+              <span className="flex-1">Images hidden to protect your privacy.</span>
+              <button
+                onClick={() => onShowImages(message.uid)}
+                disabled={isLoadingImages}
+                className="font-semibold text-sky-700 underline hover:text-sky-900 disabled:opacity-50 min-h-[44px] sm:min-h-0 px-1"
+              >
+                {isLoadingImages ? 'Loading...' : 'Show images'}
+              </button>
+            </div>
+          )}
           {viewMode === 'html' && message.html ? (
             <iframe
+              key={`${message.uid}-${message.blockedImages || 0}`}
               ref={iframeRef}
               title="Email body"
               srcDoc={message.html}
-              sandbox="allow-popups allow-popups-to-escape-sandbox"
-              className="w-full border-0 rounded"
-              style={{ minHeight: '350px' }}
+              sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+              scrolling="no"
+              className="w-full border-0 block"
+              style={{ height: '120px' }}
             />
           ) : (
-            <div className="whitespace-pre-wrap font-sans text-sm text-slate-800 leading-relaxed bg-slate-50/40 p-4 rounded-xl border border-slate-100">
+            <div className="whitespace-pre-wrap break-words font-sans text-sm text-slate-800 leading-relaxed bg-slate-50/40 p-4 rounded-xl border border-slate-100">
               {message.text || 'No text content available for this message.'}
             </div>
           )}
         </div>
       </div>
-    </div>
+    </section>
   );
 };

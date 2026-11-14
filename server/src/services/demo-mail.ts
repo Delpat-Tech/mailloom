@@ -453,6 +453,12 @@ class DemoMailService {
     return true;
   }
 
+  emptyFolder(path: string): number {
+    const before = this.messages.length;
+    this.messages = this.messages.filter((m) => m.folder !== path);
+    return before - this.messages.length;
+  }
+
   sendEmail(payload: SendEmailPayload, senderEmail: string, senderName = 'Me'): MessageHeader {
     const newUid = Math.max(...this.messages.map((m) => m.uid), 999) + 1;
     const dateStr = new Date().toISOString();
@@ -460,7 +466,7 @@ class DemoMailService {
       partId: `sent.${i}`,
       filename: att.filename,
       contentType: att.contentType || 'application/octet-stream',
-      size: Buffer.from(att.content, 'base64').length,
+      size: att.content.length,
       isInline: false
     }));
 

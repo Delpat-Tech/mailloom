@@ -1,3 +1,4 @@
+import { friendlyError } from './errors.js';
 import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount, StoredAccountProfile } from '../types.js';
 
 /*
@@ -190,11 +191,18 @@ export async function request<T>(endpoint: string, options: RequestOptions = {})
 
   if (!res.ok) {
     const errorBody = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-    const err = new ApiError(
-      errorBody.error || `Request failed (${res.status}${res.statusText ? ` ${res.statusText}` : ''})`,
-      res.status,
-      errorBody.code
-    );
+    // Anything technical the server (or a proxy) sent is replaced by a plain sentence; status and code stay on the error.
+    const fallback =
+      res.status === 401
+        ? 'You have been signed out. Sign in again to continue.'
+        : res.status === 404
+          ? 'That is no longer there.'
+          : res.status === 429
+            ? 'Too many requests at once. Wait a moment and try again.'
+            : res.status >= 500
+              ? 'The mail server is having trouble. Try again in a moment.'
+              : 'That did not work. Please try again.';
+    const err = new ApiError(friendlyError(errorBody.error || '', fallback), res.status, errorBody.code);
     if (handle && isSessionEndedError(err)) {
       const email = readAccounts().find((a) => a.handle === handle)?.email;
       window.dispatchEvent(
@@ -212,6 +220,19 @@ export function onSessionExpired(listener: (detail: SessionExpiredDetail) => voi
   const handler = (e: Event) => listener((e as CustomEvent<SessionExpiredDetail>).detail);
   window.addEventListener(SESSION_EXPIRED_EVENT, handler);
   return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handler);
+}
+
+export interface SendEmailResponse {
+  /** true only when every recipient accepted the mail */
+  success: boolean;
+  messageId?: string;
+  accepted?: string[];
+  rejected?: string[];
+  sentCopySaved?: boolean;
+  /** sent, but the Sent copy could not be saved */
+  warning?: string;
+  /** set when some recipients did not receive the mail */
+  error?: string;
 }
 
 export interface SearchFilterParams {
@@ -289,9 +310,14 @@ export const api = {
     });
   },
 
-  getMessageDetail: async (folderPath: string, uid: number): Promise<ParsedEmailMessage> => {
+  getMessageDetail: async (
+    folderPath: string,
+    uid: number,
+    options: { showImages?: boolean } = {}
+  ): Promise<ParsedEmailMessage> => {
     const encoded = encodeURIComponent(folderPath);
-    return request<ParsedEmailMessage>(`/mailboxes/${encoded}/messages/${uid}`);
+    const q = options.showImages ? '?images=1' : '';
+    return request<ParsedEmailMessage>(`/mailboxes/${encoded}/messages/${uid}${q}`);
   },
 
   toggleFlag: async (
@@ -319,11 +345,48 @@ export const api = {
     });
   },
 
-  deleteMessage: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
+  /** Moves to Trash; inside Trash it deletes for good (permanent: true). */
+  deleteMessage: async (
+    folderPath: string,
+    uid: number
+  ): Promise<{ success: boolean; permanent?: boolean; movedTo?: string }> => {
     const encoded = encodeURIComponent(folderPath);
-    return request<{ success: boolean }>(`/mailboxes/${encoded}/messages/${uid}`, {
-      method: 'DELETE'
-    });
+    return request(`/mailboxes/${encoded}/messages/${uid}`, { method: 'DELETE' });
+  },
+
+  /** Trash -> Inbox */
+  restoreMessage: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
+    const encoded = encodeURIComponent(folderPath);
+    return request(`/mailboxes/${encoded}/messages/${uid}/restore`, { method: 'POST' });
+  },
+
+  /** Junk -> Inbox */
+  notSpam: async (folderPath: string, uid: number): Promise<{ success: boolean }> => {
+    const encoded = encodeURIComponent(folderPath);
+    return request(`/mailboxes/${encoded}/messages/${uid}/not-spam`, { method: 'POST' });
+  },
+
+  /** Permanently deletes everything in Trash or Junk. */
+  emptyFolder: async (folderPath: string): Promise<{ success: boolean; deleted: number }> => {
+    const encoded = encodeURIComponent(folderPath);
+    return request(`/mailboxes/${encoded}/empty`, { method: 'POST' });
+  },
+
+  saveDraft: async (draft: {
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject: string;
+    text: string;
+    inReplyTo?: string;
+    references?: string[];
+    replaceUid?: number;
+  }): Promise<{ success: boolean; uid: number; folder: string }> => {
+    return request('/drafts', { method: 'POST', body: JSON.stringify(draft) });
+  },
+
+  deleteDraft: async (uid: number): Promise<{ success: boolean }> => {
+    return request(`/drafts/${uid}`, { method: 'DELETE' });
   },
 
   sendEmail: async (payload: {
@@ -331,13 +394,22 @@ export const api = {
     cc?: string[];
     bcc?: string[];
     subject: string;
-    text?: string;
-    html?: string;
-    attachments?: Array<{ filename: string; content: string; contentType?: string }>;
-  }): Promise<{ success: boolean }> => {
-    return request<{ success: boolean }>('/messages/send', {
+    text: string;
+    inReplyTo?: string;
+    references?: string[];
+    forwardOf?: { folder: string; uid: number };
+    idempotencyKey?: string;
+    draftUid?: number;
+    files?: File[];
+  }): Promise<SendEmailResponse> => {
+    const { files = [], ...fields } = payload;
+    const form = new FormData();
+    form.append('payload', JSON.stringify(fields));
+    for (const f of files) form.append('attachments', f, f.name);
+    return request<SendEmailResponse>('/messages/send', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      headers: payload.idempotencyKey ? { 'Idempotency-Key': payload.idempotencyKey } : undefined,
+      body: form
     });
   },
 

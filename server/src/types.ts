@@ -27,6 +27,8 @@ export interface AccountConfig {
   };
   // Server-side session this config belongs to; keys the IMAP connection pool.
   sessionKey?: string;
+  // Largest outgoing message / attachment total in bytes, from server config (MAIL_MAX_MESSAGE_BYTES).
+  maxMessageBytes?: number;
   // Mode flag
   isDemo?: boolean;
 }
@@ -41,6 +43,9 @@ export interface MailboxFolder {
   specialUse?: SpecialUseFolder;
   unreadCount: number;
   totalCount: number;
+  /** 0 for top-level folders, 1 for a child, ... */
+  depth?: number;
+  parentPath?: string;
 }
 
 export interface MessageHeader {
@@ -78,6 +83,8 @@ export interface ParsedEmailMessage {
   cc?: EmailAddress[];
   bcc?: EmailAddress[];
   replyTo?: EmailAddress[];
+  messageId?: string;
+  references?: string[];
   date: string;
   flags: string[];
   isSeen: boolean;
@@ -85,7 +92,15 @@ export interface ParsedEmailMessage {
   html?: string;
   text?: string;
   attachments: EmailAttachment[];
+  /** Remote images that were blocked in this view (0 or missing: none). */
+  blockedImages?: number;
   headers?: Record<string, string | string[]>;
+}
+
+export interface SendAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
 }
 
 export interface SendEmailPayload {
@@ -94,10 +109,25 @@ export interface SendEmailPayload {
   bcc?: string[];
   subject: string;
   text?: string;
+  /** Ignored by the server when text is given: HTML is built from the escaped text. */
   html?: string;
-  attachments?: Array<{
-    filename: string;
-    content: string; // base64 encoded
-    contentType?: string;
-  }>;
+  attachments?: SendAttachment[];
+  /** Message-ID of the mail being answered (with or without angle brackets). */
+  inReplyTo?: string;
+  /** References header of the mail being answered. */
+  references?: string[];
+  /** Forward: attach the original attachments of this message. */
+  forwardOf?: { folder: string; uid: number };
+  /** Client-chosen key; a retry with the same key never sends twice. */
+  idempotencyKey?: string;
+  /** Draft to delete once the mail is sent. */
+  draftUid?: number;
+}
+
+export interface SendResult {
+  messageId: string;
+  accepted: string[];
+  rejected: string[];
+  sentCopySaved: boolean;
+  sentCopyError?: string;
 }

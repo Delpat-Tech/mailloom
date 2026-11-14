@@ -132,6 +132,7 @@ export function accountConfigFor(session: Session, config: AppConfig): AccountCo
     smtpPass: session.password,
     tls: { ...mail.tls },
     sessionKey: session.key,
+    maxMessageBytes: config.maxMessageBytes,
     isDemo: session.isDemo
   };
 }

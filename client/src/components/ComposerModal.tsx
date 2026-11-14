@@ -11,7 +11,10 @@ import {
   PenTool
 } from 'lucide-react';
 import { api } from '../services/api.js';
+import { friendlyError } from '../services/errors.js';
+import { useDialog } from '../hooks/useDialog.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
+import type { ConfirmRequest } from './ConfirmDialog.js';
 import {
   getSignatureForAccount,
   saveSignatureForAccount,
@@ -20,46 +23,103 @@ import {
 } from '../services/signatures.js';
 
 interface ComposerAttachment {
+  file: File;
   filename: string;
-  content: string; // base64
   size: number;
-  contentType: string;
+}
+
+// Largest total attachment size; the server enforces the real limit (MAIL_MAX_MESSAGE_BYTES).
+const MAX_ATTACHMENT_BYTES =
+  Number(import.meta.env.VITE_MAIL_MAX_MESSAGE_BYTES) > 0
+    ? Number(import.meta.env.VITE_MAIL_MAX_MESSAGE_BYTES)
+    : 10 * 1024 * 1024;
+
+export interface SentInfo {
+  /** Set when the mail was sent but something needs the user's attention. */
+  warning?: string;
+  /** Set when some recipients did not receive the mail. */
+  error?: string;
+}
+
+export interface ComposerReplyMeta {
+  inReplyTo?: string;
+  references?: string[];
+  forwardOf?: { folder: string; uid: number };
+  /** Names of original attachments the server will add to a forward. */
+  forwardedAttachmentNames?: string[];
+  /** UID of the saved draft this composer was opened from. */
+  draftUid?: number;
 }
 
 interface ComposerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSentSuccess: () => void;
+  onSentSuccess: (info?: SentInfo) => void;
+  /**
+   * The composer fills its form once, when it mounts. Give it a new React `key`
+   * for every message you open so each one starts clean.
+   */
   initialTo?: string[];
   initialCc?: string[];
+  initialBcc?: string[];
+  /** Opened from the Drafts folder: the body is used as it is (no signature added). */
+  isDraft?: boolean;
+  /** Ask the user to confirm (discard / save draft). */
+  requestConfirm: (request: ConfirmRequest) => void;
   initialSubject?: string;
   initialBody?: string;
+  replyMeta?: ComposerReplyMeta;
   accountEmail?: string;
   accountName?: string;
+}
+
+function buildInitialBody(initialBody: string, sigText: string): string {
+  if (!sigText) return initialBody;
+  if (!initialBody) return `\n\n${sigText}`;
+  // Quoted/forwarded text: put the signature above it.
+  if (initialBody.startsWith('\n\n---') || initialBody.startsWith('\n\n----------')) {
+    return `\n\n${sigText}${initialBody}`;
+  }
+  return initialBody;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export const ComposerModal: React.FC<ComposerModalProps> = ({
   isOpen,
   onClose,
   onSentSuccess,
-  initialTo = [],
-  initialCc = [],
+  initialTo,
+  initialCc,
+  initialBcc,
+  isDraft = false,
+  requestConfirm,
   initialSubject = '',
   initialBody = '',
+  replyMeta,
   accountEmail = '',
   accountName = ''
 }) => {
   const [toInput, setToInput] = useState('');
-  const [toList, setToList] = useState<string[]>(initialTo);
-  const [showCc, setShowCc] = useState(initialCc.length > 0);
+  const [toList, setToList] = useState<string[]>(() => initialTo ?? []);
+  const [showCc, setShowCc] = useState((initialCc ?? []).length > 0);
   const [ccInput, setCcInput] = useState('');
-  const [ccList, setCcList] = useState<string[]>(initialCc);
-  const [showBcc, setShowBcc] = useState(false);
+  const [ccList, setCcList] = useState<string[]>(() => initialCc ?? []);
+  const [showBcc, setShowBcc] = useState((initialBcc ?? []).length > 0);
   const [bccInput, setBccInput] = useState('');
-  const [bccList, setBccList] = useState<string[]>([]);
+  const [bccList, setBccList] = useState<string[]>(() => initialBcc ?? []);
   const [subject, setSubject] = useState(initialSubject);
-  const [body, setBody] = useState(initialBody);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  // One key per composed message: a retried request never sends twice.
+  const idempotencyKey = useRef<string>(
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
   const [isSending, setIsSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -70,34 +130,140 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     getSignatureForAccount(accountEmail, accountName)
   );
   const [sigForm, setSigForm] = useState<AccountSignature>(signature);
+  const [body, setBody] = useState(() =>
+    isDraft ? initialBody : buildInitialBody(initialBody, formatSignatureText(signature))
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const sigRef = useRef<HTMLDivElement>(null);
+  const toInputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
-  // Sync initial props when opened or changed
-  useEffect(() => {
-    if (isOpen) {
-      setToList(initialTo);
-      setCcList(initialCc);
-      setShowCc(initialCc.length > 0);
-      setSubject(initialSubject);
+  // ---- Drafts: autosave every 10 s while there are changes ----
+  const draftUidRef = useRef<number | undefined>(replyMeta?.draftUid);
+  const [draftStatus, setDraftStatus] = useState<{ text: string; error: boolean } | null>(null);
+  const savingRef = useRef(false);
+  const sentRef = useRef(false);
 
-      const currentSig = getSignatureForAccount(accountEmail, accountName);
-      setSignature(currentSig);
-      setSigForm(currentSig);
-      const sigText = formatSignatureText(currentSig);
+  const snapshot = () =>
+    JSON.stringify({
+      to: [...toList, toInput.trim()].filter(Boolean),
+      cc: [...ccList, ccInput.trim()].filter(Boolean),
+      bcc: [...bccList, bccInput.trim()].filter(Boolean),
+      subject,
+      body
+    });
+  const initialSnap = useRef<string | null>(null);
+  if (initialSnap.current === null) initialSnap.current = snapshot();
+  const lastSavedSnap = useRef<string>(initialSnap.current);
+  const hasContent = () => attachments.length > 0 || snapshot() !== initialSnap.current;
 
-      let fullBody = initialBody;
-      if (!initialBody && sigText) {
-        fullBody = `\n\n${sigText}`;
-      } else if (initialBody && sigText && !initialBody.includes(currentSig.name)) {
-        if (initialBody.startsWith('\n\n---') || initialBody.startsWith('\n\n----------')) {
-          fullBody = `\n\n${sigText}${initialBody}`;
-        }
-      }
-      setBody(fullBody);
-      setErrorMsg(null);
+  /** Saves the draft; returns true when it is stored (or there was nothing new to store). */
+  const saveDraftNow = async (): Promise<boolean> => {
+    if (sentRef.current || savingRef.current) return true;
+    const snap = snapshot();
+    if (snap === lastSavedSnap.current) return true;
+    const data = JSON.parse(snap) as { to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
+    savingRef.current = true;
+    try {
+      const res = await api.saveDraft({
+        to: data.to,
+        cc: data.cc,
+        bcc: data.bcc,
+        subject: data.subject,
+        text: data.body,
+        inReplyTo: replyMeta?.inReplyTo,
+        references: replyMeta?.references,
+        replaceUid: draftUidRef.current
+      });
+      if (!res.success) throw new Error('The draft could not be saved.');
+      draftUidRef.current = res.uid;
+      lastSavedSnap.current = snap;
+      setDraftStatus({ text: `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, error: false });
+      return true;
+    } catch (err: unknown) {
+      setDraftStatus({ text: `Draft not saved. ${friendlyError(err, 'Try again in a moment.')}`, error: true });
+      return false;
+    } finally {
+      savingRef.current = false;
     }
-  }, [isOpen, initialTo, initialCc, initialSubject, initialBody, accountEmail, accountName]);
+  };
+  const saveDraftRef = useRef(saveDraftNow);
+  saveDraftRef.current = saveDraftNow;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const id = setInterval(() => {
+      void saveDraftRef.current();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [isOpen]);
+
+  /** Remove the saved draft (if any) and close. Stays open if the draft could not be removed. */
+  const discardAndClose = async () => {
+    sentRef.current = true; // no more autosaves
+    if (draftUidRef.current) {
+      try {
+        await api.deleteDraft(draftUidRef.current);
+      } catch (err: unknown) {
+        sentRef.current = false;
+        setErrorMsg(`The saved draft could not be deleted. ${friendlyError(err, 'Try again in a moment.')}`);
+        return;
+      }
+    }
+    onClose();
+  };
+
+  // Trash icon: discard the message (and its saved draft), after confirming when there is something to lose.
+  const handleDiscard = () => {
+    if (!hasContent() && !draftUidRef.current) {
+      onClose();
+      return;
+    }
+    requestConfirm({
+      title: 'Discard this message?',
+      message: draftUidRef.current ? 'The message and its saved draft will be deleted.' : 'What you wrote will be lost.',
+      confirmLabel: 'Discard',
+      danger: true,
+      onConfirm: () => void discardAndClose()
+    });
+  };
+
+  // X button: keep as a draft, discard, or keep editing.
+  const handleCloseClick = () => {
+    const unsaved = snapshot() !== lastSavedSnap.current;
+    if (!unsaved && (draftUidRef.current || !hasContent())) {
+      sentRef.current = true;
+      onClose();
+      return;
+    }
+    requestConfirm({
+      title: 'Save this message as a draft?',
+      message: attachments.length > 0 ? 'Attachments are not kept in drafts.' : 'You can continue it later from the Drafts folder.',
+      confirmLabel: 'Save draft',
+      alternateLabel: 'Discard',
+      onConfirm: () => {
+        void saveDraftNow().then((ok) => {
+          if (ok) {
+            sentRef.current = true;
+            onClose();
+          } else {
+            setErrorMsg('The draft could not be saved, so the message is still open.');
+          }
+        });
+      },
+      onAlternate: () => void discardAndClose()
+    });
+  };
+
+  useDialog(panelRef, {
+    open: isOpen,
+    onEscape: handleCloseClick, // asks what to do with the content, if there is any
+    initialFocus: () => (toList.length === 0 ? toInputRef.current : bodyRef.current)
+  });
+
+  useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
 
   if (!isOpen) return null;
 
@@ -125,30 +291,27 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     if (type === 'bcc') setBccList(bccList.filter((_, i) => i !== index));
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-    const files = Array.from(e.target.files);
-
-    for (const file of files) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        // Strip data:contentType;base64, prefix
-        const base64 = result.split(',')[1] || '';
-        setAttachments((prev) => [
-          ...prev,
-          {
-            filename: file.name,
-            content: base64,
-            size: file.size,
-            contentType: file.type || 'application/octet-stream'
-          }
-        ]);
-      };
-      reader.readAsDataURL(file);
-    }
-    // reset input
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (files.length === 0) return;
+
+    const limitText = formatFileSize(MAX_ATTACHMENT_BYTES);
+    let total = attachments.reduce((n, a) => n + a.size, 0);
+    const accepted: ComposerAttachment[] = [];
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setErrorMsg(`"${file.name}" is ${formatFileSize(file.size)}. Attachments can be at most ${limitText} in total.`);
+        continue;
+      }
+      if (total + file.size > MAX_ATTACHMENT_BYTES) {
+        setErrorMsg(`"${file.name}" was not added: attachments can be at most ${limitText} in total.`);
+        continue;
+      }
+      total += file.size;
+      accepted.push({ file, filename: file.name, size: file.size });
+    }
+    if (accepted.length > 0) setAttachments((prev) => [...prev, ...accepted]);
   };
 
   const removeAttachment = (index: number) => {
@@ -180,29 +343,33 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     }
 
     setIsSending(true);
+    sentRef.current = true; // no autosave while sending
+    const draftUidAtSend = draftUidRef.current;
     try {
-      // Prepare payload
-      const htmlBody = body.replace(/\n/g, '<br/>');
-      await api.sendEmail({
+      const res = await api.sendEmail({
         to: finalTo,
         cc: finalCc.length > 0 ? finalCc : undefined,
         bcc: finalBcc.length > 0 ? finalBcc : undefined,
         subject: subject.trim() || '(No subject)',
         text: body,
-        html: htmlBody,
-        attachments: attachments.map((a) => ({
-          filename: a.filename,
-          content: a.content,
-          contentType: a.contentType
-        }))
+        inReplyTo: replyMeta?.inReplyTo,
+        references: replyMeta?.references,
+        forwardOf: replyMeta?.forwardOf,
+        idempotencyKey: idempotencyKey.current,
+        draftUid: draftUidRef.current,
+        files: attachments.map((a) => a.file)
       });
 
       setIsSending(false);
-      onSentSuccess();
+      if (draftUidRef.current && draftUidRef.current !== draftUidAtSend) {
+        void api.deleteDraft(draftUidRef.current).catch(() => {}); // a save that raced the send
+      }
+      onSentSuccess({ warning: res.warning, error: res.success ? undefined : res.error });
       onClose();
     } catch (err: unknown) {
+      sentRef.current = false; // sending failed: the composer stays open and keeps autosaving
       setIsSending(false);
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to send message. Please check connection.');
+      setErrorMsg(friendlyError(err, 'The message could not be sent. Check your connection and try again.'));
     }
   };
 
@@ -223,13 +390,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     }
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  };
-
   return (
     <div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="composer-title"
       className={`fixed z-50 transition-all duration-200 shadow-2xl rounded-t-2xl sm:rounded-xl overflow-hidden bg-white border border-slate-200 flex flex-col ${
         isMinimized
           ? 'bottom-0 right-4 sm:right-6 w-72 h-11'
@@ -240,14 +406,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     >
       {/* Modal Header */}
       <div className="bg-slate-900 text-slate-200 px-4 py-2.5 flex items-center justify-between select-none cursor-pointer">
-        <span className="text-xs font-semibold tracking-wide text-white truncate">
+        <span id="composer-title" className="text-xs font-semibold tracking-wide text-white truncate">
           {subject || 'New Message'}
         </span>
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setIsMinimized(!isMinimized)}
-            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"
+            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
             title={isMinimized ? 'Expand' : 'Minimize'}
+            aria-label={isMinimized ? 'Expand' : 'Minimize'}
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
@@ -256,15 +423,17 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               setIsMaximized(!isMaximized);
               setIsMinimized(false);
             }}
-            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"
-            title={isMaximized ? 'Restore' : 'Maximize'}
+            className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            title={isMaximized ? 'Restore size' : 'Maximize'}
+            aria-label={isMaximized ? 'Restore size' : 'Maximize'}
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={onClose}
-            className="p-1 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
-            title="Discard & Close"
+            onClick={handleCloseClick}
+            className="p-1 hover:text-red-400 hover:bg-slate-800 rounded transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+            title="Close"
+            aria-label="Close"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -275,10 +444,10 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         <div className="flex-1 flex flex-col bg-white overflow-hidden">
           {/* Error Banner */}
           {errorMsg && (
-            <div className="bg-red-50 text-red-700 px-4 py-2 text-xs flex items-center gap-2 border-b border-red-200 shrink-0">
+            <div role="alert" className="bg-red-50 text-red-700 px-4 py-2 text-xs flex items-center gap-2 border-b border-red-200 shrink-0">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
               <span className="flex-1">{errorMsg}</span>
-              <button onClick={() => setErrorMsg(null)} className="text-red-500 font-bold">
+              <button onClick={() => setErrorMsg(null)} aria-label="Dismiss error" className="text-red-500 font-bold px-2 min-h-[44px] sm:min-h-0">
                 ×
               </button>
             </div>
@@ -288,7 +457,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           <div className="px-4 py-2 border-b border-slate-100 flex flex-col divide-y divide-slate-100 text-xs">
             {/* To Line */}
             <div className="py-1.5 flex items-center gap-2">
-              <span className="text-slate-400 font-medium w-12">To:</span>
+              <label htmlFor="composer-to" className="text-slate-400 font-medium w-12">To:</label>
               <div className="flex-1 flex flex-wrap items-center gap-1.5">
                 {toList.map((email, idx) => (
                   <span
@@ -299,13 +468,16 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     <button
                       type="button"
                       onClick={() => handleRemoveRecipient('to', idx)}
-                      className="hover:text-sky-900"
+                      aria-label={`Remove ${email}`}
+                      className="hover:text-sky-900 px-1 min-h-[44px] sm:min-h-0"
                     >
                       ×
                     </button>
                   </span>
                 ))}
                 <input
+                  id="composer-to"
+                  ref={toInputRef}
                   type="email"
                   value={toInput}
                   onChange={(e) => setToInput(e.target.value)}
@@ -324,12 +496,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </div>
               <div className="flex items-center gap-2 text-[11px] text-slate-400">
                 {!showCc && (
-                  <button onClick={() => setShowCc(true)} className="hover:text-slate-700">
+                  <button onClick={() => setShowCc(true)} className="hover:text-slate-700 min-h-[44px] px-1 sm:min-h-0">
                     Cc
                   </button>
                 )}
                 {!showBcc && (
-                  <button onClick={() => setShowBcc(true)} className="hover:text-slate-700">
+                  <button onClick={() => setShowBcc(true)} className="hover:text-slate-700 min-h-[44px] px-1 sm:min-h-0">
                     Bcc
                   </button>
                 )}
@@ -339,7 +511,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             {/* Cc Line */}
             {showCc && (
               <div className="py-1.5 flex items-center gap-2">
-                <span className="text-slate-400 font-medium w-12">Cc:</span>
+                <label htmlFor="composer-cc" className="text-slate-400 font-medium w-12">Cc:</label>
                 <div className="flex-1 flex flex-wrap items-center gap-1.5">
                   {ccList.map((email, idx) => (
                     <span
@@ -350,13 +522,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('cc', idx)}
-                        className="hover:text-slate-900"
+                        aria-label={`Remove ${email}`}
+                        className="hover:text-slate-900 px-1 min-h-[44px] sm:min-h-0"
                       >
                         ×
                       </button>
                     </span>
                   ))}
                   <input
+                    id="composer-cc"
                     type="email"
                     value={ccInput}
                     onChange={(e) => setCcInput(e.target.value)}
@@ -379,7 +553,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             {/* Bcc Line */}
             {showBcc && (
               <div className="py-1.5 flex items-center gap-2">
-                <span className="text-slate-400 font-medium w-12">Bcc:</span>
+                <label htmlFor="composer-bcc" className="text-slate-400 font-medium w-12">Bcc:</label>
                 <div className="flex-1 flex flex-wrap items-center gap-1.5">
                   {bccList.map((email, idx) => (
                     <span
@@ -390,13 +564,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('bcc', idx)}
-                        className="hover:text-slate-900"
+                        aria-label={`Remove ${email}`}
+                        className="hover:text-slate-900 px-1 min-h-[44px] sm:min-h-0"
                       >
                         ×
                       </button>
                     </span>
                   ))}
                   <input
+                    id="composer-bcc"
                     type="email"
                     value={bccInput}
                     onChange={(e) => setBccInput(e.target.value)}
@@ -418,8 +594,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
             {/* Subject Line */}
             <div className="py-1.5 flex items-center gap-2">
-              <span className="text-slate-400 font-medium w-12">Subject:</span>
+              <label htmlFor="composer-subject" className="text-slate-400 font-medium w-12">Subject:</label>
               <input
+                id="composer-subject"
                 type="text"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
@@ -432,11 +609,19 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           {/* Email Body Area */}
           <div className="flex-1 p-4 flex flex-col overflow-hidden">
             <textarea
+              ref={bodyRef}
+              aria-label="Message"
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="Write your email message here..."
               className="w-full flex-1 resize-none focus:outline-none text-sm text-slate-800 font-sans leading-relaxed"
             />
+
+            {replyMeta?.forwardedAttachmentNames && replyMeta.forwardedAttachmentNames.length > 0 && (
+              <div className="pt-2 text-xs text-slate-500">
+                The original attachments will be included: {replyMeta.forwardedAttachmentNames.join(', ')}
+              </div>
+            )}
 
             {/* Attached Files Pill List */}
             {attachments.length > 0 && (
@@ -452,7 +637,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                     <button
                       type="button"
                       onClick={() => removeAttachment(idx)}
-                      className="ml-1 text-slate-400 hover:text-red-500 font-bold"
+                      aria-label={`Remove attachment ${att.filename}`}
+                      className="ml-1 text-slate-400 hover:text-red-500 font-bold px-1 min-h-[44px] sm:min-h-0"
                     >
                       ×
                     </button>
@@ -472,12 +658,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           />
 
           {/* Bottom Action Bar */}
-          <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="px-3 sm:px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex flex-wrap items-center justify-between gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={handleSend}
                 disabled={isSending}
-                className="flex items-center gap-2 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs px-4 py-2 rounded-lg shadow-sm shadow-sky-600/20 transition-all disabled:opacity-50"
+                className="flex items-center gap-2 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs px-4 py-2 min-h-[44px] sm:min-h-0 rounded-lg shadow-sm shadow-sky-600/20 transition-all disabled:opacity-50"
               >
                 {isSending ? (
                   <>
@@ -495,8 +681,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-lg transition-colors"
+                className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-lg transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
                 title="Attach files"
+                aria-label="Attach files"
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -504,7 +691,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowTemplateModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors border border-sky-200/60 font-medium"
+                className="flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors border border-sky-200/60 font-medium"
                 title="Insert pre-written email templates"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-sky-600" />
@@ -517,7 +704,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   setSigForm(signature);
                   setShowSigModal(true);
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors border font-medium ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded-lg transition-colors border font-medium ${
                   signature.enabled
                     ? 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200/60'
                     : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
@@ -529,13 +716,25 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </button>
             </div>
 
+            <div className="flex items-center gap-2 min-w-0">
+            {(draftStatus || attachments.length > 0) && (
+              <span
+                className={`text-[11px] truncate ${draftStatus?.error ? 'text-red-600 font-semibold' : 'text-slate-400'}`}
+                role="status"
+              >
+                {draftStatus?.text}
+                {attachments.length > 0 ? `${draftStatus ? ' · ' : ''}Attachments are not saved in drafts` : ''}
+              </span>
+            )}
             <button
-              onClick={onClose}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-              title="Discard draft"
+              onClick={handleDiscard}
+              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
+              title="Discard message"
+              aria-label="Discard message"
             >
               <Trash2 className="w-4 h-4" />
             </button>
+            </div>
           </div>
         </div>
       )}
@@ -553,15 +752,22 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       {/* Signature Settings Modal */}
       {showSigModal && (
         <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div
+            ref={sigRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="signature-title"
+            className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-full overflow-y-auto"
+          >
             <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <PenTool className="w-4 h-4 text-sky-400" />
-                <span className="text-xs font-semibold">Corporate Email Signature</span>
+                <span id="signature-title" className="text-xs font-semibold">Corporate Email Signature</span>
               </div>
               <button
                 onClick={() => setShowSigModal(false)}
-                className="text-slate-400 hover:text-white"
+                aria-label="Close signature settings"
+                className="text-slate-400 hover:text-white min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -579,10 +785,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </label>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                  Full Name
-                </label>
-                <input
+                <label htmlFor="sig-name" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Full Name</label>
+                <input id="sig-name"
                   type="text"
                   value={sigForm.name}
                   onChange={(e) => setSigForm({ ...sigForm, name: e.target.value })}
@@ -592,10 +796,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                  Designation / Role
-                </label>
-                <input
+                <label htmlFor="sig-designation" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Designation / Role</label>
+                <input id="sig-designation"
                   type="text"
                   value={sigForm.designation}
                   onChange={(e) => setSigForm({ ...sigForm, designation: e.target.value })}
@@ -606,10 +808,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                    Phone Number
-                  </label>
-                  <input
+                  <label htmlFor="sig-phone" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Phone Number</label>
+                <input id="sig-phone"
                     type="text"
                     value={sigForm.phone}
                     onChange={(e) => setSigForm({ ...sigForm, phone: e.target.value })}
@@ -618,10 +818,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                    Company Website
-                  </label>
-                  <input
+                  <label htmlFor="sig-website" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Company Website</label>
+                <input id="sig-website"
                     type="text"
                     value={sigForm.website}
                     onChange={(e) => setSigForm({ ...sigForm, website: e.target.value })}
@@ -632,10 +830,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                  Confidentiality Disclaimer
-                </label>
-                <textarea
+                <label htmlFor="sig-disclaimer" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Confidentiality Disclaimer</label>
+                <textarea id="sig-disclaimer"
                   rows={2}
                   value={sigForm.customText}
                   onChange={(e) => setSigForm({ ...sigForm, customText: e.target.value })}
