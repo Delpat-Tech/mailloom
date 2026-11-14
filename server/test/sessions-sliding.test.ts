@@ -75,3 +75,45 @@ describe('non-remember sessions keep the idle limit', () => {
     assert.equal(store.resolve(sessionId).status, 'ok');
   });
 });
+
+describe('absolute cap for remember sessions', () => {
+  const capped = { ...lifetimes, rememberMaxMs: 180 * DAY };
+  function setupCapped() {
+    let now = 1_000_000_000_000;
+    const store = new SessionStore(':memory:', 'x'.repeat(40), capped, () => now);
+    return { store, advance: (ms: number) => (now += ms), at: () => now };
+  }
+  test('daily use slides to the cap and then ends, 180 days from creation', () => {
+    const { store, advance, at } = setupCapped();
+    const { sessionId } = store.create(input(true));
+    const created = at();
+    for (let day = 1; day <= 179; day++) {
+      advance(DAY);
+      const r = store.resolve(sessionId);
+      assert.equal(r.status, 'ok', `day ${day}`);
+      if (r.status === 'ok') store.touch(r.session);
+    }
+    const r = store.resolve(sessionId);
+    assert.equal(r.status === 'ok' && r.session.expiresAt, created + 180 * DAY, 'expiry clamped to the cap');
+    advance(DAY);
+    assert.equal(store.resolve(sessionId).status, 'expired');
+  });
+  test('default cap is 180 days when not configured', () => {
+    let now = 1_000_000_000_000;
+    const store = new SessionStore(':memory:', 'x'.repeat(40), lifetimes, () => now);
+    const { sessionId } = store.create(input(true));
+    for (let day = 1; day <= 180; day++) {
+      now += DAY;
+      const r = store.resolve(sessionId);
+      if (day === 180) assert.equal(r.status, 'expired');
+      else if (r.status === 'ok') store.touch(r.session);
+      else assert.fail(`expired early on day ${day}`);
+    }
+  });
+  test('short sessions are not affected by the remember cap', () => {
+    const { store, advance } = setupCapped();
+    const { sessionId } = store.create(input(false));
+    advance(20 * MIN);
+    assert.equal(store.resolve(sessionId).status, 'ok');
+  });
+});

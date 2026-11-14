@@ -143,7 +143,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const sessions = new SessionStore(
     config.sessionDbPath,
     config.sessionSecret,
-    { idleMs: config.sessionIdleMs, shortMaxMs: config.sessionShortMaxMs, rememberMs: config.sessionRememberMs },
+    { idleMs: config.sessionIdleMs, shortMaxMs: config.sessionShortMaxMs, rememberMs: config.sessionRememberMs, rememberMaxMs: config.sessionRememberMaxMs },
     now
   );
   const throttle = new LoginThrottle(

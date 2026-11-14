@@ -96,7 +96,7 @@ refuses to start, and lists every problem at once, if a required value is missin
 | `PORT` | `3000` | Any free port; must match the Nginx `proxy_pass`. |
 | `SESSION_SECRET` | 64 hex characters | **Required.** `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Encrypts the mail passwords kept in sessions, agent keys and push devices. Never reuse a value from anywhere else. |
 | `SESSION_DB_PATH` | `/var/lib/mailloom/sessions.db` | The sqlite file. Folder must be `chmod 700`, owned by `mailloom`. If empty, sessions live in memory and everyone is signed out on every restart. |
-| `SESSION_IDLE_MINUTES`, `SESSION_SHORT_MAX_HOURS`, `SESSION_REMEMBER_DAYS` | `30`, `12`, `30` | Session lifetimes. Defaults are fine. |
+| `SESSION_IDLE_MINUTES`, `SESSION_SHORT_MAX_HOURS`, `SESSION_REMEMBER_DAYS` | `30`, `12`, `30` | Session lifetimes. Defaults are fine. | `SESSION_REMEMBER_MAX_DAYS` (default `180`) caps a Remember Me session from sign-in.
 | `MAIL_IMAP_HOST`, `MAIL_IMAP_PORT`, `MAIL_IMAP_SECURE` | `127.0.0.1`, `993`, `true` | **Required** host. Dovecot on this machine. |
 | `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT` | `127.0.0.1`, `587` | **Required** host. Postfix submission (STARTTLS). Use 465 for implicit TLS. SMTP without encryption is refused. |
 | `MAIL_TLS_SERVERNAME` | the certificate name of the mail host, e.g. `mail.delpat.in` | Mailloom connects to 127.0.0.1, but the certificate Dovecot and Postfix show is for the mail host name. This is the name the server checks it against. Find it with `openssl s_client -connect 127.0.0.1:993 -servername mail.delpat.in </dev/null 2>/dev/null \| openssl x509 -noout -subject -ext subjectAltName`. Leave `MAIL_TLS_REJECT_UNAUTHORIZED=true`; never switch certificate checks off on a real server. |
