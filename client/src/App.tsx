@@ -5,7 +5,7 @@ import { Logo } from './components/Logo.js';
 import { MobileTabBar, type PhoneTab } from './components/MobileTabBar.js';
 import { ShortcutsSheet } from './components/ShortcutsSheet.js';
 import { LabelsManager } from './components/LabelsManager.js';
-import { labelsApi, type Label, type LabelColour } from './services/labels.js';
+import { labelsApi, labelErrorText, type Label, type LabelColour } from './services/labels.js';
 import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
 import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
@@ -537,7 +537,7 @@ export const App: React.FC = () => {
 
   // Optimistic removal (archive, delete, snooze, move): the row fades and collapses at once, the next mail opens,
   // and an Undo toast stays for 6 s. The server call waits for that window; if it fails the row comes back.
-  const scheduleRemoval = (uids: number[], label: string, run: () => Promise<void>) => {
+  const scheduleRemoval = (uids: number[], label: string, run: () => Promise<void>, failText?: (err: unknown) => string | null) => {
     const reopen =
       selectedUid !== null && uids.includes(selectedUid)
         ? (() => {
@@ -577,7 +577,8 @@ export const App: React.FC = () => {
         loadFolders();
         void loadLabels();
       },
-      onFail: (err) => showToast(friendlyError(err, 'That did not work, so the message is back. Try again.'), 'error')
+      onFail: (err) =>
+        showToast(failText?.(err) ?? friendlyError(err, 'That did not work, so the message is back. Try again.'), 'error')
     });
     if (reopen !== undefined) {
       if (reopen !== null) void handleSelectMessage(reopen);
@@ -611,7 +612,7 @@ export const App: React.FC = () => {
     scheduleRemoval([uid], `Snoozed until ${snoozeText(until)}`, async () => {
       const r = await snoozeApi.snooze(box, [uid], until);
       if (!r.success) throw new Error('The message could not be snoozed.');
-    });
+    }, (err) => ((err as { status?: number } | null)?.status === 422 ? "This mail can't be snoozed" : null));
   };
 
   const handleToggleLabel = async (labelId: string, turnOn: boolean, uid: number | null = selectedUid) => {
@@ -637,24 +638,41 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleCreateLabel = async (name: string, colour: LabelColour, applyToOpen = true) => {
+  const handleCreateLabel = async (name: string, colour: LabelColour, applyToOpen = true): Promise<string | null> => {
     try {
       const l = await labelsApi.create(name, colour);
       setLabels((p) => [...p, { ...l, count: l.count ?? 0 }]);
       setMenu(null);
       if (applyToOpen && selectedUid !== null) await handleToggleLabel(l.id, true);
+      return null;
     } catch (err: unknown) {
-      showToast(friendlyError(err, 'The label could not be created. Try again.'), 'error');
+      return labelErrorText(err, friendlyError(err, 'The label could not be created. Try again.'));
     }
   };
 
-  const handleRenameLabel = async (id: string, name: string) => {
+  const handleRenameLabel = async (id: string, name: string): Promise<string | null> => {
     try {
       await labelsApi.update(id, { name });
       await loadLabels();
+      return null;
     } catch (err: unknown) {
-      showToast(friendlyError(err, 'The label could not be renamed. Try again.'), 'error');
       void loadLabels();
+      return labelErrorText(err, friendlyError(err, 'The label could not be renamed. Try again.'));
+    }
+  };
+  const handleMoveLabel = async (id: string, position: number) => {
+    const before = labels;
+    const from = before.findIndex((l) => l.id === id);
+    if (from < 0 || position < 0 || position >= before.length) return;
+    const next = [...before];
+    const [item] = next.splice(from, 1);
+    next.splice(position, 0, item);
+    setLabels(next);
+    try {
+      await labelsApi.update(id, { order: position });
+    } catch (err: unknown) {
+      setLabels(before);
+      showToast(friendlyError(err, 'The labels could not be reordered. Try again.'), 'error');
     }
   };
   const handleRecolourLabel = async (id: string, colour: LabelColour) => {
@@ -1495,7 +1513,7 @@ export const App: React.FC = () => {
               labels={labels}
               messageLabelIds={messages.find((m) => m.uid === selectedUid)?.labels ?? []}
               onToggleLabel={(id, on) => void handleToggleLabel(id, on)}
-              onCreateLabel={(name, colour) => void handleCreateLabel(name, colour)}
+              onCreateLabel={(name, colour) => handleCreateLabel(name, colour)}
               menu={menu}
               onMenuChange={setMenu}
               position={(() => {
@@ -1542,10 +1560,11 @@ export const App: React.FC = () => {
       {showLabelsManager && (
         <LabelsManager
           labels={labels}
-          onRename={(id, name) => void handleRenameLabel(id, name)}
+          onRename={handleRenameLabel}
+          onMove={(id, pos) => void handleMoveLabel(id, pos)}
           onRecolour={(id, c) => void handleRecolourLabel(id, c)}
           onDelete={(id) => void handleDeleteLabel(id)}
-          onCreate={(name, c) => void handleCreateLabel(name, c, false)}
+          onCreate={(name, c) => handleCreateLabel(name, c, false)}
           requestConfirm={setConfirmRequest}
           onClose={() => setShowLabelsManager(false)}
         />

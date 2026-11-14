@@ -35,6 +35,14 @@ export interface Label {
   count: number;
 }
 
+/** Plain words for a failed label change. 409 is a name that is already used. */
+export function labelErrorText(err: unknown, fallback: string): string {
+  const status = (err as { status?: number } | null)?.status;
+  if (status === 409) return 'A label with that name already exists';
+  if (status === 400) return 'That label name or colour is not allowed. Try another.';
+  return fallback;
+}
+
 export function colourOf(label: { colour?: string } | undefined): LabelColour {
   return label && (LABEL_COLOURS as string[]).includes(label.colour ?? '') ? (label.colour as LabelColour) : 'blue';
 }
@@ -46,7 +54,7 @@ export const labelsApi = {
   },
   create: (name: string, colour: LabelColour) =>
     request<Label>('/labels', { method: 'POST', body: JSON.stringify({ name, colour }) }),
-  update: (id: string, patch: { name?: string; colour?: LabelColour }) =>
+  update: (id: string, patch: { name?: string; colour?: LabelColour; order?: number }) =>
     request<Label>(`/labels/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   remove: (id: string) => request<{ success: boolean }>(`/labels/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   /** Add and remove labels on messages of one folder. */

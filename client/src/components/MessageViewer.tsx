@@ -244,7 +244,7 @@ interface MessageViewerProps {
   /** Label ids on the open message (from its list row). */
   messageLabelIds?: string[];
   onToggleLabel?: (labelId: string, turnOn: boolean) => void;
-  onCreateLabel?: (name: string, colour: LabelColour) => void;
+  onCreateLabel?: (name: string, colour: LabelColour) => Promise<string | null | void> | void;
   /** Which toolbar menu is open (controlled, so L and H can open them). */
   menu?: 'label' | 'snooze' | null;
   onMenuChange?: (m: 'label' | 'snooze' | null) => void;

@@ -8,7 +8,8 @@ interface Props {
   labels: Label[];
   states: Record<string, 'on' | 'off' | 'mixed'>;
   onToggle: (labelId: string, turnOn: boolean) => void;
-  onCreate: (name: string, colour: LabelColour) => void;
+  /** Resolves with a message to show under the box when the label could not be created. */
+  onCreate: (name: string, colour: LabelColour) => Promise<string | null | void> | void;
   onClose: (refocus: boolean) => void;
   className?: string;
   anchor?: React.RefObject<HTMLElement>;
@@ -29,6 +30,7 @@ export const LabelMenu: React.FC<Props> = ({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [colour, setColour] = useState<LabelColour>('blue');
+  const [error, setError] = useState<string | null>(null);
   const trimmed = name.trim();
 
   return (
@@ -70,9 +72,11 @@ export const LabelMenu: React.FC<Props> = ({
       {creating ? (
         <form
           className="px-3 pt-2 pb-1 space-y-2 border-t border-line mt-1"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            if (trimmed) onCreate(trimmed, colour);
+            if (!trimmed) return;
+            const err = await onCreate(trimmed, colour);
+            if (err) setError(err);
           }}
         >
           <label htmlFor="new-label-name" className="block text-xs font-bold text-ink-2">
@@ -82,9 +86,19 @@ export const LabelMenu: React.FC<Props> = ({
             id="new-label-name"
             value={name}
             maxLength={40}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError(null);
+            }}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'new-label-error' : undefined}
             className="w-full bg-surface border border-line-2 rounded px-2 min-h-[44px] sm:min-h-[34px] text-base sm:text-sm text-ink"
           />
+          {error && (
+            <p id="new-label-error" role="alert" className="text-xs font-semibold text-warn-ink">
+              {error}
+            </p>
+          )}
           <div role="group" aria-label="Colour" className="flex gap-1.5">
             {LABEL_COLOURS.map((c) => (
               <button
