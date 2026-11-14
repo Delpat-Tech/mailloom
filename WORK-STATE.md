@@ -5,15 +5,16 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- On main, reviewed and tested (server 167, client 63): sign-in and sessions, sending, organising, reading, drafts,
+- On main, reviewed and tested (server 177, client 68): sign-in and sessions, sending, organising, reading, drafts,
   live list, phone and keyboard basics, agent keys and API, push notifications, rich-text composer with inline images
-  and signature logo, release build (`pnpm release`), deploy runbook (docs/deploy.md), message deep links.
+  and signature logo, release build (`pnpm release`), deploy runbook (docs/deploy.md), message deep links,
+  whole-app security review fixes (auth before body, nodemailer 7, CSP and headers, log hygiene, cid image types).
 - Work OS mail tools: branch mail-tools in Om/wos-mail, reviewed, 64 e2e checks + 36 live checks against real Mailloom;
   not merged into Work OS master (waits on Om).
 
 ## Next
 1. Design: round 2 sent to Om (mailloom-design/round-2); waits on Om's pick, then apply it across the app.
-2. Whole-app security review of main.
+2. nodemailer 8+ upgrade to clear the remaining audit advisories, with a review (builder A).
 3. Full acceptance run in the browser (desktop and phone) after the design lands.
 4. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
@@ -27,14 +28,11 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Production secrets: the old committed secrets are leaked; if production ever used them, rotate there (docs/deploy.md section 10; waits on Om).
 - Release: `pnpm release` builds and packs from source (build output no longer in git). Runbook docs/deploy.md is untested on the real server (waits on trial go-ahead).
 - Deep links `#/m/<Message-ID>` open the active account only; a link for another signed-in account shows "moved or deleted" (revisit if staff use several accounts).
-- Server HOST defaults to 0.0.0.0 when unset; the runbook sets 127.0.0.1 (consider defaulting to 127.0.0.1).
 - Threads view, contacts book, out-of-office via ManageSieve, offline reading, undo send, search all folders (wait on v1 in daily use).
 - Forwarding rules and change password need iRedAdmin access (waits on Om).
-- Per-email sign-in throttle (10/15 min) lets anyone lock a known mailbox out of sign-in; consider CAPTCHA-free alternatives (waits on real use).
 - Agent API: outgoing sends limited only by the 12 MB body limit; MAILBOX_NOT_ALLOWED not audited; safeHtmlFragment keeps
   the reader's link warnings in sent HTML and drops <style>; routes/agent.ts has raw control bytes in regexes (git sees it
   as binary) — use \u escapes (none blocking; next agent-API touch).
-- No sign-out-everywhere route; DELETE /api/push/devices only turns notifications off for all devices (waits on settings page).
 - Push: no cap on watcher IMAP connections (one per mailbox with notifications on; fine for staff numbers, revisit at scale).
 - Push: browser-rotated subscriptions (pushsubscriptionchange) are not re-registered; the old one 410s and is deleted,
   the person turns notifications on again (waits on real-phone use).
@@ -42,3 +40,8 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Work OS: unattended dispatcher sessions can mail outside Delpat (notice only, no hold); Om said no extra limits (waits on Om if he changes his mind).
 - Deep links open only in the active account when several are signed in (waits on real use).
 - Agent API and web composer use different outgoing HTML sanitisers; align them (next agent-API touch).
+- No sign-out-everywhere; a password change is the only way to end stolen sessions (waits on settings page).
+- Sign-in lockout by email (10/15 min) can be triggered by anyone; Dovecot sees all Mailloom logins from 127.0.0.1 — consider passing client IP via IMAP ID and login_trusted_networks (waits on real use).
+- nodemailer 7.0.13 still has audit advisories whose fixes are only in 8.x to 10.x (breaking major); revisit the upgrade (waits on a compatibility check). Draft-save recipients are not yet strictly parsed like send.
+- Inter font loads from Google Fonts (allowed in CSP); self-hosting would let the CSP drop the two Google hosts (waits on a decision).
+- Unicode (IDN) domains are refused in recipients; punycode works (waits on real use).

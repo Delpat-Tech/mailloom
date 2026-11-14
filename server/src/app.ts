@@ -1,4 +1,4 @@
-import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyError, type FastifyReply, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
@@ -70,6 +70,32 @@ const MIME_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf'
 };
 
+/**
+ * Headers for the app shell (HTML and static files). Nginx may repeat them; they are set here so the
+ * app is protected without it. The mail iframe uses srcdoc and inherits this CSP, which is why
+ * styles may be inline, images may be data:/https:/blob:, and scripts and connections stay 'self'.
+ * Inter comes from Google Fonts (stylesheet + font files), nothing else is allowed off-site.
+ */
+export const APP_SHELL_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: https: blob:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'"
+].join('; ');
+
+function setShellHeaders(reply: FastifyReply): void {
+  reply.header('Content-Security-Policy', APP_SHELL_CSP);
+  reply.header('X-Content-Type-Options', 'nosniff');
+  reply.header('Referrer-Policy', 'no-referrer');
+  reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+}
+
 function resolveClientDist(env: Record<string, string | undefined>): string {
   const defaultClientDist = path.resolve(__dirname, '../../client/dist');
   const altClientDist = path.resolve(__dirname, './public');
@@ -83,7 +109,23 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const config = loadConfig(env);
   const now = opts.now ?? Date.now;
 
-  const fastify = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy as string | boolean });
+  // Request logs never carry the query string (search words, Message-IDs) or other URL data beyond the path.
+  const logSerializers = {
+    req: (r: FastifyRequest) => ({
+      method: r.method,
+      url: String(r.url).split('?')[0],
+      host: r.headers?.host,
+      remoteAddress: r.ip
+    })
+  };
+  const logger: FastifyServerOptions['logger'] =
+    opts.logger === true
+      ? { serializers: logSerializers }
+      : opts.logger && typeof opts.logger === 'object'
+        ? { ...opts.logger, serializers: { ...opts.logger.serializers, ...logSerializers } }
+        : (opts.logger ?? false);
+
+  const fastify = Fastify({ logger, trustProxy: config.trustProxy as string | boolean });
 
   const sessions = new SessionStore(
     config.sessionDbPath,
@@ -221,6 +263,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
       if (insideDist && fs.existsSync(candidateFile) && fs.statSync(candidateFile).isFile()) {
         const ext = path.extname(candidateFile).toLowerCase();
+        setShellHeaders(reply);
         reply.header('Content-Type', MIME_TYPES[ext] || 'application/octet-stream');
         return reply.send(fs.createReadStream(candidateFile));
       }
@@ -228,12 +271,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       // Single Page App fallback to index.html
       const indexPath = path.join(clientDist, 'index.html');
       if (fs.existsSync(indexPath)) {
+        setShellHeaders(reply);
         reply.header('Content-Type', 'text/html; charset=utf-8');
         return reply.send(fs.createReadStream(indexPath));
       }
 
       return reply.status(404).send('Not Found');
     });
+  }
+
+  if (!(clientDist && fs.existsSync(clientDist))) {
+    // No client build: answer 404 ourselves (Fastify's default handler logs the raw URL with its query).
+    fastify.setNotFoundHandler(async (_req, reply) =>
+      reply.status(404).send(isApiUrl(_req.url) ? { error: 'Endpoint not found' } : 'Not Found')
+    );
   }
 
   return fastify;

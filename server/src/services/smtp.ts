@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import type { AccountConfig, SendEmailPayload, SendResult } from '../types.js';
+import { isValidAddress, type Recipient } from '../utils/recipients.js';
 import { prepareRichBody, RichBodyError } from './richbody.js';
 import { getPooledImapClient, getLiveMessageAttachments, MessageTooLargeError, ImapAuthError } from './imap.js';
 
@@ -89,7 +90,7 @@ export class SendError extends Error {
 function toSendError(err: unknown): Error {
   if (err instanceof SendError) return err;
   const code = (err as { code?: string })?.code;
-  console.warn('[SMTP] send failed:', code || '', (err as Error)?.message?.split('\n')[0]);
+  console.warn('[SMTP] send failed:', code || '', (err as Error)?.name || ''); // never the text: it can hold addresses
   switch (code) {
     case 'EAUTH':
       if ((err as { responseCode?: number }).responseCode! < 500) return new SendError('The mail server is temporarily unable to sign in. Try again shortly.');
@@ -166,6 +167,15 @@ export async function sendLiveEmail(config: AccountConfig, payload: SendEmailPay
   return promise;
 }
 
+function asObjects(list: Array<string | Recipient>): Recipient[] {
+  return list.map((r) => {
+    const rec = typeof r === 'string' ? { name: '', address: r } : r;
+    // Whatever the caller, only a single plain address ever reaches the envelope.
+    if (!isValidAddress(rec.address)) throw new SendError(`Not a valid address: ${rec.address.slice(0, 100)}`, 400);
+    return rec;
+  });
+}
+
 async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise<SendResult> {
   const max = getMaxMessageBytes(config);
   const attachments = [...(payload.attachments || [])];
@@ -219,9 +229,9 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
   const mailOptions: nodemailer.SendMailOptions = {
     // Always the signed-in account, never a value from the request.
     from: { name: config.name || '', address: config.email },
-    to: payload.to,
-    cc: payload.cc && payload.cc.length > 0 ? payload.cc : undefined,
-    bcc: payload.bcc && payload.bcc.length > 0 ? payload.bcc : undefined,
+    to: asObjects(payload.to),
+    cc: payload.cc && payload.cc.length > 0 ? asObjects(payload.cc) : undefined,
+    bcc: payload.bcc && payload.bcc.length > 0 ? asObjects(payload.bcc) : undefined,
     subject: payload.subject,
     messageId,
     date: new Date(),
@@ -292,7 +302,7 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
     if (!appended) throw new Error('append returned no result');
     result.sentCopySaved = true;
   } catch (appendErr) {
-    console.warn('[SMTP] Could not save Sent copy:', (appendErr as Error).message);
+    console.warn('[SMTP] Could not save Sent copy:', (appendErr as { code?: string })?.code || '', (appendErr as Error)?.name || '');
     result.sentCopyError = 'The message was sent, but a copy could not be saved to the Sent folder.';
   }
 

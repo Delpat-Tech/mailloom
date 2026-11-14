@@ -1,4 +1,5 @@
 import type { MailboxFolder, MessageHeader, ParsedEmailMessage, SendEmailPayload } from '../types.js';
+import type { Recipient } from '../utils/recipients.js';
 import type { SearchFilters } from './imap.js';
 
 interface StoredDemoMessage extends ParsedEmailMessage {
@@ -476,9 +477,9 @@ class DemoMailService {
       folder: 'Sent',
       subject: payload.subject,
       from: { name: senderName, address: senderEmail },
-      to: payload.to.map((addr) => ({ name: addr.split('@')[0]!, address: addr })),
-      cc: payload.cc ? payload.cc.map((addr) => ({ name: addr.split('@')[0]!, address: addr })) : [],
-      bcc: payload.bcc ? payload.bcc.map((addr) => ({ name: addr.split('@')[0]!, address: addr })) : [],
+      to: payload.to.map(demoRecipient),
+      cc: payload.cc ? payload.cc.map(demoRecipient) : [],
+      bcc: payload.bcc ? payload.bcc.map(demoRecipient) : [],
       date: dateStr,
       flags: ['\\Seen'],
       isSeen: true,
@@ -521,5 +522,8 @@ class DemoMailService {
     };
   }
 }
+
+const demoRecipient = (r: string | Recipient): Recipient =>
+  typeof r === 'string' ? { name: r.split('@')[0]!, address: r } : { name: r.name || r.address.split('@')[0]!, address: r.address };
 
 export const demoMailService = new DemoMailService();

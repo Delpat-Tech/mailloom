@@ -3,7 +3,8 @@ import 'dotenv/config';
 import { buildApp } from './app.js';
 
 const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+// Production listens on loopback unless HOST says otherwise (Nginx is the way in); dev keeps all addresses.
+const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
 
 let app;
 try {
