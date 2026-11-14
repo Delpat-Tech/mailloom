@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import type { AccountConfig, SendEmailPayload, SendResult } from '../types.js';
-import type { Recipient } from '../utils/recipients.js';
+import { isValidAddress, type Recipient } from '../utils/recipients.js';
 import { prepareRichBody, RichBodyError } from './richbody.js';
 import { getPooledImapClient, getLiveMessageAttachments, MessageTooLargeError, ImapAuthError } from './imap.js';
 
@@ -168,7 +168,12 @@ export async function sendLiveEmail(config: AccountConfig, payload: SendEmailPay
 }
 
 function asObjects(list: Array<string | Recipient>): Recipient[] {
-  return list.map((r) => (typeof r === 'string' ? { name: '', address: r } : r));
+  return list.map((r) => {
+    const rec = typeof r === 'string' ? { name: '', address: r } : r;
+    // Whatever the caller, only a single plain address ever reaches the envelope.
+    if (!isValidAddress(rec.address)) throw new SendError('The mail server rejected every recipient. Check the addresses.', 400);
+    return rec;
+  });
 }
 
 async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise<SendResult> {
