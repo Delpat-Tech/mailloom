@@ -9,37 +9,28 @@ export interface AccountSignature {
 
 const STORAGE_PREFIX = 'mailloom_sig_';
 
-export function getDefaultSignature(name: string, email: string): AccountSignature {
-  const userName = name && name.trim() ? name.trim() : email.split('@')[0];
-  const capitalized = userName
-    .split(/[._-]/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-
-  return {
-    name: capitalized || 'Team Member',
-    designation: 'Operations & Engineering',
-    phone: '+91 98250 12345',
-    website: 'https://delpat.in',
-    customText: 'Confidentiality Notice: This message and any attachments are intended exclusively for the individual or entity addressed.',
-    enabled: true
-  };
+// Nobody has a signature until they set one.
+export function getDefaultSignature(_name?: string, _email?: string): AccountSignature {
+  return { name: '', designation: '', phone: '', website: '', customText: '', enabled: false };
 }
 
-export function getSignatureForAccount(email: string, fallbackName = ''): AccountSignature {
-  if (!email) return getDefaultSignature('', '');
+// Placeholder signature older versions saved automatically for every account.
+function isOldPlaceholder(sig: Partial<AccountSignature>): boolean {
+  return sig.phone === '+91 98250 12345' || Boolean(sig.customText?.startsWith('Confidentiality Notice: This message'));
+}
+
+export function getSignatureForAccount(email: string, _fallbackName = ''): AccountSignature {
+  if (!email) return getDefaultSignature();
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}${email.toLowerCase()}`);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw) as AccountSignature;
+      if (!isOldPlaceholder(parsed)) return { ...getDefaultSignature(), ...parsed };
     }
   } catch {
     // Ignore JSON parse errors
   }
-
-  const def = getDefaultSignature(fallbackName, email);
-  saveSignatureForAccount(email, def);
-  return def;
+  return getDefaultSignature();
 }
 
 export function saveSignatureForAccount(email: string, signature: AccountSignature): void {
@@ -53,16 +44,11 @@ export function saveSignatureForAccount(email: string, signature: AccountSignatu
 
 export function formatSignatureText(sig: AccountSignature): string {
   if (!sig.enabled) return '';
-  const lines = [
-    '--',
-    sig.name,
-    `${sig.designation} | Delpat Technologies`,
-    `Phone: ${sig.phone} | Web: ${sig.website}`
-  ];
-  if (sig.customText && sig.customText.trim()) {
-    lines.push(`\n${sig.customText.trim()}`);
-  }
-  return lines.join('\n');
+  const lines = [sig.name, sig.designation, [sig.phone, sig.website].filter(Boolean).join(' | '), sig.customText]
+    .map((l) => (l || '').trim())
+    .filter(Boolean);
+  return lines.length > 0 ? ['--', ...lines].join('
+') : '';
 }
 
 export function formatSignatureHtml(sig: AccountSignature): string {
