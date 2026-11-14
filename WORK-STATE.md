@@ -19,7 +19,10 @@ users tester@ and colleague@delpat.test). Never the live mail server.
    systemd mailloom.service (www-data, /opt/www/mailloom, .env there), Nginx /etc/nginx/templates/roundcube.tmpl
    (/mail/ strips the prefix, /api/ added). Rollback: /opt/www/mailloom.intern and /root/roundcube.tmpl.bak.
    Waits on Om signing in and the checklist (docs/deploy.md section 9) on desktop and phone.
-1. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
+1. Phone basics batch on builder-b (Om found gaps on 15 Nov): sign-in alert glitch, password show/hide, pull-to-refresh,
+   back button/history (opening a mail adds no history: back exits the app), offline banner, sign-in field hints,
+   row swipe actions, composer with keyboard. Then review, release, update the live server.
+2. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
 ## Later
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
 - Earlier note: Om first said local only; Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).
