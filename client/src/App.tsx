@@ -281,6 +281,8 @@ export const App: React.FC = () => {
   // Reset pagination & message detail when switching folders
   const handleSelectFolder = (folderPath: string) => {
     if (folderPath.toLowerCase() === selectedFolder.toLowerCase()) return;
+    detailSeq.current++; // any detail request still in flight belongs to the old folder
+    setIsDetailLoading(false);
     setSelectedFolder(folderPath);
     setPage(1);
     setSearchInput('');
@@ -322,12 +324,17 @@ export const App: React.FC = () => {
   handleSelectMessageRef.current = handleSelectMessage;
 
   const handleShowImages = async (uid: number) => {
+    const seq = detailSeq.current; // same guard as handleSelectMessage: a newer open or folder switch wins
+    const folder = selectedFolder;
     setIsLoadingImages(true);
     try {
-      const detail = await api.getMessageDetail(selectedFolder, uid, { showImages: true });
-      if (selectedMessage?.uid === uid) setSelectedMessage(detail);
+      const detail = await api.getMessageDetail(folder, uid, { showImages: true });
+      if (seq !== detailSeq.current) return;
+      setSelectedMessage(detail);
     } catch (err: unknown) {
-      showToast(friendlyError(err, 'The images could not be loaded. Try again.'), 'error');
+      if (seq === detailSeq.current) {
+        showToast(friendlyError(err, 'The images could not be loaded. Try again.'), 'error');
+      }
     } finally {
       setIsLoadingImages(false);
     }

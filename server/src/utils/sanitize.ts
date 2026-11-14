@@ -22,8 +22,13 @@ table{max-width:100%}
 a{color:#0369a1}
 pre{white-space:pre-wrap}
 blockquote{margin:.5em 0;padding-left:12px;border-left:3px solid #cbd5e1;color:#475569}
-.ml-warn{display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:#fef3c7;color:#92400e;font-size:11px;line-height:1.5;font-weight:600}
 `;
+
+const WARN_STYLE =
+  'display:inline-block!important;visibility:visible!important;opacity:1!important;position:static!important;' +
+  'margin:0 0 0 4px!important;padding:0 4px!important;border-radius:3px!important;background:#fef3c7!important;' +
+  'color:#92400e!important;font-size:11px!important;line-height:1.5!important;font-weight:600!important;' +
+  'width:auto!important;height:auto!important;max-width:none!important;clip:auto!important;text-indent:0!important';
 
 const STYLE_VALUE = /^(?!.*(url\s*\(|expression|javascript:|@import|behavior|binding|<|\\)).*$/i;
 const STYLE_PROPS = [
@@ -45,6 +50,9 @@ const allowedStyles: Record<string, Record<string, RegExp[]>> = {
 export function scrubCss(css: string): string {
   let out = css
     .replace(/\/\*[\s\S]*?\*\//g, '')
+    // CSS escapes can spell any keyword (\75 rl, @\69mport): drop every declaration or rule prelude containing one.
+    .replace(/[^{};]*\\[^{};]*/g, '')
+    .replace(/(?:-webkit-)?image-set\s*\((?:[^()]|\([^)]*\))*\)/gi, 'none')
     .replace(/<\/?[a-z!][^>]*>?/gi, '')
     .replace(/@(import|charset|namespace)[^;]*;?/gi, '')
     .replace(/@font-face\s*\{[^}]*\}/gi, '')
@@ -54,6 +62,17 @@ export function scrubCss(css: string): string {
     .replace(/javascript:/gi, '');
   // Mail CSS must not float over the page.
   out = out.replace(/position\s*:\s*fixed/gi, 'position:static');
+  return out;
+}
+
+/** Mail may not use our own ml-* classes (they would fake or hide Mailloom's warnings). */
+function stripMlClasses(attribs: Record<string, string>): Record<string, string> {
+  const out = { ...attribs };
+  if (out.class !== undefined) {
+    const kept = out.class.split(/\s+/).filter((c) => c && !/^ml-/i.test(c)).join(' ');
+    if (kept) out.class = kept;
+    else delete out.class;
+  }
   return out;
 }
 
@@ -99,7 +118,7 @@ export function markMisleadingLinks(html: string): string {
     const shown = hostOf(visible);
     const real = hostOf(unescapeHtml(hrefMatch[1]));
     if (!shown || !real || shown === real) return whole;
-    return `${whole}<span class="ml-warn" title="This link goes to a different site than the text says">&#9888; goes to ${escapeHtml(real)}</span>`;
+    return `${whole}<span class="ml-warn" style="${WARN_STYLE}" title="This link goes to a different site than the text says">&#9888; goes to ${escapeHtml(real)}</span>`;
   });
 }
 
@@ -156,12 +175,13 @@ export function renderEmail(dirtyHtml: string, opts: RenderOptions = {}): Render
     allowProtocolRelative: false,
     disallowedTagsMode: 'discard',
     transformTags: {
+      '*': (tag, attribs) => ({ tagName: tag, attribs: stripMlClasses(attribs) }),
       a: (_tag, attribs) => ({
         tagName: 'a',
-        attribs: { ...attribs, target: '_blank', rel: 'noopener noreferrer' }
+        attribs: { ...stripMlClasses(attribs), target: '_blank', rel: 'noopener noreferrer' }
       }),
       img: (_tag, attribs) => {
-        const out = { ...attribs };
+        const out = stripMlClasses(attribs);
         const src = (out.src || '').trim();
         if (/^cid:/i.test(src)) {
           const key = decodeURIComponentSafe(src.slice(4)).replace(/^<|>$/g, '').toLowerCase();

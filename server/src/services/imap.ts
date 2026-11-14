@@ -637,14 +637,34 @@ export async function streamLiveAttachment(
   if (!isValidPartId(partId)) return null;
   const client = await getPooledImapClient(config);
   const lock = await client.getMailboxLock(folderPath, { readOnly: true });
+  // imapflow fetches the chunks after the first 64 KB by UID in whichever mailbox is selected at that
+  // moment, so the lock must stay held until the stream has been fully consumed (end, error or close).
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    lock.release();
+  };
   try {
     const msg = await client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true });
-    if (!msg) return null;
+    if (!msg) {
+      release();
+      return null;
+    }
     const part = findPart(msg.bodyStructure, partId);
-    if (!part) return null;
+    if (!part) {
+      release();
+      return null;
+    }
 
     const dl = await client.download(String(uid), partId, { uid: true });
-    if (!dl || !dl.content) return null;
+    if (!dl || !dl.content) {
+      release();
+      return null;
+    }
+    dl.content.once('end', release);
+    dl.content.once('error', release);
+    dl.content.once('close', release);
 
     const ext = part.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
     return {
@@ -652,8 +672,9 @@ export async function streamLiveAttachment(
       filename: cleanFilename(part.filename, `attachment-${partId}.${ext}`),
       contentType: part.type
     };
-  } finally {
-    lock.release();
+  } catch (err) {
+    release();
+    throw err;
   }
 }
 
@@ -768,15 +789,14 @@ export async function emptyLiveFolder(config: AccountConfig, folderPath: string)
   }
   const lock = await client.getMailboxLock(folderPath);
   try {
-    const before = client.mailbox ? client.mailbox.exists || 0 : 0;
-    if (before === 0) return 0;
-    const ok = await client.messageDelete('1:*');
-    const status = await client.status(folderPath, { messages: true });
-    const left = status.messages || 0;
-    if (!ok || left > 0) {
-      throw new Error(`Only ${before - left} of ${before} messages could be deleted.`);
+    const uids = ((await client.search({ all: true }, { uid: true })) || []) as number[];
+    if (uids.length === 0) return 0;
+    const ok = await client.messageDelete(uids, { uid: true });
+    const remaining = ((await client.search({ uid: uids.join(',') }, { uid: true })) || []) as number[];
+    if (!ok || remaining.length > 0) {
+      throw new Error(`Only ${uids.length - remaining.length} of ${uids.length} messages could be deleted.`);
     }
-    return before;
+    return uids.length;
   } finally {
     lock.release();
   }

@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { sendLiveEmail, clearIdempotencyStore, SendError } from '../src/services/smtp.js';
-import { closeUserSession } from '../src/services/imap.js';
+import { closeUserSession, isImapAuthError } from '../src/services/imap.js';
 import { accountFor, GM, resetAccount, seedMail, waitForMail, fetchAll } from './helpers.js';
 
 const tester = accountFor(GM.tester, 'Tester Person');
@@ -156,11 +156,11 @@ test('a recipient the server rejects is never reported as accepted', async () =>
   assert.ok(error instanceof SendError);
 });
 
-test('errors never carry SMTP transcript details', async () => {
+test('a rejected SMTP login is an auth error (ends the session) without transcript details', async () => {
   const bad = { ...tester, smtpPass: 'wrong-password' };
   await assert.rejects(sendLiveEmail(bad, { to: [GM.colleague], subject: 'auth', text: 'x' }), (e: unknown) => {
-    assert.ok(e instanceof SendError);
-    assert.doesNotMatch(e.message, /\b(535|5\.\d\.\d|AUTH|EHLO|127\.0\.0\.1|wrong-password)\b/i);
+    assert.ok(isImapAuthError(e));
+    assert.doesNotMatch((e as Error).message, /\b(535|5\.\d\.\d|EHLO|127\.0\.0\.1|wrong-password)\b/i);
     return true;
   });
 });

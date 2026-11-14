@@ -161,3 +161,21 @@ test('attachment download returns the right bytes and filename', async () => {
   assert.match(String(dl.headers['content-disposition']), /report(%20| )final\.bin/);
   assert.equal(dl.headers['x-content-type-options'], 'nosniff');
 });
+
+test('uid routes reject non-positive-integer ids with 400; attachments carry a sandbox CSP', async () => {
+  for (const bad of ['0', '-1', 'abc', '1.5', '1e3']) {
+    const r = await app.inject({ method: 'GET', url: `/api/mailboxes/INBOX/messages/${bad}`, headers: t.headers });
+    assert.equal(r.statusCode, 400, `uid ${bad}`);
+  }
+  const del = await app.inject({ method: 'DELETE', url: '/api/drafts/0', headers: t.headers });
+  assert.equal(del.statusCode, 400);
+
+  const uid = await appendRaw(
+    GM.tester,
+    'INBOX',
+    await buildMime({ subject: 'csp', text: 'x', attachments: [{ filename: 'a.txt', content: Buffer.from('hello'), contentType: 'text/plain' }] })
+  );
+  const ok = await app.inject({ method: 'GET', url: `/api/mailboxes/INBOX/messages/${uid}/attachments/2`, headers: t.headers });
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.headers['content-security-policy'], "default-src 'none'; sandbox");
+});

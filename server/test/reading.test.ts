@@ -200,3 +200,62 @@ test('Content-Disposition carries the real file name (RFC 5987)', () => {
   assert.ok(!/[^\x20-\x7e]/.test(u));
   assert.equal(decodeEncodedWords('=?utf-8?B?UmVjaG51bmc=?= =?utf-8?Q?_=C3=BCber?='), 'Rechnung über');
 });
+
+test('attachment over 64 KB stays intact while another folder is opened on the same session', async () => {
+  const big = Buffer.alloc(300 * 1024);
+  for (let i = 0; i < big.length; i++) big[i] = (i * 31 + 7) & 0xff;
+  const other = Buffer.alloc(300 * 1024, 0xee);
+  const uid = await appendRaw(
+    GM.tester,
+    'INBOX',
+    await buildMime({
+      subject: 'big one',
+      text: 'x',
+      attachments: [{ filename: 'big.bin', content: big, contentType: 'application/octet-stream' }]
+    })
+  );
+  const { withImap } = await import('./helpers.js');
+  await withImap(GM.tester, async (c) => {
+    await c.mailboxCreate('OtherFolder').catch(() => undefined);
+  });
+  for (let i = 0; i < 3; i++) {
+    await appendRaw(
+      GM.tester,
+      'OtherFolder',
+      await buildMime({ subject: `other ${i}`, text: 'y', attachments: [{ filename: 'o.bin', content: other, contentType: 'application/octet-stream' }] })
+    );
+  }
+  const d = await getLiveMessageDetail(tester, 'INBOX', uid);
+  assert.ok(d);
+  const f = await streamLiveAttachment(tester, 'INBOX', uid, d.attachments[0].partId);
+  assert.ok(f);
+  // Open another folder on the same session while the download is pending, then consume the stream.
+  const concurrent = getLiveMessages(tester, 'OtherFolder');
+  const got = await streamToBuffer(f.stream);
+  await concurrent;
+  assert.equal(got.length, big.length);
+  assert.ok(got.equals(big));
+});
+
+test('renderEmail: CSS escapes and image-set cannot smuggle url() or @import', () => {
+  const css =
+    '.a{background:\\75 rl(https://t.example.com/x.png)} @\\69mport "evil.css"; ' +
+    '.b{background:image-set("https://t.example.com/y.png" 1x)} .c{color:red} .d{background:-webkit-image-set(url(z.png) 1x)}';
+  const html = renderEmail(`<style>${css}</style><p class="c">x</p>`).html;
+  assert.ok(!html.includes('\\'));
+  assert.ok(!/t\.example\.com|evil\.css|z\.png/.test(html));
+  assert.ok(!/image-set/i.test(html));
+  assert.ok(html.includes('.c{color:red}'));
+});
+
+test('renderEmail: link warning cannot be hidden or faked by mail CSS or ml-* classes', () => {
+  const bad = renderEmail(
+    '<style>.ml-warn{display:none} span{display:none}</style><a class="ml-warn x" href="https://evil.example.net/">https://mybank.com/login</a>'
+  ).html;
+  assert.ok(/<span class="ml-warn" style="[^"]*display:inline-block!important[^"]*"/.test(bad));
+  assert.ok(!bad.includes('class="ml-warn x"') && !bad.includes('class="ml-warn"><') || bad.includes('goes to evil.example.net'));
+  assert.ok(!bad.includes('<a class="ml-warn'));
+  // faked warning in mail: class is stripped
+  const fake = renderEmail('<span class="ml-warn">&#9888; goes to bank.com</span>').html;
+  assert.ok(!fake.includes('class="ml-warn"'));
+});

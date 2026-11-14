@@ -41,6 +41,11 @@ export async function failMail(req: FastifyRequest, reply: FastifyReply, err: un
 
 const MAX_CONCURRENT_SENDS = 2;
 
+/** A message UID from a URL: a positive integer, else 0 (callers answer 400). */
+function parseUid(raw: string): number {
+  return /^[1-9]\d{0,9}$/.test(raw) ? Number(raw) : 0;
+}
+
 // Mail routes. Sign-in, sign-out and session checks live in ./auth.ts; requireAuth
 // sets req.accountConfig (server-configured mail host plus the session's credentials).
 export async function mailRoutes(fastify: FastifyInstance) {
@@ -118,7 +123,8 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
       const folderPath = path;
-      const messageUid = parseInt(uid, 10);
+      const messageUid = parseUid(uid);
+      if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
       const images = ['1', 'true'].includes(String((req.query as { images?: string }).images || ''));
 
       if (config.isDemo) {
@@ -146,13 +152,16 @@ export async function mailRoutes(fastify: FastifyInstance) {
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { uid, partId } = req.params as { path: string; uid: string; partId: string };
-      const messageUid = parseInt(uid, 10);
+      const messageUid = parseUid(uid);
+      if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
 
       if (config.isDemo) {
         const att = demoMailService.getAttachmentData(messageUid, partId);
         if (!att) return reply.status(404).send({ error: 'Attachment not found' });
         reply.header('Content-Type', att.contentType);
         reply.header('Content-Disposition', contentDisposition(att.filename));
+        reply.header('X-Content-Type-Options', 'nosniff');
+        reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
         return reply.send(att.buffer);
       }
 
@@ -169,6 +178,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       reply.header('Content-Type', attData.contentType);
       reply.header('Content-Disposition', contentDisposition(attData.filename));
       reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
       return reply.send(attData.stream);
     }
   );
@@ -181,7 +191,8 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
       const { flag, value } = req.body as { flag: 'isSeen' | 'isFlagged'; value: boolean };
-      const messageUid = parseInt(uid, 10);
+      const messageUid = parseUid(uid);
+      if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
       const folderPath = path;
 
       if (config.isDemo) {
@@ -206,7 +217,8 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
       const { targetFolder } = req.body as { targetFolder: string };
-      const messageUid = parseInt(uid, 10);
+      const messageUid = parseUid(uid);
+      if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
       const folderPath = path;
 
       if (config.isDemo) {
@@ -231,7 +243,8 @@ export async function mailRoutes(fastify: FastifyInstance) {
     async (req: AuthenticatedRequest, reply) => {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
-      const messageUid = parseInt(uid, 10);
+      const messageUid = parseUid(uid);
+      if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
       const folderPath = path;
 
       if (config.isDemo) {
@@ -257,7 +270,8 @@ export async function mailRoutes(fastify: FastifyInstance) {
       const config = req.accountConfig!;
       const { path, uid } = req.params as { path: string; uid: string };
       const { junkFolder } = (req.body as { junkFolder?: string }) || {};
-      const messageUid = parseInt(uid, 10);
+      const messageUid = parseUid(uid);
+      if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
       const folderPath = path;
 
       if (config.isDemo) {
@@ -282,7 +296,8 @@ export async function mailRoutes(fastify: FastifyInstance) {
       async (req: AuthenticatedRequest, reply) => {
         const config = req.accountConfig!;
         const { path, uid } = req.params as { path: string; uid: string };
-        const messageUid = parseInt(uid, 10);
+        const messageUid = parseUid(uid);
+      if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
         if (config.isDemo) {
           const ok = demoMailService.moveMessage(messageUid, 'INBOX');
           if (!ok) return reply.status(404).send({ error: 'Message not found' });
@@ -347,8 +362,9 @@ export async function mailRoutes(fastify: FastifyInstance) {
 
   fastify.delete('/api/drafts/:uid', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
-    const uid = parseInt((req.params as { uid: string }).uid, 10);
-    if (config.isDemo) return { success: true };
+    const uid = parseUid((req.params as { uid: string }).uid);
+    if (!uid) return reply.status(400).send({ error: 'Invalid draft id' });
+    if (config.isDemo) return reply.status(400).send({ error: 'Drafts are not available in the demo.' });
     try {
       const deleted = await deleteLiveDraft(config, uid);
       if (!deleted) return reply.status(404).send({ error: 'Draft not found' });

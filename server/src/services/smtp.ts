@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import type { AccountConfig, SendEmailPayload, SendResult } from '../types.js';
-import { getPooledImapClient, getLiveMessageAttachments, MessageTooLargeError } from './imap.js';
+import { getPooledImapClient, getLiveMessageAttachments, MessageTooLargeError, ImapAuthError } from './imap.js';
 
 export function createSmtpTransport(config: AccountConfig) {
   const user = config.smtpUser || config.imapUser;
@@ -85,13 +85,14 @@ export class SendError extends Error {
   }
 }
 
-function toSendError(err: unknown): SendError {
+function toSendError(err: unknown): Error {
   if (err instanceof SendError) return err;
   const code = (err as { code?: string })?.code;
   console.warn('[SMTP] send failed:', code || '', (err as Error)?.message?.split('\n')[0]);
   switch (code) {
     case 'EAUTH':
-      return new SendError('The outgoing mail server refused the sign-in.');
+      // Stored credentials were refused: end the session like an IMAP auth failure (route -> SESSION_EXPIRED).
+      return new ImapAuthError();
     case 'EENVELOPE':
       return new SendError('The mail server rejected every recipient. Check the addresses.');
     case 'ECONNECTION':
@@ -117,6 +118,27 @@ function pruneIdempotency(now: number) {
   }
 }
 
+const IDEMPOTENCY_MAX_PER_ACCOUNT = 500;
+const IDEMPOTENCY_MAX_TOTAL = 50_000;
+
+/** Evict oldest entries (Map keeps insertion order) beyond the per-account and overall caps. */
+function enforceIdempotencyCaps(account: string) {
+  const prefix = `${account}|`;
+  let mine = 0;
+  for (const k of idempotencyStore.keys()) if (k.startsWith(prefix)) mine++;
+  for (const k of idempotencyStore.keys()) {
+    if (mine <= IDEMPOTENCY_MAX_PER_ACCOUNT) break;
+    if (k.startsWith(prefix)) {
+      idempotencyStore.delete(k);
+      mine--;
+    }
+  }
+  for (const k of idempotencyStore.keys()) {
+    if (idempotencyStore.size <= IDEMPOTENCY_MAX_TOTAL) break;
+    idempotencyStore.delete(k);
+  }
+}
+
 /** For tests. */
 export function clearIdempotencyStore() {
   idempotencyStore.clear();
@@ -134,6 +156,7 @@ export async function sendLiveEmail(config: AccountConfig, payload: SendEmailPay
 
   const promise = doSend(config, payload);
   idempotencyStore.set(storeKey, { at: now, promise });
+  enforceIdempotencyCaps(config.email.toLowerCase());
   // A failed send stays retryable under the same key.
   promise.catch(() => {
     if (idempotencyStore.get(storeKey)?.promise === promise) idempotencyStore.delete(storeKey);
