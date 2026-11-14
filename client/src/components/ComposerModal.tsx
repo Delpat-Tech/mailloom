@@ -25,9 +25,9 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../services/api.js';
 import { clockTime } from '../services/time.js';
-import { avatarClass, initialsOf } from '../services/avatar.js';
 import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
+import { RecipientField } from './RecipientField.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
 import type { ConfirmRequest } from './ConfirmDialog.js';
 import {
@@ -654,153 +654,54 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
           <div className="flex-1 min-h-0 flex flex-col max-sm:overflow-y-auto">
           {/* Recipients & Subject Fields */}
           <div className="px-4 py-2 border-b border-line flex flex-col divide-y divide-line text-xs">
-            {/* To Line */}
-            <div className="py-1.5 flex items-center gap-2">
-              <label htmlFor="composer-to" className="text-ink-3 font-medium w-12">To:</label>
-              <div className="flex-1 flex flex-wrap items-center gap-1.5">
-                {toList.map((email, idx) => (
-                  <span
-                    key={idx}
-                    aria-invalid={!isValidRecipient(email) || undefined}
-                    title={!isValidRecipient(email) ? 'Not a valid address' : email}
-                    className={`inline-flex items-center gap-1.5 bg-sheet text-ink border border-line pl-[3px] pr-1.5 py-[2px] rounded-[3px] text-[13px] font-bold${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={`cut-av w-5 h-5 shrink-0 grid place-items-center text-[9px] font-extrabold text-white ${avatarClass(email)}`}
-                    >
-                      {initialsOf(nameOf(email) || email)}
-                    </span>
-                    <span>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveRecipient('to', idx)}
-                      aria-label={`Remove ${nameOf(email) || email}`}
-                      className="hover:text-act px-1 min-h-[44px] sm:min-h-0"
-                    >
-                      ×
+            <RecipientField
+              id="composer-to"
+              label="To"
+              list={toList}
+              input={toInput}
+              onInput={setToInput}
+              onAdd={(v) => handleAddRecipient('to', v)}
+              onRemove={(i) => handleRemoveRecipient('to', i)}
+              nameOf={nameOf}
+              inputRef={toInputRef}
+              trailing={
+                <div className="flex items-center gap-2 text-[11px] text-ink-3">
+                  {!showCc && (
+                    <button onClick={() => setShowCc(true)} className="hover:text-ink-2 min-h-[44px] px-1 sm:min-h-0">
+                      Cc
                     </button>
-                  </span>
-                ))}
-                <input
-                  id="composer-to"
-                  ref={toInputRef}
-                  type="email"
-                  value={toInput}
-                  onChange={(e) => setToInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ',') {
-                      e.preventDefault();
-                      handleAddRecipient('to', toInput);
-                    }
-                  }}
-                  onBlur={() => {
-                    if (toInput) handleAddRecipient('to', toInput);
-                  }}
-                  placeholder={toList.length === 0 ? 'recipients@example.com (press Enter)' : ''}
-                  className="flex-1 min-w-[140px] focus:outline-none bg-transparent py-0.5 text-ink"
-                />
-              </div>
-              <div className="flex items-center gap-2 text-[11px] text-ink-3">
-                {!showCc && (
-                  <button onClick={() => setShowCc(true)} className="hover:text-ink-2 min-h-[44px] px-1 sm:min-h-0">
-                    Cc
-                  </button>
-                )}
-                {!showBcc && (
-                  <button onClick={() => setShowBcc(true)} className="hover:text-ink-2 min-h-[44px] px-1 sm:min-h-0">
-                    Bcc
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Cc Line */}
+                  )}
+                  {!showBcc && (
+                    <button onClick={() => setShowBcc(true)} className="hover:text-ink-2 min-h-[44px] px-1 sm:min-h-0">
+                      Bcc
+                    </button>
+                  )}
+                </div>
+              }
+            />
             {showCc && (
-              <div className="py-1.5 flex items-center gap-2">
-                <label htmlFor="composer-cc" className="text-ink-3 font-medium w-12">Cc:</label>
-                <div className="flex-1 flex flex-wrap items-center gap-1.5">
-                  {ccList.map((email, idx) => (
-                    <span
-                      key={idx}
-                      aria-invalid={!isValidRecipient(email) || undefined}
-                    title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
-                    className={`inline-flex items-center gap-1 bg-hover text-ink-2 px-2 py-0.5 rounded text-xs font-medium${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
-                    >
-                      <span title={email}>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRecipient('cc', idx)}
-                        aria-label={`Remove ${email}`}
-                        className="hover:text-ink px-1 min-h-[44px] sm:min-h-0"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    id="composer-cc"
-                    type="email"
-                    value={ccInput}
-                    onChange={(e) => setCcInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ',') {
-                        e.preventDefault();
-                        handleAddRecipient('cc', ccInput);
-                      }
-                    }}
-                    onBlur={() => {
-                      if (ccInput) handleAddRecipient('cc', ccInput);
-                    }}
-                    placeholder="Cc recipients..."
-                    className="flex-1 min-w-[120px] focus:outline-none bg-transparent py-0.5 text-ink"
-                  />
-                </div>
-              </div>
+              <RecipientField
+                id="composer-cc"
+                label="Cc"
+                list={ccList}
+                input={ccInput}
+                onInput={setCcInput}
+                onAdd={(v) => handleAddRecipient('cc', v)}
+                onRemove={(i) => handleRemoveRecipient('cc', i)}
+                nameOf={nameOf}
+              />
             )}
-
-            {/* Bcc Line */}
             {showBcc && (
-              <div className="py-1.5 flex items-center gap-2">
-                <label htmlFor="composer-bcc" className="text-ink-3 font-medium w-12">Bcc:</label>
-                <div className="flex-1 flex flex-wrap items-center gap-1.5">
-                  {bccList.map((email, idx) => (
-                    <span
-                      key={idx}
-                      aria-invalid={!isValidRecipient(email) || undefined}
-                    title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
-                    className={`inline-flex items-center gap-1 bg-hover text-ink-2 px-2 py-0.5 rounded text-xs font-medium${!isValidRecipient(email) ? ' !bg-warn-bg !text-warn-ink !border-warn-line line-through' : ''}`}
-                    >
-                      <span title={email}>{nameOf(email) || email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRecipient('bcc', idx)}
-                        aria-label={`Remove ${email}`}
-                        className="hover:text-ink px-1 min-h-[44px] sm:min-h-0"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    id="composer-bcc"
-                    type="email"
-                    value={bccInput}
-                    onChange={(e) => setBccInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ',') {
-                        e.preventDefault();
-                        handleAddRecipient('bcc', bccInput);
-                      }
-                    }}
-                    onBlur={() => {
-                      if (bccInput) handleAddRecipient('bcc', bccInput);
-                    }}
-                    placeholder="Bcc recipients..."
-                    className="flex-1 min-w-[120px] focus:outline-none bg-transparent py-0.5 text-ink"
-                  />
-                </div>
-              </div>
+              <RecipientField
+                id="composer-bcc"
+                label="Bcc"
+                list={bccList}
+                input={bccInput}
+                onInput={setBccInput}
+                onAdd={(v) => handleAddRecipient('bcc', v)}
+                onRemove={(i) => handleRemoveRecipient('bcc', i)}
+                nameOf={nameOf}
+              />
             )}
 
             {droppedNote && (
@@ -818,7 +719,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder="Subject"
-                className="flex-1 focus:outline-none bg-transparent py-0.5 text-ink font-medium"
+                className="flex-1 focus:outline-none bg-transparent py-0.5 text-ink font-medium max-sm:text-[16px]"
               />
             </div>
           </div>

@@ -62,3 +62,29 @@ export function sentToText(to?: string[]): string {
   if (list.length === 2) return `Sent to ${list[0]} and ${list[1]}`;
   return `Sent to ${list[0]} and ${list.length - 1} others`;
 }
+
+/** "Jo Doe" for `Jo Doe <jo@x.com>` or `"Doe, Jo" <jo@x.com>`; empty when the entry is a bare address. */
+export function nameOfEntry(entry: string): string {
+  const m = /^\s*(.*?)\s*<[^<>]*>\s*$/.exec(entry);
+  if (!m) return '';
+  return m[1]!.replace(/^"(.*)"$/, '$1').replace(/\\(.)/g, '$1').trim();
+}
+
+/** The entry a chosen suggestion becomes: `Name <a@b.c>` (name quoted when needed) or the bare address. */
+export function formatSuggestion(name: string, email: string): string {
+  const n = name.trim();
+  if (!n || n.toLowerCase() === email.toLowerCase()) return email;
+  return /[",;<>()[\]:@\\]/.test(n) ? `"${n.replace(/(["\\])/g, '\\$1')}" <${email}>` : `${n} <${email}>`;
+}
+
+/** Splits pasted text into addresses: commas, semicolons, new lines, or plain spaces between bare addresses. */
+export function splitPasted(text: string): string[] {
+  const normal = text.replace(/\r?\n+/g, ',');
+  const parts = splitRecipients(normal);
+  const out: string[] = [];
+  for (const p of parts) {
+    if (!/[<>"]/.test(p) && /\s/.test(p.trim())) out.push(...p.trim().split(/\s+/));
+    else out.push(p);
+  }
+  return out;
+}
