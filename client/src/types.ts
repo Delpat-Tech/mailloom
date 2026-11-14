@@ -59,19 +59,20 @@ export interface ParsedEmailMessage {
 }
 
 export interface UserAccount {
+  /** Public per-browser account handle; names this account in API calls (X-Mailloom-Account). */
+  handle: string;
   email: string;
   name?: string;
-  imapHost?: string;
-  smtpHost?: string;
   isDemo?: boolean;
+  rememberMe?: boolean;
+  expiresAt?: string;
 }
 
+/** Cached, non-secret account info for the switcher. The session itself is an httpOnly cookie. */
 export interface StoredAccountProfile {
+  handle: string;
   email: string;
   name?: string;
-  token: string;
-  imapHost?: string;
-  smtpHost?: string;
   isDemo?: boolean;
   rememberMe?: boolean;
   unreadCount?: number;

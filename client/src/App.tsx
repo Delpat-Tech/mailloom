@@ -6,14 +6,17 @@ import { ComposerModal } from './components/ComposerModal.js';
 import { ConnectModal } from './components/ConnectModal.js';
 import {
   api,
-  getStoredToken,
+  getActiveHandle,
+  setActiveHandle,
   getStoredAccounts,
-  saveAccountProfile,
+  syncStoredAccounts,
+  findStoredAccount,
   removeStoredAccount,
-  switchStoredAccount,
+  touchStoredAccount,
   updateStoredAccountUnread,
-  clearStoredToken,
-  type SearchFilterParams
+  onSessionExpired,
+  type SearchFilterParams,
+  type SessionExpiredDetail
 } from './services/api.js';
 import {
   showDesktopNotification,
@@ -41,6 +44,9 @@ export const App: React.FC = () => {
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [savedAccounts, setSavedAccounts] = useState<StoredAccountProfile[]>([]);
   const [isAddingAccount, setIsAddingAccount] = useState(false);
+  // Set when an account's server session ended: shows a sign-in prompt over the app
+  // (no reload, so an open composer keeps its text).
+  const [reauth, setReauth] = useState<SessionExpiredDetail | null>(null);
 
   // Mailboxes & Navigation
   const [folders, setFolders] = useState<MailboxFolder[]>([]);
@@ -128,42 +134,44 @@ export const App: React.FC = () => {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // 1. Initial Authentication Check (< 300ms Silent Auto-Login)
+  // 1. Initial Authentication Check: ask the server which accounts this browser is signed in to.
   useEffect(() => {
-    const existingAccounts = getStoredAccounts();
-    setSavedAccounts(existingAccounts);
-
-    const token = getStoredToken();
-    if (!token) {
-      setIsAuthChecking(false);
-      return;
-    }
-
+    setSavedAccounts(getStoredAccounts());
     api
-      .getCurrentUser()
-      .then((res) => {
-        setAccount(res.account);
-        // Refresh saved profile timestamp
-        saveAccountProfile({
-          email: res.account.email,
-          name: res.account.name,
-          token,
-          imapHost: res.account.imapHost,
-          smtpHost: res.account.smtpHost,
-          isDemo: res.account.isDemo,
-          lastActive: Date.now()
-        });
-        setSavedAccounts(getStoredAccounts());
+      .getAccounts()
+      .then(({ accounts }) => {
+        const synced = syncStoredAccounts(accounts);
+        setSavedAccounts(synced);
+        if (accounts.length === 0) {
+          setActiveHandle(null);
+          setAccount(null);
+          return;
+        }
+        const current = getActiveHandle();
+        const active =
+          accounts.find((a) => a.handle === current) ||
+          accounts.find((a) => a.handle === synced[0]?.handle) ||
+          accounts[0];
+        setActiveHandle(active.handle);
+        setAccount(active);
       })
-      .catch(() => {
-        // Token invalid or expired, clear and prompt login
-        clearStoredToken();
+      .catch((err: unknown) => {
         setAccount(null);
+        showToast(err instanceof Error ? err.message : 'Cannot reach Mailloom.', 'error');
       })
       .finally(() => {
         setIsAuthChecking(false);
       });
   }, []);
+
+  // Session ended on the server (expired, signed out elsewhere): prompt to sign in again.
+  useEffect(
+    () =>
+      onSessionExpired((detail) => {
+        setReauth((prev) => (prev && prev.handle === detail.handle ? prev : detail));
+      }),
+    []
+  );
 
   // 2. Fetch Folders (isolated from selectedFolder changes to prevent duplicate concurrent IMAP locks)
   const selectedFolderRef = useRef(selectedFolder);
@@ -465,58 +473,95 @@ export const App: React.FC = () => {
   };
 
   // 10. Multi-Account Management
-  const handleConnected = (acc: UserAccount, token: string, rememberMe: boolean) => {
-    saveAccountProfile({
-      email: acc.email,
-      name: acc.name,
-      token,
-      imapHost: acc.imapHost,
-      smtpHost: acc.smtpHost,
-      isDemo: acc.isDemo,
-      rememberMe,
-      lastActive: Date.now()
-    });
-    setAccount(acc);
-    setSavedAccounts(getStoredAccounts());
-    setIsAddingAccount(false);
-    showToast(isAddingAccount ? `Added mailbox ${acc.email}` : 'Connected successfully');
-  };
-
-  const handleSwitchAccount = async (targetEmail: string) => {
-    const switched = switchStoredAccount(targetEmail);
-    if (!switched) return;
-
-    setIsMessagesLoading(true);
+  const resetMailView = () => {
+    setFolders([]);
     setMessages([]);
     setSelectedUid(null);
     setSelectedMessage(null);
     setSelectedFolder('INBOX');
+    prevUnreadRef.current = null;
+  };
 
+  const handleConnected = (acc: UserAccount, _rememberMe: boolean) => {
+    // api.connect() already stored the profile and made this account active.
+    const wasReauth = reauth !== null;
+    const sameAccount = account?.email.toLowerCase() === acc.email.toLowerCase();
+    if (!sameAccount) resetMailView();
+    setAccount(acc);
+    setSavedAccounts(getStoredAccounts());
+    setIsAddingAccount(false);
+    setReauth(null);
+    showToast(wasReauth ? 'Signed in again' : isAddingAccount ? `Added mailbox ${acc.email}` : 'Connected successfully');
+  };
+
+  const handleSwitchAccount = async (targetEmail: string) => {
+    const target = findStoredAccount(targetEmail);
+    if (!target) return;
+
+    setIsMessagesLoading(true);
     try {
-      const res = await api.getCurrentUser();
+      const res = await api.getCurrentUser(target.handle);
+      setActiveHandle(res.account.handle);
+      touchStoredAccount(res.account.handle);
+      resetMailView();
       setAccount(res.account);
       setSavedAccounts(getStoredAccounts());
       showToast(`Switched to ${targetEmail}`);
-    } catch {
-      showToast(`Could not reconnect to ${targetEmail}`, 'error');
+    } catch (err) {
+      // A 401 also raises the sign-in prompt for that account.
+      showToast(`Could not switch to ${targetEmail}: ${err instanceof Error ? err.message : 'unknown error'}`, 'error');
     } finally {
       setIsMessagesLoading(false);
     }
   };
 
-  const handleRemoveAccount = (targetEmail: string) => {
-    removeStoredAccount(targetEmail);
-    const updated = getStoredAccounts();
-    setSavedAccounts(updated);
-    showToast(`Removed account ${targetEmail}`);
+  /** Signs one account out on the server. Returns false (and says why) if that failed. */
+  const signOutAccount = async (handle: string, email: string): Promise<boolean> => {
+    try {
+      await api.logout(handle);
+      return true;
+    } catch (err) {
+      showToast(`Could not sign out of ${email}: ${err instanceof Error ? err.message : 'unknown error'}`, 'error');
+      return false;
+    }
+  };
 
-    // If active account was removed, switch to next or logout
+  const showRemainingOrSignIn = (remaining: StoredAccountProfile[]) => {
+    setSavedAccounts(remaining);
+    if (remaining.length > 0) {
+      handleSwitchAccount(remaining[0].email);
+    } else {
+      setActiveHandle(null);
+      setAccount(null);
+      resetMailView();
+    }
+  };
+
+  const handleRemoveAccount = async (targetEmail: string) => {
+    const target = findStoredAccount(targetEmail);
+    if (!target) return;
+    if (!(await signOutAccount(target.handle, targetEmail))) return;
+    showToast(`Signed out of ${targetEmail}`);
+
+    // If the active account was removed, switch to the next one or show sign-in.
     if (account?.email.toLowerCase() === targetEmail.toLowerCase()) {
-      if (updated.length > 0) {
-        handleSwitchAccount(updated[0].email);
-      } else {
-        handleLogout();
-      }
+      showRemainingOrSignIn(getStoredAccounts());
+    } else {
+      setSavedAccounts(getStoredAccounts());
+    }
+  };
+
+  // Closing the re-sign-in prompt without signing in: forget that account in this browser.
+  const handleCancelReauth = () => {
+    const ended = reauth;
+    setReauth(null);
+    if (!ended) return;
+    removeStoredAccount(ended.handle);
+    const endedIsActive = !ended.email || account?.email.toLowerCase() === ended.email.toLowerCase();
+    if (endedIsActive) {
+      showRemainingOrSignIn(getStoredAccounts());
+    } else {
+      setSavedAccounts(getStoredAccounts());
     }
   };
 
@@ -561,24 +606,11 @@ export const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [account]);
 
-  // 12. Logout Active Account
+  // 12. Logout Active Account (this browser only; other devices stay signed in)
   const handleLogout = async () => {
-    if (account) {
-      removeStoredAccount(account.email);
-    }
-    await api.logout();
-    const remaining = getStoredAccounts();
-    setSavedAccounts(remaining);
-
-    if (remaining.length > 0) {
-      handleSwitchAccount(remaining[0].email);
-    } else {
-      setAccount(null);
-      setFolders([]);
-      setMessages([]);
-      setSelectedUid(null);
-      setSelectedMessage(null);
-    }
+    if (!account) return;
+    if (!(await signOutAccount(account.handle, account.email))) return;
+    showRemainingOrSignIn(getStoredAccounts());
   };
 
   if (isAuthChecking) {
@@ -716,6 +748,16 @@ export const App: React.FC = () => {
           onInstallApp={handleInstallApp}
           notificationPermission={notificationPerm}
           onRequestNotifications={handleRequestNotifications}
+        />
+      )}
+
+      {/* Session ended: sign in again without reloading (open drafts are kept) */}
+      {reauth && !isAddingAccount && account && (
+        <ConnectModal
+          isAddingAccount={true}
+          reauthEmail={reauth.email ?? ''}
+          onConnected={handleConnected}
+          onCancel={handleCancelReauth}
         />
       )}
 

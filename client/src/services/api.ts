@@ -1,97 +1,140 @@
 import type { MailboxFolder, MessageHeader, ParsedEmailMessage, UserAccount, StoredAccountProfile } from '../types.js';
 
-const ACTIVE_TOKEN_KEY = 'mailloom_active_token';
-const ACCOUNTS_KEY = 'mailloom_saved_accounts';
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+/*
+ * Sessions live on the server. The browser holds one httpOnly cookie per signed-in
+ * account (JavaScript cannot read it). This module only keeps:
+ *  - the active account's public handle (which account a request is for), and
+ *  - a cache of account names and unread counts for the account switcher.
+ * Neither is a secret. Every API call names its account with X-Mailloom-Account.
+ */
 
-export function getStoredAccounts(): StoredAccountProfile[] {
+const ACCOUNTS_KEY = 'mailloom_accounts_v2';
+const ACTIVE_HANDLE_KEY = 'mailloom_active_handle';
+const LEGACY_KEYS = ['mailloom_active_token', 'mailloom_saved_accounts', 'roundcube_session_token'];
+export const SESSION_EXPIRED_EVENT = 'mailloom:session-expired';
+
+export interface SessionExpiredDetail {
+  handle: string;
+  email?: string;
+}
+
+// Remove credential-bearing tokens stored by older versions.
+try {
+  for (const key of LEGACY_KEYS) localStorage.removeItem(key);
+} catch {
+  // Storage unavailable (private mode): nothing to clean.
+}
+
+function readAccounts(): StoredAccountProfile[] {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY);
-    if (!raw) return [];
-    const parsed: StoredAccountProfile[] = JSON.parse(raw);
-    const now = Date.now();
-    // Filter out expired accounts
-    const valid = parsed.filter((acc) => !acc.rememberMe || (acc.lastActive + THIRTY_DAYS_MS > now));
-    if (valid.length !== parsed.length) {
-      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(valid));
-    }
-    return valid;
+    const parsed = raw ? (JSON.parse(raw) as StoredAccountProfile[]) : [];
+    return Array.isArray(parsed) ? parsed.filter((a) => a && typeof a.handle === 'string') : [];
   } catch {
     return [];
   }
 }
 
-export function saveAccountProfile(profile: StoredAccountProfile): void {
+function writeAccounts(accounts: StoredAccountProfile[]): void {
   try {
-    const accounts = getStoredAccounts();
-    const existingIdx = accounts.findIndex((a) => a.email.toLowerCase() === profile.email.toLowerCase());
-    if (existingIdx >= 0) {
-      accounts[existingIdx] = { ...accounts[existingIdx], ...profile, lastActive: Date.now() };
-    } else {
-      // Max 3 saved accounts
-      if (accounts.length >= 3) {
-        accounts.pop(); // remove oldest
-      }
-      accounts.unshift({ ...profile, lastActive: Date.now() });
-    }
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-    localStorage.setItem(ACTIVE_TOKEN_KEY, profile.token);
   } catch {
-    // Ignore localStorage quota errors
+    // Ignore storage quota errors: the server is the source of truth.
   }
 }
 
-export function removeStoredAccount(email: string): void {
+// Per tab: switching accounts in one tab does not change the account another tab uses.
+let activeHandle: string | null = (() => {
   try {
-    const accounts = getStoredAccounts().filter((a) => a.email.toLowerCase() !== email.toLowerCase());
-    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-    // If active account was removed, switch to next available or clear
-    if (accounts.length > 0) {
-      localStorage.setItem(ACTIVE_TOKEN_KEY, accounts[0].token);
+    return sessionStorage.getItem(ACTIVE_HANDLE_KEY) || localStorage.getItem(ACTIVE_HANDLE_KEY);
+  } catch {
+    return null;
+  }
+})();
+
+export function getActiveHandle(): string | null {
+  return activeHandle;
+}
+
+export function setActiveHandle(handle: string | null): void {
+  activeHandle = handle;
+  try {
+    if (handle) {
+      sessionStorage.setItem(ACTIVE_HANDLE_KEY, handle);
+      localStorage.setItem(ACTIVE_HANDLE_KEY, handle);
     } else {
-      localStorage.removeItem(ACTIVE_TOKEN_KEY);
+      sessionStorage.removeItem(ACTIVE_HANDLE_KEY);
+      localStorage.removeItem(ACTIVE_HANDLE_KEY);
     }
   } catch {
     // Ignore
   }
 }
 
-export function switchStoredAccount(email: string): StoredAccountProfile | null {
-  const accounts = getStoredAccounts();
-  const target = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+export function getStoredAccounts(): StoredAccountProfile[] {
+  return readAccounts();
+}
+
+/** Replace the cached list with the server's view, keeping cached unread counts. */
+export function syncStoredAccounts(accounts: UserAccount[]): StoredAccountProfile[] {
+  const cached = readAccounts();
+  const next: StoredAccountProfile[] = accounts.map((acc) => {
+    const old = cached.find((c) => c.handle === acc.handle || c.email.toLowerCase() === acc.email.toLowerCase());
+    return {
+      handle: acc.handle,
+      email: acc.email,
+      name: acc.name,
+      isDemo: acc.isDemo,
+      rememberMe: acc.rememberMe,
+      unreadCount: old?.unreadCount,
+      lastActive: old?.lastActive ?? Date.now()
+    };
+  });
+  next.sort((a, b) => b.lastActive - a.lastActive);
+  writeAccounts(next);
+  return next;
+}
+
+export function saveAccountProfile(acc: UserAccount): void {
+  const accounts = readAccounts().filter(
+    (a) => a.handle !== acc.handle && a.email.toLowerCase() !== acc.email.toLowerCase()
+  );
+  accounts.unshift({
+    handle: acc.handle,
+    email: acc.email,
+    name: acc.name,
+    isDemo: acc.isDemo,
+    rememberMe: acc.rememberMe,
+    lastActive: Date.now()
+  });
+  writeAccounts(accounts);
+}
+
+export function removeStoredAccount(handle: string): void {
+  writeAccounts(readAccounts().filter((a) => a.handle !== handle));
+  if (activeHandle === handle) setActiveHandle(null);
+}
+
+export function findStoredAccount(email: string): StoredAccountProfile | undefined {
+  return readAccounts().find((a) => a.email.toLowerCase() === email.toLowerCase());
+}
+
+export function touchStoredAccount(handle: string): void {
+  const accounts = readAccounts();
+  const target = accounts.find((a) => a.handle === handle);
   if (target) {
     target.lastActive = Date.now();
-    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-    localStorage.setItem(ACTIVE_TOKEN_KEY, target.token);
-    return target;
+    writeAccounts(accounts);
   }
-  return null;
 }
 
 export function updateStoredAccountUnread(email: string, unreadCount: number): void {
-  try {
-    const accounts = getStoredAccounts();
-    const target = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
-    if (target) {
-      target.unreadCount = unreadCount;
-      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-    }
-  } catch {
-    // Ignore
+  const accounts = readAccounts();
+  const target = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+  if (target) {
+    target.unreadCount = unreadCount;
+    writeAccounts(accounts);
   }
-}
-
-export function getStoredToken(): string | null {
-  return localStorage.getItem(ACTIVE_TOKEN_KEY) || localStorage.getItem('roundcube_session_token');
-}
-
-export function setStoredToken(token: string) {
-  localStorage.setItem(ACTIVE_TOKEN_KEY, token);
-}
-
-export function clearStoredToken() {
-  localStorage.removeItem(ACTIVE_TOKEN_KEY);
-  localStorage.removeItem('roundcube_session_token');
 }
 
 const API_BASE =
@@ -99,28 +142,76 @@ const API_BASE =
     ? '/mail/api'
     : '/api';
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = getStoredToken();
-  const headers = new Headers(options.headers || {});
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
+/** Error from the API, with the HTTP status and the server's error code when it sent one. */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
   }
-  if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
+}
+
+export function isSessionEndedError(err: unknown): boolean {
+  return (
+    err instanceof ApiError && err.status === 401 && (err.code === 'SESSION_EXPIRED' || err.code === 'NOT_SIGNED_IN')
+  );
+}
+
+interface RequestOptions extends RequestInit {
+  /** Account to act as; defaults to the active account. null sends no account. */
+  account?: string | null;
+}
+
+async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+  const { account, ...init } = options;
+  const handle = account === undefined ? activeHandle : account;
+  const headers = new Headers(init.headers || {});
+  if (handle) {
+    headers.set('X-Mailloom-Account', handle);
+  }
+  // Only declare JSON when there is a JSON body (an empty JSON body is a 400 on Fastify).
+  if (typeof init.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-    credentials: 'include'
-  });
-
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(errorBody.error || `Request failed with status ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      ...init,
+      headers,
+      credentials: 'same-origin'
+    });
+  } catch {
+    throw new ApiError('Cannot reach Mailloom. Check your connection and try again.', 0, 'NETWORK');
   }
 
-  return res.json();
+  if (!res.ok) {
+    const errorBody = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    const err = new ApiError(
+      errorBody.error || `Request failed (${res.status}${res.statusText ? ` ${res.statusText}` : ''})`,
+      res.status,
+      errorBody.code
+    );
+    if (handle && isSessionEndedError(err)) {
+      const email = readAccounts().find((a) => a.handle === handle)?.email;
+      window.dispatchEvent(
+        new CustomEvent<SessionExpiredDetail>(SESSION_EXPIRED_EVENT, { detail: { handle, email } })
+      );
+    }
+    throw err;
+  }
+
+  return res.json() as Promise<T>;
+}
+
+/** Subscribe to "this account's session has ended" (401). Returns an unsubscribe function. */
+export function onSessionExpired(listener: (detail: SessionExpiredDetail) => void): () => void {
+  const handler = (e: Event) => listener((e as CustomEvent<SessionExpiredDetail>).detail);
+  window.addEventListener(SESSION_EXPIRED_EVENT, handler);
+  return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handler);
 }
 
 export interface SearchFilterParams {
@@ -134,22 +225,32 @@ export interface SearchFilterParams {
 
 export const api = {
   // Auth
-  connect: async (data: Record<string, unknown>): Promise<{ token: string; account: UserAccount }> => {
-    const res = await request<{ token: string; account: UserAccount }>('/auth/connect', {
+  /** Signs in. The server sets this account's session cookie; nothing secret is returned. */
+  connect: async (data: { email: string; password: string; rememberMe: boolean }): Promise<{ account: UserAccount }> => {
+    const res = await request<{ account: UserAccount }>('/auth/connect', {
       method: 'POST',
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
+      account: null
     });
-    setStoredToken(res.token);
+    saveAccountProfile(res.account);
+    setActiveHandle(res.account.handle);
     return res;
   },
 
-  getCurrentUser: async (): Promise<{ account: UserAccount }> => {
-    return request<{ account: UserAccount }>('/auth/me');
+  getCurrentUser: async (handle?: string): Promise<{ account: UserAccount }> => {
+    return request<{ account: UserAccount }>('/auth/me', handle ? { account: handle } : {});
   },
 
-  logout: async (): Promise<void> => {
-    await request('/auth/logout', { method: 'POST' }).catch(() => {});
-    clearStoredToken();
+  /** All accounts signed in in this browser, according to the server. */
+  getAccounts: async (): Promise<{ accounts: UserAccount[] }> => {
+    return request<{ accounts: UserAccount[] }>('/auth/accounts', { account: null });
+  },
+
+  /** Signs one account out (this browser only). Throws if the server could not be told. */
+  logout: async (handle: string | null = activeHandle): Promise<void> => {
+    if (!handle) return;
+    await request('/auth/logout', { method: 'POST', account: handle });
+    removeStoredAccount(handle);
   },
 
   // Mailboxes
@@ -241,6 +342,9 @@ export const api = {
   },
 
   getAttachmentUrl: (folderPath: string, uid: number, partId: string): string => {
-    return `${API_BASE}/mailboxes/${encodeURIComponent(folderPath)}/messages/${uid}/attachments/${partId}`;
+    // Links cannot send headers, so the account goes in the query (the server allows that for GET only).
+    // Uses the account active when the message was rendered, not whichever signed in last.
+    const account = activeHandle ? `?account=${encodeURIComponent(activeHandle)}` : '';
+    return `${API_BASE}/mailboxes/${encodeURIComponent(folderPath)}/messages/${uid}/attachments/${encodeURIComponent(partId)}${account}`;
   }
 };

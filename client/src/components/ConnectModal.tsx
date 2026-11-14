@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Mail,
   AlertCircle,
@@ -13,7 +13,9 @@ import { api } from '../services/api.js';
 import type { UserAccount } from '../types.js';
 
 interface ConnectModalProps {
-  onConnected: (account: UserAccount, token: string, rememberMe: boolean) => void;
+  onConnected: (account: UserAccount, rememberMe: boolean) => void;
+  /** Set when an account's session ended: the form is prefilled and explains why. */
+  reauthEmail?: string;
   isAddingAccount?: boolean;
   onCancel?: () => void;
   canInstall?: boolean;
@@ -22,6 +24,13 @@ interface ConnectModalProps {
   onRequestNotifications?: () => void;
 }
 
+const LOCAL_PUNS = [
+  "I'd tell you an email joke, but you might not get the message.",
+  "Why did the email go to school? To improve its attachments!",
+  "I have a great joke about SMTP, but you might reject it.",
+  "Spam in my inbox, jam on my toast."
+];
+
 export const ConnectModal: React.FC<ConnectModalProps> = ({
   onConnected,
   isAddingAccount = false,
@@ -29,39 +38,23 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
   canInstall = false,
   onInstallApp,
   notificationPermission = 'default',
-  onRequestNotifications
+  onRequestNotifications,
+  reauthEmail
 }) => {
-  const [rememberMe, setRememberMe] = useState(true);
+  // Unticked by default: a short session that ends when idle. Ticked keeps this browser signed in for 30 days.
+  const [rememberMe, setRememberMe] = useState(false);
 
-  // Dynamic pun state fetched from free JokeAPI
-  const [pun, setPun] = useState<string>('Delivering smiles, one email at a time.');
-
-  useEffect(() => {
-    fetch('https://v2.jokeapi.dev/joke/Pun?blacklistFlags=nsfw,religious,political,racist,sexist,explicit&type=single')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.joke) {
-          setPun(data.joke);
-        }
-      })
-      .catch(() => {
-        const fallbackPuns = [
-          "I'd tell you an email joke, but you might not get the message.",
-          "To whoever stole my Microsoft Office: You have my Word.",
-          "Why did the email go to school? To improve its attachments!",
-          "I have a great joke about SMTP, but you might reject it.",
-          "Spam in my inbox, jam on my toast."
-        ];
-        setPun(fallbackPuns[Math.floor(Math.random() * fallbackPuns.length)]);
-      });
-  }, []);
+  // Local puns only: the sign-in page makes no third-party requests.
+  const [pun] = useState<string>(() => LOCAL_PUNS[Math.floor(Math.random() * LOCAL_PUNS.length)]);
 
   // Form state
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(reauthEmail || '');
   const [password, setPassword] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(
+    reauthEmail !== undefined ? 'Your session has ended. Sign in again to continue; open drafts are kept.' : null
+  );
 
   const handleConnectCustom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,20 +66,12 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
     setIsLoading(true);
     setErrorMsg(null);
     try {
-      const res = await api.connect({
-        email,
-        name: email.split('@')[0],
-        password,
-        imapHost: '127.0.0.1',
-        imapPort: 993,
-        imapSecure: true,
-        smtpHost: '127.0.0.1',
-        smtpPort: 587,
-        smtpSecure: false
-      });
-      onConnected(res.account, res.token, rememberMe);
+      // Only the email and password are sent; the mail server is fixed in the server's configuration.
+      const res = await api.connect({ email: email.trim(), password, rememberMe });
+      setPassword('');
+      onConnected(res.account, rememberMe);
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : 'Connection failed. Verify your email and password.');
+      setErrorMsg(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
       setIsLoading(false);
     }
   };
@@ -109,10 +94,10 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
             <Mail className="w-6 h-6" />
           </div>
           <h2 className="text-xl font-bold tracking-tight">
-            {isAddingAccount ? 'Connect Another Mailbox' : 'Mailloom Webmail'}
+            {reauthEmail !== undefined ? 'Sign In Again' : isAddingAccount ? 'Connect Another Mailbox' : 'Mailloom Webmail'}
           </h2>
 
-          {/* Dynamic Pun fetched live on load */}
+          {/* Light-hearted tagline (local list) */}
           <div className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700/60 max-w-sm mx-auto text-[11px] text-sky-300 font-medium leading-tight">
             <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             <span className="italic">{pun}</span>
@@ -135,6 +120,8 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
             <input
               type="email"
               required
+              autoComplete="username"
+              aria-label="Email address"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
@@ -147,6 +134,8 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
             <input
               type="password"
               required
+              autoComplete="current-password"
+              aria-label="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"
@@ -163,7 +152,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
                 onChange={(e) => setRememberMe(e.target.checked)}
                 className="rounded text-sky-600 focus:ring-sky-500 w-3.5 h-3.5"
               />
-              <span className="font-medium text-xs">Remember Me / Stay Signed In (30 days)</span>
+              <span className="font-medium text-xs">Keep me signed in for 30 days (not on a shared computer)</span>
             </label>
           </div>
 
