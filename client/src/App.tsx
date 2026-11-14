@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar.js';
 import { ConnectionsPanel } from './components/ConnectionsPanel.js';
+import { NotificationsPanel } from './components/NotificationsPanel.js';
+import {
+  currentSubscription,
+  pushApi,
+  setAppBadge,
+  takeOpenTargetFromHash,
+  type OpenMessageTarget
+} from './services/push.js';
 import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
 import { ComposerModal, type ComposerReplyMeta } from './components/ComposerModal.js';
@@ -83,6 +91,12 @@ export const App: React.FC = () => {
   // Composer
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [showConnections, setShowConnections] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  // Push notifications are on for this device and the active account: the in-tab poll then stays quiet
+  // (the service worker already shows a notification for the same mail).
+  const pushActiveRef = useRef(false);
+  // A notification was tapped: open that mailbox, folder and message once the account is ready.
+  const [openTarget, setOpenTarget] = useState<OpenMessageTarget | null>(() => takeOpenTargetFromHash());
   const [composerInitial, setComposerInitial] = useState<{
     to?: string[];
     cc?: string[];
@@ -780,7 +794,7 @@ export const App: React.FC = () => {
         if (prevUnreadRef.current !== null && currentUnread > prevUnreadRef.current) {
           const freshInbox = await api.getMessages('INBOX', 1, 1);
           const newest = freshInbox.messages[0];
-          if (newest && !newest.isSeen) {
+          if (newest && !newest.isSeen && !pushActiveRef.current) {
             showDesktopNotification({
               title: `New Email from ${newest.from.name || newest.from.address}`,
               body: newest.subject || '(No subject)',
@@ -806,6 +820,74 @@ export const App: React.FC = () => {
 
     return () => clearInterval(interval);
   }, [account]);
+
+  // 11b. Unread count of the active account's inbox in the tab title and on the app icon.
+  const inboxUnread = folders.find((f) => f.specialUse === 'Inbox' || f.path.toUpperCase() === 'INBOX')?.unreadCount ?? 0;
+  useEffect(() => {
+    const base = 'Mailloom · Delpat Webmail';
+    document.title = account && inboxUnread > 0 ? `(${inboxUnread}) ${base}` : base;
+    if (account) setAppBadge(inboxUnread);
+  }, [account, inboxUnread]);
+
+  // 11c. Is push on for this device and account? Checked on account change and after the settings close.
+  useEffect(() => {
+    pushActiveRef.current = false;
+    if (!account || showNotifications) return;
+    let cancelled = false;
+    void (async () => {
+      const sub = await currentSubscription();
+      if (!sub) return;
+      try {
+        const { device } = await pushApi.device(sub.endpoint);
+        if (!cancelled) pushActiveRef.current = device?.status === 'on';
+      } catch {
+        // Not important: worst case a second notification while the tab is open.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [account, showNotifications]);
+
+  // 11d. Messages from the service worker: a notification was tapped, or new mail arrived.
+  const loadFoldersRef = useRef(loadFolders);
+  loadFoldersRef.current = loadFolders;
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; mailbox?: unknown; folder?: unknown; uid?: unknown } | null;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'mailloom:open' && typeof data.mailbox === 'string') {
+        setOpenTarget({
+          mailbox: data.mailbox,
+          folder: typeof data.folder === 'string' ? data.folder : 'INBOX',
+          uid: typeof data.uid === 'number' && data.uid > 0 ? data.uid : null
+        });
+      } else if (data.type === 'mailloom:new-mail') {
+        void loadFoldersRef.current();
+        void loadMessagesRef.current(true);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, []);
+
+  useEffect(() => {
+    if (!openTarget || isAuthChecking || !account) return;
+    if (account.email.toLowerCase() !== openTarget.mailbox.toLowerCase()) {
+      if (findStoredAccount(openTarget.mailbox)) void handleSwitchAccount(openTarget.mailbox);
+      else setOpenTarget(null); // not signed in to that mailbox in this browser
+      return;
+    }
+    if (selectedFolder.toLowerCase() !== openTarget.folder.toLowerCase()) {
+      handleSelectFolder(openTarget.folder);
+      return;
+    }
+    const uid = openTarget.uid;
+    setOpenTarget(null);
+    if (uid) void handleSelectMessageRef.current(uid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTarget, account, selectedFolder, isAuthChecking]);
 
   // 12. Logout Active Account (this browser only; other devices stay signed in)
   const handleLogout = async () => {
@@ -881,6 +963,10 @@ export const App: React.FC = () => {
               onCloseMobileSidebar={() => setShowMobileSidebar(false)}
               onOpenConnections={() => {
                 setShowConnections(true);
+                setShowMobileSidebar(false);
+              }}
+              onOpenNotifications={() => {
+                setShowNotifications(true);
                 setShowMobileSidebar(false);
               }}
             />
@@ -983,6 +1069,18 @@ export const App: React.FC = () => {
           reauthEmail={reauth.email ?? ''}
           onConnected={handleConnected}
           onCancel={handleCancelReauth}
+        />
+      )}
+
+      {showNotifications && account && (
+        <NotificationsPanel
+          key={account.handle}
+          email={account.email}
+          otherAccounts={Math.max(0, savedAccounts.length - 1)}
+          onClose={() => {
+            setShowNotifications(false);
+            setNotificationPerm(getNotificationPermission());
+          }}
         />
       )}
 

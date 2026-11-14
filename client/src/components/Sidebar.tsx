@@ -40,6 +40,8 @@ interface SidebarProps {
   onRequestNotifications?: () => void;
   onCloseMobileSidebar?: () => void;
   onOpenConnections?: () => void;
+  /** Opens notification settings (push while closed). Replaces the plain permission button. */
+  onOpenNotifications?: () => void;
 }
 
 const KIND_ORDER = ['Inbox', 'Drafts', 'Sent', 'Archive', 'Junk', 'Trash'];
@@ -84,7 +86,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   notificationPermission = 'default',
   onRequestNotifications,
   onCloseMobileSidebar,
-  onOpenConnections
+  onOpenConnections,
+  onOpenNotifications
 }) => {
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -227,7 +230,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         )}
 
-        {onRequestNotifications && notificationPermission !== 'granted' ? (
+        {onOpenNotifications && !account.isDemo ? (
+          <button
+            type="button"
+            onClick={onOpenNotifications}
+            className="w-full flex items-center justify-between px-3 py-1.5 min-h-[44px] lg:min-h-0 rounded-lg text-xs font-semibold text-slate-200 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 transition-all shadow-sm active:scale-[0.98]"
+          >
+            <span className="flex items-center gap-2">
+              {notificationPermission === 'granted' ? (
+                <BellRing className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+              ) : (
+                <Bell className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+              )}
+              <span>Notifications</span>
+            </span>
+            <span className="text-[10px] text-slate-400 font-bold">Settings</span>
+          </button>
+        ) : onRequestNotifications && notificationPermission !== 'granted' ? (
           <button
             type="button"
             onClick={onRequestNotifications}

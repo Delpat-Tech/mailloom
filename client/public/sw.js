@@ -1,5 +1,5 @@
 // Mailloom Lightweight Service Worker for Instant Cold Startup & App Shell Caching
-const CACHE_NAME = 'mailloom-shell-v1';
+const CACHE_NAME = 'mailloom-shell-v2';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -62,5 +62,80 @@ self.addEventListener('fetch', (event) => {
 
       return cachedResponse || fetchPromise;
     })
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Push notifications (new mail while Mailloom is closed)
+// Payload from the server: { v, kind: 'new-mail' | 'paused' | 'test', mailbox, title, body,
+//   count?, unread?, folder?, uid?, silent?, tag }. Never the message text.
+// Every push shows a notification: iPhone and Chrome stop delivering pushes to apps that do not.
+// ---------------------------------------------------------------------------
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const kind = typeof data.kind === 'string' ? data.kind : 'new-mail';
+  const title = typeof data.title === 'string' && data.title ? data.title : 'New mail';
+  const options = {
+    body: typeof data.body === 'string' ? data.body : '',
+    icon: './icon-192.png',
+    badge: './badge-96.png',
+    tag: typeof data.tag === 'string' ? data.tag : 'mailloom',
+    // Replacing an older notification for the same mailbox still alerts, unless quiet.
+    renotify: kind === 'new-mail' && !data.silent,
+    silent: !!data.silent,
+    timestamp: Date.now(),
+    data: {
+      kind,
+      mailbox: typeof data.mailbox === 'string' ? data.mailbox : '',
+      folder: typeof data.folder === 'string' ? data.folder : 'INBOX',
+      uid: typeof data.uid === 'number' ? data.uid : null
+    }
+  };
+
+  const tasks = [self.registration.showNotification(title, options)];
+
+  if (kind === 'new-mail' && typeof data.unread === 'number' && 'setAppBadge' in self.navigator) {
+    tasks.push(
+      (data.unread > 0 ? self.navigator.setAppBadge(data.unread) : self.navigator.clearAppBadge()).catch(() => undefined)
+    );
+  }
+
+  // An open Mailloom window refreshes its list at once.
+  if (kind === 'new-mail') {
+    tasks.push(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+        for (const client of list) client.postMessage({ type: 'mailloom:new-mail', mailbox: options.data.mailbox });
+      })
+    );
+  }
+
+  event.waitUntil(Promise.all(tasks));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const info = event.notification.data || {};
+  const target = { mailbox: info.mailbox || '', folder: info.folder || 'INBOX', uid: info.uid || null };
+  const scopeUrl = new URL('./', self.registration.scope).href;
+
+  event.waitUntil(
+    (async () => {
+      const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const existing = list.find((c) => c.url.startsWith(scopeUrl));
+      if (existing) {
+        await existing.focus().catch(() => undefined);
+        if (target.mailbox) existing.postMessage({ type: 'mailloom:open', ...target });
+        return;
+      }
+      // The fragment never reaches the server; the app reads and removes it.
+      const hash = target.mailbox ? '#open=' + encodeURIComponent(JSON.stringify(target)) : '';
+      await self.clients.openWindow(scopeUrl + hash);
+    })()
   );
 });
