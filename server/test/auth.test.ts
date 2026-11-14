@@ -470,9 +470,13 @@ describe('sessions', () => {
     assert.equal(Date.parse(t.res.json().account.expiresAt), clock + 30 * DAY);
     assert.equal(t.res.json().account.rememberMe, true);
 
+    // Use slides the window: a request on day 29 keeps the session alive past day 30 ...
     clock += 29 * DAY;
     assert.equal((await me(t.headers)).statusCode, 200);
     clock += DAY;
+    assert.equal((await me(t.headers)).statusCode, 200);
+    // ... but 30 days without any request ends it.
+    clock += 30 * DAY;
     const res = await me(t.headers);
     assert.equal(res.statusCode, 401);
     assert.equal(res.json().code, 'SESSION_EXPIRED');
