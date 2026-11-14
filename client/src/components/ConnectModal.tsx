@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { isPwaInstalled } from '../services/pwa.js';
 import {
   AlertCircle,
   Lock,
@@ -37,7 +38,8 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
   reauthEmail
 }) => {
   // Unticked by default: a short session that ends when idle. Ticked keeps this browser signed in for 30 days.
-  const [rememberMe, setRememberMe] = useState(false);
+  // On by default in the installed app (a phone or computer of one's own); off in a browser tab, which may be shared.
+  const [rememberMe, setRememberMe] = useState(() => isPwaInstalled());
 
   // Form state
   const [email, setEmail] = useState(reauthEmail || '');

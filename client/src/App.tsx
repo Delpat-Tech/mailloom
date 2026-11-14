@@ -18,6 +18,7 @@ import { Presence } from './components/Presence.js';
 import { sentToText } from './services/recipients';
 import { realUid, keyFor } from './services/uidKey.js';
 import { batchAction, markAllRead, MAX_BATCH_UIDS, type BatchAction } from './services/mailExtras.js';
+import { composeLaunchFromSearch, clearComposeLaunch, registerMailtoHandler, type ComposeLaunch } from './services/mailto.js';
 import { hasSearch, searchEverywhere, openSearch } from './services/searchAll.js';
 import { shownTotal, loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
 import { PendingActions } from './services/pendingActions.js';
@@ -1481,6 +1482,30 @@ export const App: React.FC = () => {
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);
   }, []);
+
+  // Opened as the mailto: handler (?mailto=...) or from the installed app's Write shortcut (?compose=1):
+  // the composer opens, filled in, once the account is ready. The address bar is cleaned at once.
+  const [launchCompose] = useState<ComposeLaunch | null>(() => {
+    const launch = composeLaunchFromSearch(window.location.search);
+    if (launch) clearComposeLaunch();
+    return launch;
+  });
+  const launchDone = useRef(false);
+  useEffect(() => {
+    registerMailtoHandler();
+  }, []);
+  useEffect(() => {
+    if (!launchCompose || launchDone.current || isAuthChecking || !account) return;
+    launchDone.current = true;
+    openComposer({
+      to: launchCompose.to,
+      cc: launchCompose.cc,
+      bcc: launchCompose.bcc,
+      subject: launchCompose.subject,
+      body: launchCompose.body
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launchCompose, account, isAuthChecking]);
 
   useEffect(() => {
     const onHash = () => {

@@ -149,3 +149,32 @@ describe('print document', () => {
     expect(d.querySelector('[data-mail="0"]')!.shadowRoot!.innerHTML).toContain('Hello');
   });
 });
+
+import { parseMailto, composeLaunchFromSearch } from '../services/mailto.js';
+import { isPwaInstalled } from '../services/pwa.js';
+
+describe('mailto links and the Write shortcut', () => {
+  it('reads recipients, subject and body', () => {
+    const m = parseMailto('mailto:a@x.test,b@x.test?cc=c@x.test&subject=Hello%20there&body=Line%201%0ALine%202');
+    expect(m).toEqual({ to: ['a@x.test', 'b@x.test'], cc: ['c@x.test'], bcc: [], subject: 'Hello there', body: 'Line 1\nLine 2' });
+    expect(parseMailto('https://x.test')).toBeNull();
+  });
+  it('?mailto= is decoded once by the browser; ?compose=1 opens an empty message', () => {
+    const search = '?mailto=' + encodeURIComponent('mailto:jo@x.test?subject=Hi+there');
+    expect(composeLaunchFromSearch(search)).toMatchObject({ to: ['jo@x.test'], subject: 'Hi+there' });
+    expect(composeLaunchFromSearch('?compose=1')).toEqual({ to: [], cc: [], bcc: [], subject: '', body: '' });
+    expect(composeLaunchFromSearch('?x=1')).toBeNull();
+  });
+  it('a browser tab is not "installed", so remember-me starts off there', () => {
+    expect(isPwaInstalled()).toBe(false);
+  });
+});
+
+import manifest from '../../public/manifest.webmanifest?raw';
+describe('manifest', () => {
+  it('has the Write shortcut and the mailto handler', () => {
+    const m = JSON.parse(manifest) as { shortcuts: { name: string; url: string }[]; protocol_handlers: { protocol: string; url: string }[] };
+    expect(m.shortcuts[0]).toMatchObject({ name: 'Write', url: './?compose=1' });
+    expect(m.protocol_handlers[0]).toEqual({ protocol: 'mailto', url: './?mailto=%s' });
+  });
+});

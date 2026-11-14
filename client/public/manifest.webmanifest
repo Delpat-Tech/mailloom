@@ -41,5 +41,29 @@
       "purpose": "any"
     }
   ],
-  "categories": ["productivity", "business"]
+  "categories": [
+    "productivity",
+    "business"
+  ],
+  "shortcuts": [
+    {
+      "name": "Write",
+      "short_name": "Write",
+      "description": "Start a new message",
+      "url": "./?compose=1",
+      "icons": [
+        {
+          "src": "./icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "mailto",
+      "url": "./?mailto=%s"
+    }
+  ]
 }
