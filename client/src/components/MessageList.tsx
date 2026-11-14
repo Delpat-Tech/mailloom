@@ -1,3 +1,4 @@
+import { Presence } from './Presence.js';
 import React, { useState, useRef, useLayoutEffect, useEffect, useMemo } from 'react';
 import {
   Search,
@@ -135,6 +136,7 @@ const MessageRow = React.memo(function MessageRow({
   msg, who, dateText, isSelected, isChecked, isUnread, tab, isDraft, leaving, canArchive, labelMap, snoozeOpen, ctl
 }: RowProps) {
   const bounce = msg.bounce;
+  const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
   const rowLabels = (msg.labels ?? []).map((id) => labelMap.get(id)).filter((l): l is Label => !!l);
   const shownLabels = rowLabels.slice(0, 2);
   const snoozeBtn = useRef<HTMLButtonElement>(null);
@@ -224,7 +226,7 @@ const MessageRow = React.memo(function MessageRow({
                   bounce ? '!text-warn-ink' : isSelected ? '!text-sel-ink' : ''
                 }`}
               >
-                {bounce ? `Could not deliver "${bounce.originalSubject}" to ${bounce.recipient}` : msg.subject || '(No subject)'}
+                {bounce ? (bounce.retryable ? `Could not deliver "${clip(bounce.originalSubject, 60)}" to ${clip(bounce.recipient, 40)}` : 'Delivery failed') : msg.subject || '(No subject)'}
               </span>
               <span className="block text-[13px] text-ink-3 truncate">
                 {bounce ? (
@@ -307,6 +309,7 @@ const MessageRow = React.memo(function MessageRow({
               <Clock className="w-3.5 h-3.5" />
             </button>
           </div>
+          <Presence show={snoozeOpen}>
           {snoozeOpen && (
             <SnoozeMenu
               anchor={snoozeBtn}
@@ -318,6 +321,7 @@ const MessageRow = React.memo(function MessageRow({
               onPick={(until) => ctl.snooze(msg.uid, until, msg.mailbox)}
             />
           )}
+          </Presence>
         </div>
       </div>
     </li>

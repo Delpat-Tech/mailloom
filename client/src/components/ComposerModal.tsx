@@ -1,3 +1,4 @@
+import { usePresence, LEAVE_COMPOSER_MS } from './Presence.js';
 import { splitRecipients, mergeRecipients, recipientSnapshot, isValidRecipient } from '../services/recipients';
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -312,7 +313,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
 
-  if (!isOpen) return null;
+  const { mounted: cmpMounted, leaving: cmpLeaving } = usePresence(isOpen, LEAVE_COMPOSER_MS);
+  if (!cmpMounted) return null;
 
   const handleAddRecipient = (
     type: 'to' | 'cc' | 'bcc',
@@ -496,6 +498,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="composer-title"
+      data-leaving={cmpLeaving ? 'true' : undefined}
       onKeyDown={(e) => {
         // Ctrl+Enter (Cmd+Enter on a Mac) sends from anywhere in the composer.
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isSending && !isMinimized) {

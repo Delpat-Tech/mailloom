@@ -93,6 +93,8 @@ describe('rows', () => {
     expect(screen.getByText('Client')).toBeTruthy();
     expect(screen.getByText('Not delivered')).toBeTruthy();
     expect(screen.getByText('The mailbox is full.')).toBeTruthy();
+    // Not retryable: the spoofable subject and recipient are not shown.
+    expect(screen.queryByText(/Quote/)).toBeNull();
   });
 
   it('marks drafts', () => {

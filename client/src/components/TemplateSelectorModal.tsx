@@ -1,3 +1,4 @@
+import { usePresence } from './Presence.js';
 import React, { useState, useEffect, useRef } from 'react';
 import { useDialog } from '../hooks/useDialog.js';
 import {
@@ -108,14 +109,15 @@ export const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialog(dialogRef, { open: isOpen, onEscape: onClose });
 
-  if (!isOpen) return null;
+  const { mounted, leaving } = usePresence(isOpen);
+  if (!mounted) return null;
 
   const currentPreview = selectedTemplate
     ? fillTemplateVariables(selectedTemplate, variableValues)
     : { subject: '', body: '' };
 
   return (
-    <div className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4 select-none">
+    <div data-leaving={leaving ? 'true' : undefined} className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4 select-none">
       <div
         ref={dialogRef}
         role="dialog"

@@ -8,6 +8,7 @@ import { LabelsManager } from './components/LabelsManager.js';
 import { labelsApi, labelErrorText, type Label, type LabelColour } from './services/labels.js';
 import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
+import { Presence } from './components/Presence.js';
 import { realUid } from './services/uidKey.js';
 import { loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
 import { PendingActions } from './services/pendingActions.js';
@@ -700,16 +701,14 @@ export const App: React.FC = () => {
   /** "Not delivered": reopen the original (from Sent) as a new message. */
   const handleRetryBounce = async () => {
     const b = messagesRef.current.find((m) => m.uid === selectedUid)?.bounce;
-    const sent = folders.find((f) => f.specialUse === 'Sent');
-    if (!b || !sent) {
+    // Only the server-supplied location of the original is used. The bounce's own subject and
+    // recipient text can be spoofed, so the new mail is never built from them.
+    if (!b || !b.retryable || !b.sentMailbox || typeof b.sentUid !== 'number') {
       showToast('The original message could not be found in Sent.', 'error');
       return;
     }
     try {
-      const res = await api.getMessages(sent.path, 1, 10, b.originalSubject);
-      const orig = res.messages.find((m) => m.subject.trim() === b.originalSubject.trim()) ?? res.messages[0];
-      if (!orig) throw new Error('missing');
-      const d = await api.getMessageDetail(sent.path, orig.uid, { peek: true });
+      const d = await api.getMessageDetail(b.sentMailbox, b.sentUid, { peek: true });
       openComposer({
         to: d.to.map((a) => a.address).filter(Boolean),
         cc: (d.cc || []).map((a) => a.address).filter(Boolean),
@@ -1558,6 +1557,7 @@ export const App: React.FC = () => {
         />
       )}
 
+      <Presence show={showLabelsManager}>
       {showLabelsManager && (
         <LabelsManager
           labels={labels}
@@ -1570,7 +1570,8 @@ export const App: React.FC = () => {
           onClose={() => setShowLabelsManager(false)}
         />
       )}
-      {showShortcuts && <ShortcutsSheet onClose={() => setShowShortcuts(false)} />}
+      </Presence>
+      <Presence show={showShortcuts}>{showShortcuts && <ShortcutsSheet onClose={() => setShowShortcuts(false)} />}</Presence>
 
       {/* Add Account Modal (Overlay on active session) */}
       {isAddingAccount && (
@@ -1595,6 +1596,7 @@ export const App: React.FC = () => {
         />
       )}
 
+      <Presence show={showNotifications && !!account}>
       {showNotifications && account && (
         <NotificationsPanel
           key={account.handle}
@@ -1607,9 +1609,12 @@ export const App: React.FC = () => {
         />
       )}
 
+      </Presence>
+      <Presence show={showConnections && !!account}>
       {showConnections && account && (
         <ConnectionsPanel key={account.handle} email={account.email} onClose={() => setShowConnections(false)} />
       )}
+      </Presence>
 
       {/* Floating Composer Modal */}
       <ComposerModal

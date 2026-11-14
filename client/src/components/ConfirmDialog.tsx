@@ -1,3 +1,4 @@
+import { usePresence } from './Presence.js';
 import React, { useRef } from 'react';
 import { useDialog } from '../hooks/useDialog.js';
 
@@ -24,10 +25,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
 
   useDialog(dialogRef, { open: !!request, onEscape: onClose, initialFocus: cancelRef });
 
-  if (!request) return null;
+  const { mounted, leaving } = usePresence(!!request);
+  const lastRequest = useRef<ConfirmRequest | null>(null);
+  if (request) lastRequest.current = request;
+  const shown = request ?? lastRequest.current;
+  if (!mounted || !shown) return null;
 
   return (
     <div
+      data-leaving={leaving ? 'true' : undefined}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim anim-scrim p-4"
       onClick={onClose}
       role="presentation"
@@ -42,10 +48,10 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="confirm-title" className="text-base font-extrabold text-ink">
-          {request.title}
+          {shown.title}
         </h2>
         <p id="confirm-message" className="mt-2 text-sm text-ink-2">
-          {request.message}
+          {shown.message}
         </p>
         <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button
@@ -53,31 +59,31 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ request, onClose }
             onClick={onClose}
             className="rounded border border-line-2 px-3 py-1.5 text-xs font-bold text-ink-2 hover:bg-hover"
           >
-            {request.cancelLabel || 'Cancel'}
+            {shown.cancelLabel || 'Cancel'}
           </button>
-          {request.alternateLabel && request.onAlternate && (
+          {shown.alternateLabel && shown.onAlternate && (
             <button
               onClick={() => {
-                const fn = request.onAlternate!;
+                const fn = shown.onAlternate!;
                 onClose();
                 fn();
               }}
               className="rounded border border-line-2 bg-sel px-3 py-1.5 text-xs font-bold text-sel-ink hover:bg-hover"
             >
-              {request.alternateLabel}
+              {shown.alternateLabel}
             </button>
           )}
           <button
             onClick={() => {
-              const fn = request.onConfirm;
+              const fn = shown.onConfirm;
               onClose();
               fn();
             }}
             className={`cut-tr px-4 py-1.5 text-xs font-extrabold text-act-ink ${
-              request.danger ? 'bg-warn hover:brightness-110' : 'bg-act hover:bg-act-hov'
+              shown.danger ? 'bg-warn hover:brightness-110' : 'bg-act hover:bg-act-hov'
             }`}
           >
-            {request.confirmLabel}
+            {shown.confirmLabel}
           </button>
         </div>
       </div>

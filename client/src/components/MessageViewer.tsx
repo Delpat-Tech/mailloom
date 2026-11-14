@@ -1,3 +1,4 @@
+import { Presence } from './Presence.js';
 import { realUid } from '../services/uidKey.js';
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -259,6 +260,8 @@ interface MessageViewerProps {
   onRetryBounce?: () => void;
   myAddress?: string;
 }
+
+const clipText = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 
 export const MessageViewer: React.FC<MessageViewerProps> = ({
   folderPath,
@@ -707,6 +710,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
           )}
           <div className="relative shrink-0">
             <MoreMenu items={moreItems} always={!full} />
+            <Presence show={menu === 'snooze' && !!onSnooze}>
             {menu === 'snooze' && onSnooze && (
               <SnoozeMenu
                 className="right-0 top-full mt-1 origin-tr"
@@ -717,6 +721,8 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
                 }}
               />
             )}
+            </Presence>
+            <Presence show={menu === 'label' && !!onToggleLabel && !!onCreateLabel}>
             {menu === 'label' && onToggleLabel && onCreateLabel && (
               <LabelMenu
                 className="right-0 top-full mt-1 origin-tr"
@@ -727,6 +733,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
                 onClose={() => onMenuChange?.(null)}
               />
             )}
+            </Presence>
           </div>
         </div>
       </div>
@@ -776,10 +783,13 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
               <div className="flex-1 min-w-0">
                 <b className="block text-warn-ink">Your message was not delivered</b>
                 <p className="text-ink-2 mt-0.5">
-                  &quot;{bounce.originalSubject}&quot; could not be sent to {bounce.recipient}. {bounce.reason}
+                  {bounce.retryable
+                    ? `"${clipText(bounce.originalSubject, 120)}" could not be sent to ${clipText(bounce.recipient, 80)}. `
+                    : ''}
+                  {bounce.reason}
                 </p>
               </div>
-              {onRetryBounce && (
+              {onRetryBounce && bounce.retryable && (
                 <button
                   type="button"
                   onClick={onRetryBounce}

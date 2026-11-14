@@ -29,6 +29,18 @@
   from { opacity: 0; transform: translateY(8px) scale(0.985); }
   to { opacity: 1; transform: none; }
 }
+@keyframes ml-leave-4 {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(4px); }
+}
+@keyframes ml-leave-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes ml-leave-composer {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(8px) scale(0.985); }
+}
 @keyframes ml-shimmer {
   from { transform: translateX(-100%); }
   to { transform: translateX(100%); }
@@ -43,6 +55,16 @@
   .anim-scrim { animation: ml-fade var(--dur-2) var(--ease-out) both; }
   .anim-toast { animation: ml-rise-8 var(--dur-2) var(--ease-out) both; }
   .anim-composer { animation: ml-composer var(--dur-3) var(--ease-out) both; transform-origin: 85% 100%; }
+  /* Leaving: the opening reversed, about 20% shorter, ease-in. Set data-leaving on the element or an ancestor. */
+  [data-leaving='true'] .anim-menu,
+  [data-leaving='true'] .anim-dialog,
+  .anim-menu[data-leaving='true'],
+  .anim-dialog[data-leaving='true'] { animation: ml-leave-4 var(--dur-2-out) var(--ease-in) both; }
+  [data-leaving='true'] .anim-scrim,
+  .anim-scrim[data-leaving='true'] { animation: ml-leave-fade var(--dur-2-out) var(--ease-in) both; }
+  [data-leaving='true'] .anim-composer,
+  .anim-composer[data-leaving='true'] { animation: ml-leave-composer 180ms var(--ease-in) both; pointer-events: none; }
+  [data-leaving='true'] { pointer-events: none; }
   .origin-tr { transform-origin: top right; }
   .origin-tl { transform-origin: top left; }
   .origin-bl { transform-origin: bottom left; }

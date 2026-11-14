@@ -47,6 +47,10 @@ export interface BounceInfo {
   originalSubject: string;
   recipient: string;
   reason: string;
+  /** True when the original can be reopened from Sent (then sentMailbox and sentUid are set). */
+  retryable?: boolean;
+  sentMailbox?: string;
+  sentUid?: number;
 }
 
 export interface EmailAttachment {
