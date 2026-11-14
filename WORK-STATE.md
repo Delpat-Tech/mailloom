@@ -18,7 +18,6 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 3. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
 ## Later
-- Design: PNG app icons not regenerated from the new icon.svg; composer has no leave animation; phone swipe-back not built; Starred view selection is keyed by UID, so UIDs from different folders could collide; nothing checked visually in a browser yet.
 - Rich composer built on builder-b (TipTap): needs a browser check (typing, paste from Word/Gmail, picture paste/drop, signature logo, phone width).
 - Signatures (and the logo) are still stored per browser in localStorage; move to server account settings (waits on a settings store).
 - Pictures in a message are sent as data: in the request JSON and turned into cid parts on the server; large messages could use multipart upload instead.
