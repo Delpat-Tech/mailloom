@@ -5,16 +5,17 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- On main, reviewed and tested (server 197, client 112): sign-in and sessions, sending, organising, reading, drafts,
+- On main, reviewed and tested (server 197, client 121): sign-in and sessions, sending, organising, reading, drafts,
   live list, phone and keyboard, agent keys and API, push notifications, rich-text composer with inline images and
   signature logo, release build, deploy runbook, deep links, whole-app security fixes, and the Sky rail design in
   Delpat colours with filters, starred and snoozed views, labels, snooze, conversations, bounce rows, shortcuts,
-  optimistic actions with undo, and motion. Browser-checked on desktop and phone (light and dark) on 15 Nov.
+  optimistic actions with undo, and motion. Acceptance run in the browser on 15 Nov (desktop and phone, light and dark): send, forward
+  with attachments (byte-identical), drafts, labels, star, snooze, archive and undo, filters, search, phone reader and reply.
 - Work OS mail tools: branch mail-tools in Om/wos-mail, reviewed, 64 e2e checks + 36 live checks against real Mailloom;
   not merged into Work OS master (waits on Om).
 
 ## Next
-1. Full acceptance run in the browser (desktop and phone), every flow in plan v2's acceptance list, on the merged main.
+1. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on the trial server, since phones need HTTPS).
 2. Push main to GitHub (Delpat-Tech/mailloom) (waits on Om).
 3. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
