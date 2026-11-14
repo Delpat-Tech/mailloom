@@ -216,6 +216,11 @@ export class SessionStore {
     return rows.map((r) => r.id_hash);
   }
 
+  /** The underlying database, shared with the agent key store (same file). */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   count(): number {
     const row = this.db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number };
     return Number(row.n);

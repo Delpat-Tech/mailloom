@@ -11,6 +11,10 @@ import { loadConfig } from './config.js';
 import { SessionStore } from './services/sessions.js';
 import { LoginThrottle } from './services/login-throttle.js';
 import { closeAllPooledClients, closeSessionConnection } from './services/imap.js';
+import { loadAgentConfig } from './agent/config.js';
+import { AgentStore } from './agent/store.js';
+import { connectionRoutes } from './routes/connections.js';
+import { agentRoutes } from './routes/agent.js';
 
 export interface BuildAppOptions {
   /** Environment to read configuration from. Defaults to process.env. */
@@ -84,6 +88,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     config.loginEmailMaxFailures
   );
   fastify.decorate('mailloom', { config, sessions, throttle });
+  // Agent keys and audit live in the same database as the sessions.
+  const agentConfig = loadAgentConfig(env);
+  const agentStore = new AgentStore(sessions.database, config.sessionSecret, now);
+  agentStore.prune();
+  fastify.decorate('mailloomAgent', { store: agentStore, config: agentConfig });
 
   if (!config.mail.tls.rejectUnauthorized) {
     fastify.log.warn('MAIL_TLS_REJECT_UNAUTHORIZED=false: mail server certificates are NOT checked (local testing only).');
@@ -97,6 +106,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const sweeper = setInterval(() => {
     for (const key of sessions.sweep()) void closeSessionConnection(key);
     throttle.prune();
+    agentStore.prune();
   }, 10 * 60_000);
   sweeper.unref();
 
@@ -159,6 +169,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   for (const prefix of ['', '/mail']) {
     await fastify.register(authRoutes, { prefix });
     await fastify.register(mailRoutes, { prefix });
+    await fastify.register(connectionRoutes, { prefix });
+    await fastify.register(agentRoutes, { prefix });
   }
 
   const clientDist = opts.clientDist === undefined ? resolveClientDist(env) : opts.clientDist;
