@@ -67,3 +67,19 @@ export function parseRecipients(value: unknown, field: string): Recipient[] {
   }
   return out;
 }
+
+/** Draft variant: entries that are not a single address are dropped (and reported), never an error. */
+export function parseRecipientsLenient(value: unknown, field: string): { kept: Recipient[]; dropped: string[] } {
+  const kept: Recipient[] = [];
+  const dropped: string[] = [];
+  if (!Array.isArray(value)) return { kept, dropped };
+  for (const item of value) {
+    try {
+      kept.push(...parseRecipients([item], field));
+    } catch {
+      const text = typeof item === 'string' ? item : (item as { address?: unknown } | null)?.address;
+      if (typeof text === 'string' && text.trim()) dropped.push(text.trim().slice(0, 100));
+    }
+  }
+  return { kept, dropped };
+}

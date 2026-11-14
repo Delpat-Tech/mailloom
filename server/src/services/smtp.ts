@@ -98,6 +98,7 @@ function toSendError(err: unknown): Error {
       return new ImapAuthError();
     case 'EENVELOPE':
       return new SendError('The mail server rejected every recipient. Check the addresses.');
+    case 'ETLS':
     case 'ECONNECTION':
     case 'ETIMEDOUT':
     case 'ESOCKET':

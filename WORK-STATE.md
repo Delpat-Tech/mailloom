@@ -43,3 +43,4 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Sign-in lockout by email (10/15 min) can be triggered by anyone; Dovecot sees all Mailloom logins from 127.0.0.1 — consider passing client IP via IMAP ID and login_trusted_networks (waits on real use).
 - Inter font loads from Google Fonts (allowed in CSP); self-hosting would let the CSP drop the two Google hosts (waits on a decision).
 - Unicode (IDN) domains are refused in recipients; punycode works (waits on real use).
+- @tiptap packages are on 2.x; the last audit finding (@tiptap/core <3.30.4) needs the 3.x major, which changes extensions and the editor API (waits on a compatibility pass of the rich-text composer).

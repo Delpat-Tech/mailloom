@@ -394,7 +394,7 @@ export const api = {
     inReplyTo?: string;
     references?: string[];
     replaceUid?: number;
-  }): Promise<{ success: boolean; uid: number; folder: string }> => {
+  }): Promise<{ success: boolean; uid: number; folder: string; droppedRecipients?: string[] }> => {
     return request('/drafts', { method: 'POST', body: JSON.stringify(draft) });
   },
 

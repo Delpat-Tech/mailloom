@@ -1,4 +1,4 @@
-import { splitRecipients, mergeRecipients } from '../services/recipients';
+import { splitRecipients, mergeRecipients, recipientSnapshot, isValidRecipient } from '../services/recipients';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
@@ -162,6 +162,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   // ---- Drafts: autosave every 10 s while there are changes ----
   const draftUidRef = useRef<number | undefined>(replyMeta?.draftUid);
+  const [droppedNote, setDroppedNote] = useState<string | null>(null);
+  const droppedShownRef = useRef('');
   const [draftStatus, setDraftStatus] = useState<{ text: string; error: boolean } | null>(null);
   const savingRef = useRef(false);
   const lastSaveAtRef = useRef(0);
@@ -169,13 +171,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   const statusText = [draftStatus?.text, attachments.length > 0 ? 'Attachments are not saved in drafts' : ''].filter(Boolean).join(' · ');
 
-  // A half-typed address (no @ yet) is not saved into the draft; it stays in the box.
-  const draftList = (list: string[], typed: string) => mergeRecipients(list, splitRecipients(typed).filter((r) => r.includes('@')).join(','));
   const snapshot = () =>
     JSON.stringify({
-      to: draftList(toList, toInput),
-      cc: draftList(ccList, ccInput),
-      bcc: draftList(bccList, bccInput),
+      to: recipientSnapshot(toList, toInput),
+      cc: recipientSnapshot(ccList, ccInput),
+      bcc: recipientSnapshot(bccList, bccInput),
       subject,
       plain: plainMode,
       body: plainMode ? bodyText : bodyHtml
@@ -205,6 +205,13 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       });
       if (!res.success) throw new Error('The draft could not be saved.');
       draftUidRef.current = res.uid;
+      // Quiet note, once per distinct list.
+      const dropped = res.droppedRecipients ?? [];
+      const key = dropped.join("|");
+      if (key !== droppedShownRef.current) {
+        droppedShownRef.current = key;
+        setDroppedNote(dropped.length > 0 ? `Not kept in the draft: ${dropped.join(', ')}` : null);
+      }
       lastSavedSnap.current = snap;
       lastSaveAtRef.current = Date.now();
       setDraftStatus({ text: `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, error: false });
@@ -368,6 +375,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
     // If user has typed an email without pressing enter, add it automatically
     const finalTo = mergeRecipients(toList, toInput);
+
+    const badOne = [...finalTo, ...mergeRecipients(ccList, ccInput), ...mergeRecipients(bccList, bccInput)].find((r) => !isValidRecipient(r));
+    if (badOne) {
+      setErrorMsg(`Not a valid address: ${badOne}`);
+      return;
+    }
 
     if (finalTo.length === 0) {
       setErrorMsg('Please specify at least one recipient.');
@@ -547,9 +560,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                 {toList.map((email, idx) => (
                   <span
                     key={idx}
-                    className="inline-flex items-center gap-1 bg-sky-50 text-sky-700 border border-sky-200/80 px-2 py-0.5 rounded-md text-xs font-medium"
+                    aria-invalid={!isValidRecipient(email) || undefined}
+                    title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
+                    className={`inline-flex items-center gap-1 bg-sky-50 text-sky-700 border border-sky-200/80 px-2 py-0.5 rounded-md text-xs font-medium${!isValidRecipient(email) ? ' !bg-red-50 !text-red-700 !border-red-300 line-through' : ''}`}
                   >
-                    <span>{email}</span>
+                    <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                     <button
                       type="button"
                       onClick={() => handleRemoveRecipient('to', idx)}
@@ -601,9 +616,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   {ccList.map((email, idx) => (
                     <span
                       key={idx}
-                      className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-xs font-medium"
+                      aria-invalid={!isValidRecipient(email) || undefined}
+                    title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
+                    className={`inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-xs font-medium${!isValidRecipient(email) ? ' !bg-red-50 !text-red-700 !border-red-300 line-through' : ''}`}
                     >
-                      <span>{email}</span>
+                      <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('cc', idx)}
@@ -643,9 +660,11 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   {bccList.map((email, idx) => (
                     <span
                       key={idx}
-                      className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-xs font-medium"
+                      aria-invalid={!isValidRecipient(email) || undefined}
+                    title={!isValidRecipient(email) ? 'Not a valid address' : undefined}
+                    className={`inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-xs font-medium${!isValidRecipient(email) ? ' !bg-red-50 !text-red-700 !border-red-300 line-through' : ''}`}
                     >
-                      <span>{email}</span>
+                      <span>{email}{!isValidRecipient(email) && <span className="sr-only"> (not a valid address)</span>}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveRecipient('bcc', idx)}
@@ -675,6 +694,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   />
                 </div>
               </div>
+            )}
+
+            {droppedNote && (
+              <p role="status" className="px-4 py-1 text-[11px] text-slate-500">
+                {droppedNote}
+              </p>
             )}
 
             {/* Subject Line */}

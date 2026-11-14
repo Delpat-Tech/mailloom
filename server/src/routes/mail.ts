@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { SendEmailPayload, SendAttachment } from '../types.js';
-import { parseRecipients, RecipientError, type Recipient } from '../utils/recipients.js';
+import { parseRecipientsLenient, parseRecipients, RecipientError, type Recipient } from '../utils/recipients.js';
 import { endSession, requireAuth, sendSessionExpired } from './auth.js';
 import { demoMailService } from '../services/demo-mail.js';
 import {
@@ -361,18 +361,17 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
     const strList = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [];
     if (config.isDemo) return reply.status(400).send({ error: 'Drafts are not available in the demo.' });
-    let draftRecipients: { to: Recipient[]; cc: Recipient[]; bcc: Recipient[] };
-    try {
-      draftRecipients = { to: parseRecipients(raw.to, 'To'), cc: parseRecipients(raw.cc, 'Cc'), bcc: parseRecipients(raw.bcc, 'Bcc') };
-    } catch (err) {
-      if (err instanceof RecipientError) return reply.status(400).send({ error: err.message });
-      throw err;
-    }
+    const dTo = parseRecipientsLenient(raw.to, 'To');
+    const dCc = parseRecipientsLenient(raw.cc, 'Cc');
+    const dBcc = parseRecipientsLenient(raw.bcc, 'Bcc');
+    const droppedRecipients = [...dTo.dropped, ...dCc.dropped, ...dBcc.dropped];
     try {
       const saved = await saveLiveDraft(
         config,
         {
-          ...draftRecipients,
+          to: dTo.kept,
+          cc: dCc.kept,
+          bcc: dBcc.kept,
           subject: typeof raw.subject === 'string' ? raw.subject : '',
           text: typeof raw.text === 'string' ? raw.text : '',
           html: typeof raw.html === 'string' ? raw.html : undefined,
@@ -381,7 +380,7 @@ export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageByt
         },
         Number.isInteger(raw.replaceUid) ? (raw.replaceUid as number) : undefined
       );
-      return { success: true, uid: saved.uid, folder: saved.folder };
+      return { success: true, uid: saved.uid, folder: saved.folder, droppedRecipients };
     } catch (err) {
       if (err instanceof DraftError) return reply.status(err.status).send({ error: err.message });
       return failMail(req, reply, err, 'The draft could not be saved');

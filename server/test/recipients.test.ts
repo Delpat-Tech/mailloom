@@ -45,16 +45,25 @@ test('session send refuses a Cc string that hides a second address', async () =>
   }
 });
 
-test('draft save refuses a recipient string that hides a second address', async () => {
-  const { buildTestApp, signIn, TESTER, resetAccount } = await import('./helpers.js');
+test('draft save never fails on a recipient: bad ones are dropped and reported, the body is kept', async () => {
+  const { buildTestApp, signIn, TESTER, resetAccount, fetchAll } = await import('./helpers.js');
   await resetAccount(TESTER);
   const app = await buildTestApp();
   try {
     const s = await signIn(app, TESTER);
-    const bad = await app.inject({ method: 'POST', url: '/api/drafts', headers: s.headers, payload: { to: ['a@delpat.test, evil@example.test'], subject: 'd', text: 't' } });
-    assert.equal(bad.statusCode, 400);
-    const ok = await app.inject({ method: 'POST', url: '/api/drafts', headers: s.headers, payload: { to: ['Ann <a@delpat.test>'], subject: 'd', text: 't' } });
-    assert.equal(ok.statusCode, 200);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: s.headers,
+      payload: { to: ['Ann <a@delpat.test>', 'bob', 'x@delpat.test, evil@example.test'], subject: 'd', text: 'draft body kept' }
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json().droppedRecipients, ['bob', 'x@delpat.test, evil@example.test']);
+    const drafts = await fetchAll(TESTER, 'Drafts');
+    const d = drafts.find((m) => m.mail.subject === 'd')!;
+    assert.match(d.raw, /draft body kept/);
+    assert.match(d.raw, /a@delpat.test/);
+    assert.doesNotMatch(d.raw, /evil@example/);
   } finally {
     await app.close();
   }
