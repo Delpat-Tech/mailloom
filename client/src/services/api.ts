@@ -377,7 +377,9 @@ export const api = {
     cc?: string[];
     bcc?: string[];
     subject: string;
-    text: string;
+    text?: string;
+    /** Rich body (editor HTML); the server stores it with its pictures. Replaces `text`. */
+    html?: string;
     inReplyTo?: string;
     references?: string[];
     replaceUid?: number;
@@ -394,7 +396,10 @@ export const api = {
     cc?: string[];
     bcc?: string[];
     subject: string;
-    text: string;
+    /** Plain-text mail. Leave out when `html` is given. */
+    text?: string;
+    /** Rich mail (editor HTML, pictures as data: URIs; the server turns them into inline parts). */
+    html?: string;
     inReplyTo?: string;
     references?: string[];
     forwardOf?: { folder: string; uid: number };

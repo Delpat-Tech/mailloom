@@ -9,6 +9,7 @@ import { ConnectModal } from './components/ConnectModal.js';
 import { ConfirmDialog, type ConfirmRequest } from './components/ConfirmDialog.js';
 import { friendlyError } from './services/errors.js';
 import { useDialog } from './hooks/useDialog.js';
+import { escapeHtml, quoteHtml, bodyOfHtmlDocument } from './services/richtext.js';
 import {
   api,
   getActiveHandle,
@@ -89,6 +90,8 @@ export const App: React.FC = () => {
     bcc?: string[];
     subject?: string;
     body?: string;
+    /** Quoted original / forwarded text as editor HTML (shown below the signature). */
+    html?: string;
     meta?: ComposerReplyMeta;
     isDraft?: boolean;
   }>({});
@@ -630,6 +633,9 @@ export const App: React.FC = () => {
       cc: plan.cc,
       subject: plan.subject,
       body: quote,
+      html:
+        `<p>${escapeHtml(`On ${dateStr}, ${message.from.name || message.from.address} wrote:`)}</p>` +
+        quoteHtml(message.text || ''),
       meta: { inReplyTo: plan.inReplyTo, references: plan.references }
     });
   };
@@ -647,6 +653,16 @@ export const App: React.FC = () => {
       to: [],
       subject: /^fwd?:/i.test(message.subject) ? message.subject : `Fwd: ${message.subject}`,
       body: forwardHeader,
+      html:
+        `<p>${[
+          '---------- Forwarded message ---------',
+          `From: ${message.from.name || ''} <${message.from.address}>`,
+          `Date: ${dateStr}`,
+          `Subject: ${message.subject}`,
+          `To: ${message.to.map((t) => t.address).join(', ')}`
+        ]
+          .map(escapeHtml)
+          .join('<br>')}</p>` + quoteHtml(message.text || ''),
       meta: {
         forwardOf: { folder: selectedFolder, uid: message.uid },
         forwardedAttachmentNames: real.map((a) => a.filename)
@@ -662,6 +678,8 @@ export const App: React.FC = () => {
       bcc: (message.bcc || []).map((a) => a.address).filter(Boolean),
       subject: message.subject === '(No Subject)' ? '' : message.subject,
       body: message.text || '',
+      // A draft written in the rich editor comes back as HTML (with its pictures); a plain one stays plain.
+      html: message.html ? bodyOfHtmlDocument(message.html) : undefined,
       isDraft: true,
       meta: {
         draftUid: message.uid,
@@ -1015,6 +1033,7 @@ export const App: React.FC = () => {
         isDraft={composerInitial.isDraft}
         initialSubject={composerInitial.subject}
         initialBody={composerInitial.body}
+        initialHtml={composerInitial.html}
         replyMeta={composerInitial.meta}
         accountEmail={account?.email}
         accountName={account?.name}

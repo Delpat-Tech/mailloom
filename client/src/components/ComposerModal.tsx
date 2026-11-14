@@ -18,9 +18,20 @@ import type { ConfirmRequest } from './ConfirmDialog.js';
 import {
   getSignatureForAccount,
   saveSignatureForAccount,
-  formatSignatureText,
+  signatureHtml,
+  SIGNATURE_IMAGE_MAX_BYTES,
   type AccountSignature
 } from '../services/signatures.js';
+import type { Editor } from '@tiptap/react';
+import { RichEditor, normalizeEditorHtml } from './RichEditor.js';
+import {
+  plainTextToHtml,
+  htmlToPlainText,
+  hasRichContent,
+  isEmptyHtml,
+  inlineImageBytes,
+  formatBytes
+} from '../services/richtext.js';
 
 interface ComposerAttachment {
   file: File;
@@ -62,25 +73,21 @@ interface ComposerModalProps {
   initialTo?: string[];
   initialCc?: string[];
   initialBcc?: string[];
+  /**
+   * Quoted original (reply) or forwarded message as editor HTML. It goes below the signature, so the
+   * signature sits above the quote.
+   */
+  initialHtml?: string;
   /** Opened from the Drafts folder: the body is used as it is (no signature added). */
   isDraft?: boolean;
   /** Ask the user to confirm (discard / save draft). */
   requestConfirm: (request: ConfirmRequest) => void;
   initialSubject?: string;
+  /** Plain-text starting body (used when no `initialHtml` is given; a plain-text draft opens in plain-text mode). */
   initialBody?: string;
   replyMeta?: ComposerReplyMeta;
   accountEmail?: string;
   accountName?: string;
-}
-
-function buildInitialBody(initialBody: string, sigText: string): string {
-  if (!sigText) return initialBody;
-  if (!initialBody) return `\n\n${sigText}`;
-  // Quoted/forwarded text: put the signature above it.
-  if (initialBody.startsWith('\n\n---') || initialBody.startsWith('\n\n----------')) {
-    return `\n\n${sigText}${initialBody}`;
-  }
-  return initialBody;
 }
 
 function formatFileSize(bytes: number): string {
@@ -100,6 +107,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   requestConfirm,
   initialSubject = '',
   initialBody = '',
+  initialHtml,
   replyMeta,
   accountEmail = '',
   accountName = ''
@@ -130,9 +138,19 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     getSignatureForAccount(accountEmail, accountName)
   );
   const [sigForm, setSigForm] = useState<AccountSignature>(signature);
-  const [body, setBody] = useState(() =>
-    isDraft ? initialBody : buildInitialBody(initialBody, formatSignatureText(signature))
-  );
+  const [sigError, setSigError] = useState<string | null>(null);
+  // A plain-text draft reopens as plain text. Everything else starts in the rich editor.
+  const [plainMode, setPlainMode] = useState(isDraft && !initialHtml);
+  const [bodyText, setBodyText] = useState(() => (isDraft && !initialHtml ? initialBody : ''));
+  const [bodyHtml, setBodyHtml] = useState(() => {
+    if (isDraft) return initialHtml ?? '';
+    const sig = signatureHtml(signature);
+    const quoted = initialHtml ?? plainTextToHtml(initialBody);
+    return sig || quoted ? `<p></p>${sig}${quoted}` : '';
+  });
+  // Changing it starts a fresh editor (templates, switching back from plain text).
+  const [editorKey, setEditorKey] = useState(0);
+  const editorRef = useRef<Editor | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -152,7 +170,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       cc: [...ccList, ccInput.trim()].filter(Boolean),
       bcc: [...bccList, bccInput.trim()].filter(Boolean),
       subject,
-      body
+      plain: plainMode,
+      body: plainMode ? bodyText : bodyHtml
     });
   const initialSnap = useRef<string | null>(null);
   if (initialSnap.current === null) initialSnap.current = snapshot();
@@ -164,7 +183,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     if (sentRef.current || savingRef.current) return true;
     const snap = snapshot();
     if (snap === lastSavedSnap.current) return true;
-    const data = JSON.parse(snap) as { to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
+    const data = JSON.parse(snap) as { to: string[]; cc: string[]; bcc: string[]; subject: string; plain: boolean; body: string };
     savingRef.current = true;
     try {
       const res = await api.saveDraft({
@@ -172,7 +191,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         cc: data.cc,
         bcc: data.bcc,
         subject: data.subject,
-        text: data.body,
+        ...(data.plain ? { text: data.body } : { html: data.body, text: '' }),
         inReplyTo: replyMeta?.inReplyTo,
         references: replyMeta?.references,
         replaceUid: draftUidRef.current
@@ -260,7 +279,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   useDialog(panelRef, {
     open: isOpen,
     onEscape: handleCloseClick, // asks what to do with the content, if there is any
-    initialFocus: () => (toList.length === 0 ? toInputRef.current : bodyRef.current)
+    initialFocus: () =>
+      toList.length === 0 ? toInputRef.current : (editorRef.current?.view.dom as HTMLElement | undefined) ?? bodyRef.current
   });
 
   useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
@@ -297,7 +317,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     if (files.length === 0) return;
 
     const limitText = formatFileSize(MAX_ATTACHMENT_BYTES);
-    let total = attachments.reduce((n, a) => n + a.size, 0);
+    let total = attachments.reduce((n, a) => n + a.size, 0) + (plainMode ? 0 : inlineImageBytes(bodyHtml));
     const accepted: ComposerAttachment[] = [];
     for (const file of files) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
@@ -342,6 +362,17 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       finalBcc.push(bccInput.trim());
     }
 
+    if (!plainMode) {
+      // Pictures in the text count toward the same limit as attachments (the server checks again).
+      const total = inlineImageBytes(bodyHtml) + attachments.reduce((n, a) => n + a.size, 0);
+      if (total > MAX_ATTACHMENT_BYTES) {
+        setErrorMsg(
+          `The pictures and attachments together are ${formatBytes(total)}. A message can be at most ${formatBytes(MAX_ATTACHMENT_BYTES)}. Remove a picture or an attachment.`
+        );
+        return;
+      }
+    }
+
     setIsSending(true);
     sentRef.current = true; // no autosave while sending
     const draftUidAtSend = draftUidRef.current;
@@ -351,7 +382,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         cc: finalCc.length > 0 ? finalCc : undefined,
         bcc: finalBcc.length > 0 ? finalBcc : undefined,
         subject: subject.trim() || '(No subject)',
-        text: body,
+        ...(plainMode || isEmptyHtml(bodyHtml) ? { text: plainMode ? bodyText : '' } : { html: bodyHtml }),
         inReplyTo: replyMeta?.inReplyTo,
         references: replyMeta?.references,
         forwardOf: replyMeta?.forwardOf,
@@ -375,18 +406,56 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   const handleSaveSignature = (e: React.FormEvent) => {
     e.preventDefault();
-    if (accountEmail) {
-      saveSignatureForAccount(accountEmail, sigForm);
+    if (accountEmail && !saveSignatureForAccount(accountEmail, sigForm)) {
+      setSigError('This browser could not store the signature (its storage is full or blocked). Try a smaller logo.');
+      return;
     }
-    const prevSigText = formatSignatureText(signature);
-    const newSigText = formatSignatureText(sigForm);
+    setSigError(null);
+    const prev = signatureHtml(signature);
+    const next = signatureHtml(sigForm);
     setSignature(sigForm);
     setShowSigModal(false);
+    if (plainMode || prev === next) return;
 
-    if (prevSigText && body.includes(prevSigText)) {
-      setBody(body.replace(prevSigText, newSigText));
-    } else if (newSigText && !body.includes(newSigText)) {
-      setBody((prev) => `${prev}\n\n${newSigText}`);
+    // Swap the old signature for the new one in the message being written (or add it if it is not there).
+    const ed = editorRef.current;
+    if (!ed) return;
+    const current = ed.getHTML();
+    const oldNorm = prev ? normalizeEditorHtml(prev) : '';
+    let updated = current;
+    if (oldNorm && current.includes(oldNorm)) {
+      updated = current.replace(oldNorm, next ? normalizeEditorHtml(next) : '');
+    } else if (next) {
+      const q = current.indexOf('<blockquote>');
+      const add = normalizeEditorHtml(next);
+      updated = q >= 0 ? current.slice(0, q) + add + current.slice(q) : current + add;
+    }
+    if (updated !== current) {
+      ed.commands.setContent(updated, true);
+    }
+  };
+
+  /** Plain text <-> rich text. Going to plain text drops formatting and pictures, so ask first. */
+  const togglePlainMode = () => {
+    if (plainMode) {
+      setBodyHtml(plainTextToHtml(bodyText));
+      setEditorKey((k) => k + 1);
+      setPlainMode(false);
+      return;
+    }
+    const toPlain = () => {
+      setBodyText(htmlToPlainText(bodyHtml));
+      setPlainMode(true);
+    };
+    if (hasRichContent(bodyHtml)) {
+      requestConfirm({
+        title: 'Switch to plain text?',
+        message: 'Formatting, links and pictures will be removed from this message.',
+        confirmLabel: 'Switch to plain text',
+        onConfirm: toPlain
+      });
+    } else {
+      toPlain();
     }
   };
 
@@ -608,14 +677,29 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
           {/* Email Body Area */}
           <div className="flex-1 p-4 flex flex-col overflow-hidden">
-            <textarea
-              ref={bodyRef}
-              aria-label="Message"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Write your email message here..."
-              className="w-full flex-1 resize-none focus:outline-none text-sm text-slate-800 font-sans leading-relaxed"
-            />
+            {plainMode ? (
+              <textarea
+                ref={bodyRef}
+                aria-label="Message"
+                value={bodyText}
+                onChange={(e) => setBodyText(e.target.value)}
+                placeholder="Write your email message here..."
+                className="w-full flex-1 resize-none focus:outline-none text-sm text-slate-800 font-sans leading-relaxed"
+              />
+            ) : (
+              <RichEditor
+                key={editorKey}
+                content={bodyHtml}
+                onChange={setBodyHtml}
+                onError={setErrorMsg}
+                onReady={(ed) => {
+                  editorRef.current = ed;
+                }}
+                ariaLabel="Message"
+                placeholder="Write your email message here..."
+                contentClassName="min-h-[10rem]"
+              />
+            )}
 
             {replyMeta?.forwardedAttachmentNames && replyMeta.forwardedAttachmentNames.length > 0 && (
               <div className="pt-2 text-xs text-slate-500">
@@ -690,6 +774,20 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
               <button
                 type="button"
+                onClick={togglePlainMode}
+                aria-pressed={plainMode}
+                title={plainMode ? 'Back to formatted text' : 'Write this message as plain text'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded-lg transition-colors border font-medium ${
+                  plainMode
+                    ? 'text-slate-800 bg-slate-200 border-slate-300'
+                    : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
+                }`}
+              >
+                <span>Plain text</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setShowTemplateModal(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors border border-sky-200/60 font-medium"
                 title="Insert pre-written email templates"
@@ -702,6 +800,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                 type="button"
                 onClick={() => {
                   setSigForm(signature);
+                  setSigError(null);
                   setShowSigModal(true);
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs rounded-lg transition-colors border font-medium ${
@@ -745,7 +844,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
         onClose={() => setShowTemplateModal(false)}
         onApplyTemplate={({ subject: newSubject, body: newBody }) => {
           setSubject(newSubject);
-          setBody(newBody);
+          if (plainMode) {
+            setBodyText(newBody);
+          } else {
+            setBodyHtml(plainTextToHtml(newBody));
+            setEditorKey((k) => k + 1);
+          }
         }}
       />
 
@@ -757,7 +861,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
             role="dialog"
             aria-modal="true"
             aria-labelledby="signature-title"
-            className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-full overflow-y-auto"
+            className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-full overflow-y-auto"
           >
             <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -781,62 +885,33 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
                   onChange={(e) => setSigForm({ ...sigForm, enabled: e.target.checked })}
                   className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                 />
-                <span className="font-medium text-slate-800">Append corporate signature automatically</span>
+                <span className="font-medium text-slate-800">Add my signature to new messages and replies</span>
               </label>
 
               <div>
-                <label htmlFor="sig-name" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Full Name</label>
-                <input id="sig-name"
-                  type="text"
-                  value={sigForm.name}
-                  onChange={(e) => setSigForm({ ...sigForm, name: e.target.value })}
-                  placeholder="e.g. Rahul Sharma"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="sig-designation" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Designation / Role</label>
-                <input id="sig-designation"
-                  type="text"
-                  value={sigForm.designation}
-                  onChange={(e) => setSigForm({ ...sigForm, designation: e.target.value })}
-                  placeholder="e.g. Operations & Engineering"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label htmlFor="sig-phone" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Phone Number</label>
-                <input id="sig-phone"
-                    type="text"
-                    value={sigForm.phone}
-                    onChange={(e) => setSigForm({ ...sigForm, phone: e.target.value })}
-                    placeholder="+91 98250 12345"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
+                <span id="sig-editor-label" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                  Signature
+                </span>
+                <div className="border border-slate-200 rounded-lg p-2 bg-slate-50/50">
+                  <RichEditor
+                    content={sigForm.html}
+                    onChange={(html) => setSigForm((f) => ({ ...f, html }))}
+                    onError={setSigError}
+                    ariaLabel="Signature text"
+                    placeholder="Name, role, phone, website. Use the picture button to add your logo."
+                    maxImageBytes={SIGNATURE_IMAGE_MAX_BYTES}
+                    contentClassName="min-h-[7rem] max-h-56"
                   />
                 </div>
-                <div>
-                  <label htmlFor="sig-website" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Company Website</label>
-                <input id="sig-website"
-                    type="text"
-                    value={sigForm.website}
-                    onChange={(e) => setSigForm({ ...sigForm, website: e.target.value })}
-                    placeholder="https://delpat.in"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="sig-disclaimer" className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Confidentiality Disclaimer</label>
-                <textarea id="sig-disclaimer"
-                  rows={2}
-                  value={sigForm.customText}
-                  onChange={(e) => setSigForm({ ...sigForm, customText: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-sky-500"
-                />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Logos are sent inside the message, not as an attachment (up to {formatBytes(SIGNATURE_IMAGE_MAX_BYTES)}).
+                  The signature is saved in this browser only.
+                </p>
+                {sigError && (
+                  <p role="alert" className="mt-1 text-[11px] text-red-600">
+                    {sigError}
+                  </p>
+                )}
               </div>
 
               <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">

@@ -169,7 +169,7 @@ export function cleanPastedHtml(html: string): string {
 
 // ---- Plain text <-> HTML ----
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+export const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Plain text as editor HTML: one paragraph per line block, line breaks kept. */
 export function plainTextToHtml(text: string): string {
@@ -177,7 +177,7 @@ export function plainTextToHtml(text: string): string {
   if (!t) return '';
   return t
     .split(/\n{2,}/)
-    .map((block) => `<p>${esc(block).replace(/\n/g, '<br>')}</p>`)
+    .map((block) => `<p>${escapeHtml(block).replace(/\n/g, '<br>')}</p>`)
     .join('');
 }
 

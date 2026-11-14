@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useEditor, EditorContent, type Editor } from '@tiptap/react';
+import { useEditor, EditorContent, Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -64,6 +64,37 @@ const ToolButton: React.FC<BtnProps> = ({ label, shortcut, active, disabled, onC
   </button>
 );
 
+/** The editor's whole feature set: this is also exactly what the server accepts when sending. */
+export function buildExtensions(placeholder = '') {
+  return [
+    StarterKit.configure({
+      heading: false,
+      code: false,
+      codeBlock: false,
+      horizontalRule: false,
+      strike: false
+    }),
+    Underline,
+    Link.configure({
+      openOnClick: false,
+      autolink: true,
+      protocols: ['mailto', 'tel'],
+      validate: (href: string) => normalizeUrl(href) !== null,
+      HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' }
+    }),
+    Image.configure({ inline: true, allowBase64: true }),
+    Placeholder.configure({ placeholder })
+  ];
+}
+
+/** HTML as the editor would write it (used to find a signature again inside a message body). */
+export function normalizeEditorHtml(html: string): string {
+  const ed = new Editor({ extensions: buildExtensions(), content: html });
+  const out = ed.getHTML();
+  ed.destroy();
+  return out;
+}
+
 /**
  * Ctrl+A makes ProseMirror select "everything" (AllSelection), where lists cannot be toggled off again.
  * Turn it into an ordinary text selection over the same content before a toolbar command runs.
@@ -112,25 +143,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   insertRef.current = insertPictures;
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: false,
-        code: false,
-        codeBlock: false,
-        horizontalRule: false,
-        strike: false
-      }),
-      Underline,
-      Link.configure({
-        openOnClick: false,
-        autolink: true,
-        protocols: ['mailto', 'tel'],
-        validate: (href) => normalizeUrl(href) !== null,
-        HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' }
-      }),
-      Image.configure({ inline: true, allowBase64: true }),
-      Placeholder.configure({ placeholder: placeholder || '' })
-    ],
+    extensions: buildExtensions(placeholder),
     content,
     editorProps: {
       attributes: {
