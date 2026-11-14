@@ -1,5 +1,6 @@
 import { ImapFlow, SearchObject, type FetchMessageObject } from 'imapflow';
 import { simpleParser } from 'mailparser';
+import { createHash } from 'node:crypto';
 import type { AccountConfig, MailboxFolder, MessageHeader, ParsedEmailMessage, SpecialUseFolder } from '../types.js';
 import { renderEmail, findCidReferences } from '../utils/sanitize.js';
 import { classifyParts, findPart, isValidPartId, type LeafPart, type MessageParts } from './mailparts.js';
@@ -38,7 +39,10 @@ export function detectSpecialUse(name: string, specialUse?: string, path?: strin
   return NAME_KINDS[name.trim().toLowerCase()];
 }
 
-export function createImapClient(config: AccountConfig): ImapFlow {
+export function createImapClient(
+  config: AccountConfig,
+  extra: { connectionTimeout?: number; greetingTimeout?: number } = {}
+): ImapFlow {
   return new ImapFlow({
     host: config.imapHost,
     port: config.imapPort,
@@ -48,85 +52,167 @@ export function createImapClient(config: AccountConfig): ImapFlow {
       pass: config.imapPass
     },
     logger: false,
+    // Certificate checks are on unless the server config explicitly turns them off for local testing.
     tls: {
-      rejectUnauthorized: false // support self-signed certs or local loopback Dovecot
-    }
+      rejectUnauthorized: config.tls?.rejectUnauthorized ?? true,
+      ...(config.tls?.servername ? { servername: config.tls.servername } : {})
+    },
+    connectionTimeout: extra.connectionTimeout ?? 15000,
+    greetingTimeout: extra.greetingTimeout ?? 10000
   });
 }
 
 // -------------------------------------------------------------
-// CONNECTION POOLING WITH INACTIVITY REAPER (DOVECOT SAFE)
-// Prevents max_user_connections socket exhaustion on EC2
+// CONNECTION POOL, ONE CONNECTION PER SIGNED-IN SESSION
+// Keyed by the session (config.sessionKey), never by user@host, so a
+// connection opened with one session's password is only ever used by that
+// session. Concurrent requests share one in-flight connect (no duplicate
+// connections). Idle connections close after 60s (Dovecot connection limits).
 // -------------------------------------------------------------
 interface PoolEntry {
-  client: ImapFlow;
-  timer: NodeJS.Timeout;
+  client?: ImapFlow;
+  connecting?: Promise<ImapFlow>;
+  timer?: NodeJS.Timeout;
   lastUsed: number;
+  /** When the connection was opened; connections are replaced after MAX_AGE_MS. */
+  connectedAt: number;
+}
+
+/** The mail server refused the stored credentials (password changed or mailbox closed). */
+export class ImapAuthError extends Error {
+  constructor() {
+    super('IMAP authentication failed');
+    this.name = 'ImapAuthError';
+  }
+}
+
+export function isImapAuthError(err: unknown): boolean {
+  if (err instanceof ImapAuthError) return true;
+  const e = err as { authenticationFailed?: boolean; serverResponseCode?: string } | null;
+  return !!e && (e.authenticationFailed === true || e.serverResponseCode === 'AUTHENTICATIONFAILED');
 }
 
 const connectionPool = new Map<string, PoolEntry>();
 const IDLE_TIMEOUT_MS = 60 * 1000; // Auto-close connection after 60s of inactivity
+// A connection never lives longer than this, so a password change or a closed mailbox shows up
+// within minutes even for a busy session. The replacement uses the session's stored credentials.
+let maxConnectionAgeMs = 10 * 60 * 1000;
+
+/** Test hook: shorten the connection age cap. Returns the previous value. */
+export function setMaxConnectionAgeMs(ms: number): number {
+  const previous = maxConnectionAgeMs;
+  maxConnectionAgeMs = ms;
+  return previous;
+}
 
 function getPoolKey(config: AccountConfig): string {
-  return `${config.imapUser}@${config.imapHost}:${config.imapPort}`;
+  if (config.sessionKey) return `s:${config.sessionKey}`;
+  // No session (e.g. a direct call in a test): key on everything that
+  // authenticates the connection, including the password, so nothing is shared
+  // between different credentials.
+  const passHash = createHash('sha256').update(config.imapPass, 'utf8').digest('hex');
+  return `c:${config.imapUser}@${config.imapHost}:${config.imapPort}:${passHash}`;
+}
+
+function armIdleTimer(key: string, entry: PoolEntry): void {
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.lastUsed = Date.now();
+  entry.timer = setTimeout(() => {
+    void closePooledClient(key);
+  }, IDLE_TIMEOUT_MS);
+  entry.timer.unref();
 }
 
 export async function closePooledClient(key: string): Promise<void> {
   const entry = connectionPool.get(key);
-  if (entry) {
-    clearTimeout(entry.timer);
-    connectionPool.delete(key);
-    try {
-      if (entry.client.usable) {
-        await entry.client.logout();
-      }
-    } catch {
-      // Ignore disconnect errors during reaper
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  connectionPool.delete(key);
+  let client = entry.client;
+  if (!client && entry.connecting) {
+    client = await entry.connecting.catch(() => undefined);
+  }
+  try {
+    if (client?.usable) {
+      await client.logout();
+    } else {
+      client?.close();
     }
+  } catch {
+    // Ignore disconnect errors during reaper
   }
 }
 
+/** Closes the pooled IMAP connection of one session (sign-out, expiry). */
 export async function closeUserSession(config: AccountConfig): Promise<void> {
-  const key = getPoolKey(config);
-  await closePooledClient(key);
+  await closePooledClient(getPoolKey(config));
+}
+
+/** Closes the pooled IMAP connection for a session key (see AccountConfig.sessionKey). */
+export async function closeSessionConnection(sessionKey: string): Promise<void> {
+  await closePooledClient(`s:${sessionKey}`);
+}
+
+/** Closes every pooled connection (server shutdown). */
+export async function closeAllPooledClients(): Promise<void> {
+  await Promise.all([...connectionPool.keys()].map((key) => closePooledClient(key)));
 }
 
 export async function getPooledImapClient(config: AccountConfig): Promise<ImapFlow> {
   const key = getPoolKey(config);
-  const existing = connectionPool.get(key);
+  let existing = connectionPool.get(key);
 
-  if (existing && existing.client.usable) {
-    clearTimeout(existing.timer);
-    existing.lastUsed = Date.now();
-    existing.timer = setTimeout(() => closePooledClient(key), IDLE_TIMEOUT_MS);
+  if (existing?.client?.usable && Date.now() - existing.connectedAt >= maxConnectionAgeMs) {
+    // Too old: close it and open a fresh one below (another request may have done so meanwhile).
+    await closePooledClient(key);
+    existing = connectionPool.get(key);
+  }
+  if (existing?.client?.usable) {
+    armIdleTimer(key, existing);
     return existing.client;
   }
+  if (existing?.connecting) {
+    // Another request is already opening this session's connection: share it.
+    return existing.connecting;
+  }
+  if (existing) {
+    // Stale entry (connection dropped): discard before reconnecting.
+    if (existing.timer) clearTimeout(existing.timer);
+    connectionPool.delete(key);
+  }
 
-  // Create new connection
+  const entry: PoolEntry = { lastUsed: Date.now(), connectedAt: Date.now() };
   const client = createImapClient(config);
-  await client.connect();
 
-  const timer = setTimeout(() => closePooledClient(key), IDLE_TIMEOUT_MS);
-  connectionPool.set(key, { client, timer, lastUsed: Date.now() });
-
-  client.on('error', (err) => {
-    // Prevent unhandled error event crash on socket timeouts or disconnects
-    const entry = connectionPool.get(key);
-    if (entry) {
-      clearTimeout(entry.timer);
+  const forget = () => {
+    // Only remove the entry if it still belongs to this client.
+    const current = connectionPool.get(key);
+    if (current === entry) {
+      if (entry.timer) clearTimeout(entry.timer);
       connectionPool.delete(key);
     }
-  });
+  };
+  // Prevent unhandled error event crash on socket timeouts or disconnects
+  client.on('error', forget);
+  client.on('close', forget);
 
-  client.on('close', () => {
-    const entry = connectionPool.get(key);
-    if (entry) {
-      clearTimeout(entry.timer);
-      connectionPool.delete(key);
+  entry.connecting = client.connect().then(
+    () => {
+      entry.client = client;
+      entry.connecting = undefined;
+      entry.connectedAt = Date.now();
+      if (connectionPool.get(key) === entry) {
+        armIdleTimer(key, entry);
+      }
+      return client;
+    },
+    (err: unknown) => {
+      forget();
+      throw isImapAuthError(err) ? new ImapAuthError() : err;
     }
-  });
-
-  return client;
+  );
+  connectionPool.set(key, entry);
+  return entry.connecting;
 }
 
 export async function testImapConnection(config: AccountConfig): Promise<boolean> {

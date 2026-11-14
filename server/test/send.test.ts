@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { sendLiveEmail, clearIdempotencyStore, SendError } from '../src/services/smtp.js';
 import { closeUserSession } from '../src/services/imap.js';
-import { accountFor, GM, resetAccount, seedMail, waitForMail, fetchAll } from './helpers/greenmail.js';
+import { accountFor, GM, resetAccount, seedMail, waitForMail, fetchAll } from './helpers.js';
 
 const tester = accountFor(GM.tester, 'Tester Person');
 
@@ -95,11 +95,10 @@ test('a 2 MiB attachment is delivered intact', async () => {
 });
 
 test('attachments over the configured limit are refused before sending', async () => {
-  const old = process.env.MAIL_MAX_MESSAGE_BYTES;
-  process.env.MAIL_MAX_MESSAGE_BYTES = String(100 * 1024);
-  try {
+  const limited = { ...tester, maxMessageBytes: 100 * 1024 };
+  {
     await assert.rejects(
-      sendLiveEmail(tester, {
+      sendLiveEmail(limited, {
         to: [GM.colleague],
         subject: 'too-big',
         text: 'x',
@@ -108,7 +107,7 @@ test('attachments over the configured limit are refused before sending', async (
       (e: unknown) => e instanceof SendError && e.status === 413
     );
     await assert.rejects(
-      sendLiveEmail(tester, {
+      sendLiveEmail(limited, {
         to: [GM.colleague],
         subject: 'too-big-total',
         text: 'x',
@@ -119,9 +118,6 @@ test('attachments over the configured limit are refused before sending', async (
       }),
       (e: unknown) => e instanceof SendError && e.status === 413
     );
-  } finally {
-    if (old === undefined) delete process.env.MAIL_MAX_MESSAGE_BYTES;
-    else process.env.MAIL_MAX_MESSAGE_BYTES = old;
   }
   const all = await fetchAll(GM.colleague, 'INBOX');
   assert.equal(all.filter((x) => x.mail.subject?.startsWith('too-big')).length, 0);

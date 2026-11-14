@@ -10,7 +10,7 @@ import {
   getLiveMessages,
   closeUserSession
 } from '../src/services/imap.js';
-import { accountFor, GM, resetAccount, appendRaw, buildMime, fetchAll, withImap } from './helpers/greenmail.js';
+import { accountFor, GM, resetAccount, appendRaw, buildMime, fetchAll, withImap } from './helpers.js';
 
 const tester = accountFor(GM.tester);
 

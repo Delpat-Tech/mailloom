@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { saveLiveDraft, deleteLiveDraft } from '../src/services/drafts.js';
 import { getLiveMessageDetail, closeUserSession } from '../src/services/imap.js';
-import { accountFor, GM, resetAccount, fetchAll, withImap } from './helpers/greenmail.js';
+import { accountFor, GM, resetAccount, fetchAll, withImap } from './helpers.js';
 import Fastify from 'fastify';
 
 const tester = accountFor(GM.tester, 'Tester Person');

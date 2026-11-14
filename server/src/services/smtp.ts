@@ -15,8 +15,12 @@ export function createSmtpTransport(config: AccountConfig) {
       user,
       pass
     },
+    // Same certificate rules as IMAP; the password is never sent over an unencrypted SMTP connection
+    // unless the server config explicitly allows it (local testing).
+    requireTLS: config.smtpRequireTLS ?? !config.smtpSecure,
     tls: {
-      rejectUnauthorized: false
+      rejectUnauthorized: config.tls?.rejectUnauthorized ?? true,
+      ...(config.tls?.servername ? { servername: config.tls.servername } : {})
     },
     connectionTimeout: 5000, // 5s connection timeout
     greetingTimeout: 5000,   // 5s greeting timeout
@@ -39,10 +43,10 @@ export async function testSmtpConnection(config: AccountConfig): Promise<boolean
 // ---------------------------------------------------------------
 const DEFAULT_MAX_MESSAGE_BYTES = 10 * 1024 * 1024;
 
-/** Per-file and total attachment limit in bytes (env MAIL_MAX_MESSAGE_BYTES, default 10 MB). */
-export function getMaxMessageBytes(): number {
-  const n = Number(process.env.MAIL_MAX_MESSAGE_BYTES);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_MESSAGE_BYTES;
+/** Per-file and total attachment limit in bytes (AppConfig.maxMessageBytes, default 10 MB). */
+export function getMaxMessageBytes(config: { maxMessageBytes?: number }): number {
+  const n = config.maxMessageBytes;
+  return n && Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_MESSAGE_BYTES;
 }
 
 function formatLimit(bytes: number): string {
@@ -138,7 +142,7 @@ export async function sendLiveEmail(config: AccountConfig, payload: SendEmailPay
 }
 
 async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise<SendResult> {
-  const max = getMaxMessageBytes();
+  const max = getMaxMessageBytes(config);
   const attachments = [...(payload.attachments || [])];
 
   if (payload.forwardOf) {

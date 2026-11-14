@@ -1,14 +1,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import Fastify from 'fastify';
-import cookie from '@fastify/cookie';
-import multipart from '@fastify/multipart';
-import { mailRoutes } from '../src/routes/mail.js';
-import { encryptSession } from '../src/utils/crypto.js';
 import { acquireSlot, runningCount } from '../src/utils/limiter.js';
 import { sendLiveEmail, SendError } from '../src/services/smtp.js';
-import { closeUserSession } from '../src/services/imap.js';
-import { accountFor, GM, resetAccount, seedMail, waitForMail, fetchAll } from './helpers/greenmail.js';
+import { closeUserSession, closeAllPooledClients } from '../src/services/imap.js';
+import { buildTestApp, signIn, accountFor, GM, resetAccount, seedMail, waitForMail, fetchAll } from './helpers.js';
 
 const tester = accountFor(GM.tester, 'Tester Person');
 
@@ -18,16 +13,8 @@ before(async () => {
 });
 after(async () => {
   await closeUserSession(tester);
+  await closeAllPooledClients();
 });
-
-async function app() {
-  const a = Fastify({ logger: false });
-  await a.register(cookie, { secret: 'x' });
-  await a.register(multipart);
-  await a.register(mailRoutes);
-  await a.ready();
-  return a;
-}
 
 function multipartBody(fields: Record<string, string>, file?: { name: string; data: Buffer }) {
   const b = '----mailloomtest';
@@ -67,11 +54,9 @@ test('forwarding an original over the size limit is refused before it is downloa
     attachments: [{ filename: 'big.bin', content: Buffer.alloc(40 * 1024, 7) }]
   });
   const inbox = (await waitForMail(GM.tester, 'INBOX', 1)).find((x) => x.mail.subject === 'big-original')!;
-  const old = process.env.MAIL_MAX_MESSAGE_BYTES;
-  process.env.MAIL_MAX_MESSAGE_BYTES = String(10 * 1024);
   try {
     await assert.rejects(
-      sendLiveEmail(tester, {
+      sendLiveEmail({ ...tester, maxMessageBytes: 10 * 1024 }, {
         to: [GM.colleague],
         subject: 'Fwd: big-original',
         text: 'x',
@@ -80,20 +65,19 @@ test('forwarding an original over the size limit is refused before it is downloa
       (e: unknown) => e instanceof SendError && e.status === 413 && /larger than/.test(e.message)
     );
   } finally {
-    if (old === undefined) delete process.env.MAIL_MAX_MESSAGE_BYTES;
-    else process.env.MAIL_MAX_MESSAGE_BYTES = old;
+    // nothing to restore: the limit travels with the account config
   }
   assert.equal((await fetchAll(GM.colleague, 'INBOX')).filter((x) => x.mail.subject === 'Fwd: big-original').length, 0);
 });
 
 test('a third simultaneous send in one session gets 429 with a plain message', async () => {
-  const a = await app();
-  const token = encryptSession(tester);
+  const a = await buildTestApp();
+  const t = await signIn(a, GM.tester);
   const send = (i: number) =>
     a.inject({
       method: 'POST',
       url: '/api/messages/send',
-      headers: { authorization: `Bearer ${token}` },
+      headers: t.headers,
       payload: { to: [GM.colleague], subject: `burst-${i}`, text: 'x', idempotencyKey: `burst-${i}` }
     });
   const res = await Promise.all([0, 1, 2, 3, 4].map(send));
@@ -109,10 +93,8 @@ test('a third simultaneous send in one session gets 429 with a plain message', a
 });
 
 test('an oversized upload gets 413 and the connection is closed', async () => {
-  const a = await app();
-  const token = encryptSession(tester);
-  const old = process.env.MAIL_MAX_MESSAGE_BYTES;
-  process.env.MAIL_MAX_MESSAGE_BYTES = String(10 * 1024);
+  const a = await buildTestApp({ MAIL_MAX_MESSAGE_BYTES: String(10 * 1024) });
+  const t = await signIn(a, GM.tester);
   try {
     const m = multipartBody(
       { payload: JSON.stringify({ to: [GM.colleague], subject: 'big upload' }) },
@@ -121,7 +103,7 @@ test('an oversized upload gets 413 and the connection is closed', async () => {
     const r = await a.inject({
       method: 'POST',
       url: '/api/messages/send',
-      headers: { authorization: `Bearer ${token}`, 'content-type': m.type },
+      headers: { ...t.headers, 'content-type': m.type },
       payload: m.body
     });
     assert.equal(r.statusCode, 413);
@@ -129,8 +111,6 @@ test('an oversized upload gets 413 and the connection is closed', async () => {
     // and a slot was released
     assert.equal(runningCount(`send|${tester.email.toLowerCase()}|${tester.imapHost}`), 0);
   } finally {
-    if (old === undefined) delete process.env.MAIL_MAX_MESSAGE_BYTES;
-    else process.env.MAIL_MAX_MESSAGE_BYTES = old;
+    await a.close();
   }
-  await a.close();
 });

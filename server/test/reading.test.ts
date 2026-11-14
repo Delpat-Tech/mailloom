@@ -9,7 +9,7 @@ import {
 } from '../src/services/imap.js';
 import { renderEmail } from '../src/utils/sanitize.js';
 import { contentDisposition, decodeEncodedWords } from '../src/utils/mime.js';
-import { accountFor, GM, resetAccount, appendRaw, buildMime } from './helpers/greenmail.js';
+import { accountFor, GM, resetAccount, appendRaw, buildMime } from './helpers.js';
 
 const tester = accountFor(GM.tester);
 

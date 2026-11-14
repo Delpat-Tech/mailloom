@@ -98,6 +98,10 @@ location /mail/ {
 }
 ```
 
+The `Host $host` line is required: cookie names and origin checks depend on the original Host header.
+Set `TRUST_PROXY=127.0.0.1` and `COOKIE_SECURE=true` in the server `.env` (see `deploy/.env.example`);
+sign-in over plain http is refused.
+
 Since the backend and Dovecot/Postfix live on the same Ubuntu instance:
 - **IMAP**: `127.0.0.1:993` (SSL) or `127.0.0.1:143` (STARTTLS) — latency is `~0ms`.
 - **SMTP**: `127.0.0.1:587` (STARTTLS) or `127.0.0.1:25` — latency is `~0ms`.

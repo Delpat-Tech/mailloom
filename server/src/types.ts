@@ -16,8 +16,19 @@ export interface AccountConfig {
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
+  // Refuse to send credentials unless the SMTP connection is encrypted (STARTTLS or implicit TLS).
+  smtpRequireTLS?: boolean;
   smtpUser?: string;
   smtpPass?: string;
+  // TLS options for IMAP and SMTP, from server config (MAIL_TLS_*). Never from the browser.
+  tls?: {
+    rejectUnauthorized: boolean;
+    servername?: string;
+  };
+  // Server-side session this config belongs to; keys the IMAP connection pool.
+  sessionKey?: string;
+  // Largest outgoing message / attachment total in bytes, from server config (MAIL_MAX_MESSAGE_BYTES).
+  maxMessageBytes?: number;
   // Mode flag
   isDemo?: boolean;
 }
