@@ -50,3 +50,19 @@ export function searchAllFolders(params: SearchAllParams): Promise<{ messages: M
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
   return request<{ messages: MessageHeader[]; total: number }>(`/mailboxes/INBOX/messages?${q}`);
 }
+
+export interface LabelWithCounts {
+  id: string;
+  name: string;
+  colour: 'mint' | 'coral' | 'lilac' | 'marigold' | 'blue';
+  /** Unread messages carrying the label (same as `unread`; kept for older clients). */
+  count: number;
+  unread: number;
+  /** All messages carrying the label, over the folders a label view shows (not Trash, Junk or Snoozed). */
+  total: number;
+}
+
+/** GET /api/labels: every label with correct unread and total counts. */
+export function listLabelsWithCounts(): Promise<LabelWithCounts[]> {
+  return request<LabelWithCounts[]>('/labels');
+}
