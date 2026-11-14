@@ -5,7 +5,7 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- On main, reviewed and tested (server 177, client 68): sign-in and sessions, sending, organising, reading, drafts,
+- On main, reviewed and tested (server 178, client 70): sign-in and sessions, sending, organising, reading, drafts,
   live list, phone and keyboard basics, agent keys and API, push notifications, rich-text composer with inline images
   and signature logo, release build (`pnpm release`), deploy runbook (docs/deploy.md), message deep links,
   whole-app security review fixes (auth before body, nodemailer 10, CSP and headers, log hygiene, cid image types).
