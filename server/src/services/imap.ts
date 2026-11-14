@@ -511,7 +511,7 @@ export async function getLiveMessageDetail(
       flags.push('\\Seen');
     }
 
-    const parts = classifyParts(msg.bodyStructure);
+    let parts = classifyParts(msg.bodyStructure);
 
     // Only the text parts are fetched; attachments are never read here .
     let text = '';
@@ -530,6 +530,7 @@ export async function getLiveMessageDetail(
     let blockedImages = 0;
     if (rawHtml) {
       const wanted = new Set(findCidReferences(rawHtml));
+      parts = classifyParts(msg.bodyStructure, wanted);
       const cids = new Map<string, string>();
       let budget = MAX_INLINE_TOTAL_BYTES;
       for (const p of parts.inline) {

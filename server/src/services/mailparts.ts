@@ -11,6 +11,8 @@ export interface LeafPart {
   disposition?: string;
   filename?: string;
   cid?: string;
+  /** True when the part sits inside a multipart/related container. */
+  related?: boolean;
 }
 
 export interface MessageParts {
@@ -23,11 +25,12 @@ export interface MessageParts {
   all: LeafPart[];
 }
 
-function leaves(node: MessageStructureObject, out: LeafPart[], isRoot: boolean): void {
+function leaves(node: MessageStructureObject, out: LeafPart[], isRoot: boolean, related = false): void {
   const type = (node.type || 'application/octet-stream').toLowerCase();
   const isContainer = Array.isArray(node.childNodes) && node.childNodes.length > 0 && type !== 'message/rfc822';
   if (isContainer) {
-    for (const c of node.childNodes!) leaves(c, out, false);
+    const rel = related || type === 'multipart/related';
+    for (const c of node.childNodes!) leaves(c, out, false, rel);
     return;
   }
   const params = node.parameters || {};
@@ -41,11 +44,26 @@ function leaves(node: MessageStructureObject, out: LeafPart[], isRoot: boolean):
     charset: params.charset,
     disposition: node.disposition ? node.disposition.toLowerCase() : undefined,
     filename: rawName ? cleanFilename(rawName, '') || undefined : undefined,
-    cid: node.id ? node.id.replace(/^<|>$/g, '') : undefined
+    cid: node.id ? node.id.replace(/^<|>$/g, '') : undefined,
+    related
   });
 }
 
-export function classifyParts(root: MessageStructureObject | undefined): MessageParts {
+/**
+ * A part with a Content-ID that the HTML references via cid: is inline whatever its disposition.
+ * `referencedCids` (lower-case) is known once the HTML body is read; without it (message list)
+ * an image with a Content-ID inside multipart/related counts as inline.
+ */
+function isInline(p: LeafPart, referencedCids?: Set<string>): boolean {
+  if (!p.cid) return false;
+  const image = p.type.startsWith('image/');
+  if (referencedCids?.has(p.cid.toLowerCase())) return true;
+  if (!image) return false;
+  if (p.disposition !== 'attachment') return true;
+  return !referencedCids && Boolean(p.related);
+}
+
+export function classifyParts(root: MessageStructureObject | undefined, referencedCids?: Set<string>): MessageParts {
   const all: LeafPart[] = [];
   if (root) leaves(root, all, true);
   const res: MessageParts = { attachments: [], inline: [], all };
@@ -56,7 +74,7 @@ export function classifyParts(root: MessageStructureObject | undefined): Message
     if (isBodyText) {
       const key = p.type === 'text/html' ? 'html' : 'text';
       (res[key] ||= []).push(p);
-    } else if (p.cid && p.type.startsWith('image/') && p.disposition !== 'attachment') {
+    } else if (isInline(p, referencedCids)) {
       res.inline.push(p);
     } else {
       res.attachments.push(p);
