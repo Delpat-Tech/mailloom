@@ -19,7 +19,7 @@ users tester@ and colleague@delpat.test). Never the live mail server.
    systemd mailloom.service (www-data, /opt/www/mailloom, .env there), Nginx /etc/nginx/templates/roundcube.tmpl
    (/mail/ strips the prefix, /api/ added). Rollback: /opt/www/mailloom.intern and /root/roundcube.tmpl.bak.
    Waits on Om signing in and the checklist (docs/deploy.md section 9) on desktop and phone.
-1. Phone basics batch on builder-b (Om found gaps on 15 Nov): sign-in alert glitch, password show/hide, pull-to-refresh,
+1. DONE, merged e226438, release v2026.11.15b (awaiting Om's server update): phone basics batch (Om found gaps on 15 Nov): sign-in alert glitch, password show/hide, pull-to-refresh,
    back button/history (opening a mail adds no history: back exits the app), offline banner, sign-in field hints,
    row swipe actions, composer with keyboard. Then review, release, update the live server.
    Builder-a (server only, running): remember sessions slide 30 days; SSRF-safe image proxy (images on by default,
