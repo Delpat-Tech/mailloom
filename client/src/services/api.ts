@@ -123,6 +123,19 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return res.json();
 }
 
+export interface SendEmailResponse {
+  /** true only when every recipient accepted the mail */
+  success: boolean;
+  messageId?: string;
+  accepted?: string[];
+  rejected?: string[];
+  sentCopySaved?: boolean;
+  /** sent, but the Sent copy could not be saved */
+  warning?: string;
+  /** set when some recipients did not receive the mail */
+  error?: string;
+}
+
 export interface SearchFilterParams {
   search?: string;
   from?: string;
@@ -230,13 +243,21 @@ export const api = {
     cc?: string[];
     bcc?: string[];
     subject: string;
-    text?: string;
-    html?: string;
-    attachments?: Array<{ filename: string; content: string; contentType?: string }>;
-  }): Promise<{ success: boolean }> => {
-    return request<{ success: boolean }>('/messages/send', {
+    text: string;
+    inReplyTo?: string;
+    references?: string[];
+    forwardOf?: { folder: string; uid: number };
+    idempotencyKey?: string;
+    files?: File[];
+  }): Promise<SendEmailResponse> => {
+    const { files = [], ...fields } = payload;
+    const form = new FormData();
+    form.append('payload', JSON.stringify(fields));
+    for (const f of files) form.append('attachments', f, f.name);
+    return request<SendEmailResponse>('/messages/send', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      headers: payload.idempotencyKey ? { 'Idempotency-Key': payload.idempotencyKey } : undefined,
+      body: form
     });
   },
 

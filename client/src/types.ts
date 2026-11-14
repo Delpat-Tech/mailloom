@@ -49,6 +49,9 @@ export interface ParsedEmailMessage {
   to: EmailAddress[];
   cc?: EmailAddress[];
   bcc?: EmailAddress[];
+  replyTo?: EmailAddress[];
+  messageId?: string;
+  references?: string[];
   date: string;
   flags: string[];
   isSeen: boolean;

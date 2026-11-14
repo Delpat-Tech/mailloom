@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   X,
   Minus,
@@ -20,46 +20,93 @@ import {
 } from '../services/signatures.js';
 
 interface ComposerAttachment {
+  file: File;
   filename: string;
-  content: string; // base64
   size: number;
-  contentType: string;
+}
+
+// Largest total attachment size; the server enforces the real limit (MAIL_MAX_MESSAGE_BYTES).
+const MAX_ATTACHMENT_BYTES =
+  Number(import.meta.env.VITE_MAIL_MAX_MESSAGE_BYTES) > 0
+    ? Number(import.meta.env.VITE_MAIL_MAX_MESSAGE_BYTES)
+    : 10 * 1024 * 1024;
+
+export interface SentInfo {
+  /** Set when the mail was sent but something needs the user's attention. */
+  warning?: string;
+  /** Set when some recipients did not receive the mail. */
+  error?: string;
+}
+
+export interface ComposerReplyMeta {
+  inReplyTo?: string;
+  references?: string[];
+  forwardOf?: { folder: string; uid: number };
+  /** Names of original attachments the server will add to a forward. */
+  forwardedAttachmentNames?: string[];
 }
 
 interface ComposerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSentSuccess: () => void;
+  onSentSuccess: (info?: SentInfo) => void;
+  /**
+   * The composer fills its form once, when it mounts. Give it a new React `key`
+   * for every message you open so each one starts clean.
+   */
   initialTo?: string[];
   initialCc?: string[];
   initialSubject?: string;
   initialBody?: string;
+  replyMeta?: ComposerReplyMeta;
   accountEmail?: string;
   accountName?: string;
+}
+
+function buildInitialBody(initialBody: string, sigText: string): string {
+  if (!sigText) return initialBody;
+  if (!initialBody) return `\n\n${sigText}`;
+  // Quoted/forwarded text: put the signature above it.
+  if (initialBody.startsWith('\n\n---') || initialBody.startsWith('\n\n----------')) {
+    return `\n\n${sigText}${initialBody}`;
+  }
+  return initialBody;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export const ComposerModal: React.FC<ComposerModalProps> = ({
   isOpen,
   onClose,
   onSentSuccess,
-  initialTo = [],
-  initialCc = [],
+  initialTo,
+  initialCc,
   initialSubject = '',
   initialBody = '',
+  replyMeta,
   accountEmail = '',
   accountName = ''
 }) => {
   const [toInput, setToInput] = useState('');
-  const [toList, setToList] = useState<string[]>(initialTo);
-  const [showCc, setShowCc] = useState(initialCc.length > 0);
+  const [toList, setToList] = useState<string[]>(() => initialTo ?? []);
+  const [showCc, setShowCc] = useState((initialCc ?? []).length > 0);
   const [ccInput, setCcInput] = useState('');
-  const [ccList, setCcList] = useState<string[]>(initialCc);
+  const [ccList, setCcList] = useState<string[]>(() => initialCc ?? []);
   const [showBcc, setShowBcc] = useState(false);
   const [bccInput, setBccInput] = useState('');
   const [bccList, setBccList] = useState<string[]>([]);
   const [subject, setSubject] = useState(initialSubject);
-  const [body, setBody] = useState(initialBody);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  // One key per composed message: a retried request never sends twice.
+  const idempotencyKey = useRef<string>(
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
   const [isSending, setIsSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -70,34 +117,9 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     getSignatureForAccount(accountEmail, accountName)
   );
   const [sigForm, setSigForm] = useState<AccountSignature>(signature);
+  const [body, setBody] = useState(() => buildInitialBody(initialBody, formatSignatureText(signature)));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Sync initial props when opened or changed
-  useEffect(() => {
-    if (isOpen) {
-      setToList(initialTo);
-      setCcList(initialCc);
-      setShowCc(initialCc.length > 0);
-      setSubject(initialSubject);
-
-      const currentSig = getSignatureForAccount(accountEmail, accountName);
-      setSignature(currentSig);
-      setSigForm(currentSig);
-      const sigText = formatSignatureText(currentSig);
-
-      let fullBody = initialBody;
-      if (!initialBody && sigText) {
-        fullBody = `\n\n${sigText}`;
-      } else if (initialBody && sigText && !initialBody.includes(currentSig.name)) {
-        if (initialBody.startsWith('\n\n---') || initialBody.startsWith('\n\n----------')) {
-          fullBody = `\n\n${sigText}${initialBody}`;
-        }
-      }
-      setBody(fullBody);
-      setErrorMsg(null);
-    }
-  }, [isOpen, initialTo, initialCc, initialSubject, initialBody, accountEmail, accountName]);
 
   if (!isOpen) return null;
 
@@ -125,30 +147,27 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     if (type === 'bcc') setBccList(bccList.filter((_, i) => i !== index));
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-    const files = Array.from(e.target.files);
-
-    for (const file of files) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        // Strip data:contentType;base64, prefix
-        const base64 = result.split(',')[1] || '';
-        setAttachments((prev) => [
-          ...prev,
-          {
-            filename: file.name,
-            content: base64,
-            size: file.size,
-            contentType: file.type || 'application/octet-stream'
-          }
-        ]);
-      };
-      reader.readAsDataURL(file);
-    }
-    // reset input
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (files.length === 0) return;
+
+    const limitText = formatFileSize(MAX_ATTACHMENT_BYTES);
+    let total = attachments.reduce((n, a) => n + a.size, 0);
+    const accepted: ComposerAttachment[] = [];
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setErrorMsg(`"${file.name}" is ${formatFileSize(file.size)}. Attachments can be at most ${limitText} in total.`);
+        continue;
+      }
+      if (total + file.size > MAX_ATTACHMENT_BYTES) {
+        setErrorMsg(`"${file.name}" was not added: attachments can be at most ${limitText} in total.`);
+        continue;
+      }
+      total += file.size;
+      accepted.push({ file, filename: file.name, size: file.size });
+    }
+    if (accepted.length > 0) setAttachments((prev) => [...prev, ...accepted]);
   };
 
   const removeAttachment = (index: number) => {
@@ -181,24 +200,21 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
     setIsSending(true);
     try {
-      // Prepare payload
-      const htmlBody = body.replace(/\n/g, '<br/>');
-      await api.sendEmail({
+      const res = await api.sendEmail({
         to: finalTo,
         cc: finalCc.length > 0 ? finalCc : undefined,
         bcc: finalBcc.length > 0 ? finalBcc : undefined,
         subject: subject.trim() || '(No subject)',
         text: body,
-        html: htmlBody,
-        attachments: attachments.map((a) => ({
-          filename: a.filename,
-          content: a.content,
-          contentType: a.contentType
-        }))
+        inReplyTo: replyMeta?.inReplyTo,
+        references: replyMeta?.references,
+        forwardOf: replyMeta?.forwardOf,
+        idempotencyKey: idempotencyKey.current,
+        files: attachments.map((a) => a.file)
       });
 
       setIsSending(false);
-      onSentSuccess();
+      onSentSuccess({ warning: res.warning, error: res.success ? undefined : res.error });
       onClose();
     } catch (err: unknown) {
       setIsSending(false);
@@ -221,11 +237,6 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
     } else if (newSigText && !body.includes(newSigText)) {
       setBody((prev) => `${prev}\n\n${newSigText}`);
     }
-  };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    return `${(bytes / 1024).toFixed(1)} KB`;
   };
 
   return (
@@ -437,6 +448,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
               placeholder="Write your email message here..."
               className="w-full flex-1 resize-none focus:outline-none text-sm text-slate-800 font-sans leading-relaxed"
             />
+
+            {replyMeta?.forwardedAttachmentNames && replyMeta.forwardedAttachmentNames.length > 0 && (
+              <div className="pt-2 text-xs text-slate-500">
+                The original attachments will be included: {replyMeta.forwardedAttachmentNames.join(', ')}
+              </div>
+            )}
 
             {/* Attached Files Pill List */}
             {attachments.length > 0 && (

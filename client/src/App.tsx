@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar.js';
 import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
-import { ComposerModal } from './components/ComposerModal.js';
+import { ComposerModal, type ComposerReplyMeta } from './components/ComposerModal.js';
+import { planReply } from './services/reply.js';
 import { ConnectModal } from './components/ConnectModal.js';
 import {
   api,
@@ -70,7 +71,9 @@ export const App: React.FC = () => {
     cc?: string[];
     subject?: string;
     body?: string;
+    meta?: ComposerReplyMeta;
   }>({});
+  const [composeId, setComposeId] = useState(0);
 
   // Toast feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -427,25 +430,26 @@ export const App: React.FC = () => {
   };
 
   // 9. Reply & Forward Composer Hooks
-  const handleReply = (message: ParsedEmailMessage, replyAll = false) => {
-    const sender = message.from.address;
-    const recipients = replyAll
-      ? [sender, ...message.to.map((t) => t.address).filter((a) => a !== account?.email)]
-      : [sender];
-    const cc = replyAll && message.cc ? message.cc.map((c) => c.address) : [];
+  const openComposer = (initial: typeof composerInitial) => {
+    setComposerInitial(initial);
+    setComposeId((n) => n + 1); // fresh form: nothing left from the previous message
+    setIsComposerOpen(true);
+  };
 
+  const handleReply = (message: ParsedEmailMessage, replyAll = false) => {
+    const plan = planReply(message, account?.email || '', replyAll);
     const dateStr = new Date(message.date).toLocaleString();
-    const quote = `\n\n--- On ${dateStr}, ${message.from.name || sender} wrote: ---\n> ${
+    const quote = `\n\n--- On ${dateStr}, ${message.from.name || message.from.address} wrote: ---\n> ${
       message.text ? message.text.replace(/\n/g, '\n> ') : ''
     }`;
 
-    setComposerInitial({
-      to: recipients,
-      cc,
-      subject: message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`,
-      body: quote
+    openComposer({
+      to: plan.to,
+      cc: plan.cc,
+      subject: plan.subject,
+      body: quote,
+      meta: { inReplyTo: plan.inReplyTo, references: plan.references }
     });
-    setIsComposerOpen(true);
   };
 
   const handleForward = (message: ParsedEmailMessage) => {
@@ -456,12 +460,16 @@ export const App: React.FC = () => {
       .map((t) => t.address)
       .join(', ')}\n\n${message.text || ''}`;
 
-    setComposerInitial({
+    const real = message.attachments.filter((a) => !a.isInline);
+    openComposer({
       to: [],
-      subject: message.subject.startsWith('Fwd:') ? message.subject : `Fwd: ${message.subject}`,
-      body: forwardHeader
+      subject: /^fwd?:/i.test(message.subject) ? message.subject : `Fwd: ${message.subject}`,
+      body: forwardHeader,
+      meta: {
+        forwardOf: { folder: selectedFolder, uid: message.uid },
+        forwardedAttachmentNames: real.map((a) => a.filename)
+      }
     });
-    setIsComposerOpen(true);
   };
 
   // 10. Multi-Account Management
@@ -626,8 +634,7 @@ export const App: React.FC = () => {
               selectedFolder={selectedFolder}
               onSelectFolder={handleSelectFolder}
               onOpenComposer={() => {
-                setComposerInitial({});
-                setIsComposerOpen(true);
+                openComposer({});
                 setShowMobileSidebar(false);
               }}
               onLogout={handleLogout}
@@ -721,10 +728,13 @@ export const App: React.FC = () => {
 
       {/* Floating Composer Modal */}
       <ComposerModal
+        key={composeId}
         isOpen={isComposerOpen}
         onClose={() => setIsComposerOpen(false)}
-        onSentSuccess={() => {
-          showToast('Email sent successfully');
+        onSentSuccess={(info) => {
+          if (info?.error) showToast(info.error, 'error');
+          else if (info?.warning) showToast(info.warning, 'error');
+          else showToast('Email sent successfully');
           loadFolders();
           if (selectedFolder.toLowerCase().includes('sent')) {
             loadMessages();
@@ -734,6 +744,7 @@ export const App: React.FC = () => {
         initialCc={composerInitial.cc}
         initialSubject={composerInitial.subject}
         initialBody={composerInitial.body}
+        replyMeta={composerInitial.meta}
         accountEmail={account?.email}
         accountName={account?.name}
       />

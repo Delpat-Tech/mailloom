@@ -47,8 +47,7 @@ export function formatSignatureText(sig: AccountSignature): string {
   const lines = [sig.name, sig.designation, [sig.phone, sig.website].filter(Boolean).join(' | '), sig.customText]
     .map((l) => (l || '').trim())
     .filter(Boolean);
-  return lines.length > 0 ? ['--', ...lines].join('
-') : '';
+  return lines.length > 0 ? ['--', ...lines].join('\n') : '';
 }
 
 export function formatSignatureHtml(sig: AccountSignature): string {
