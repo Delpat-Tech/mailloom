@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import type { AccountConfig, SendEmailPayload, SendResult } from '../types.js';
+import { prepareRichBody, RichBodyError } from './richbody.js';
 import { getPooledImapClient, getLiveMessageAttachments, MessageTooLargeError, ImapAuthError } from './imap.js';
 
 export function createSmtpTransport(config: AccountConfig) {
@@ -197,6 +198,22 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
   }
 
   const domain = config.email.split('@')[1] || 'localhost';
+
+  // Rich body: sanitise, turn images into inline (cid) parts, generate the text alternative.
+  let rich: ReturnType<typeof prepareRichBody> | undefined;
+  if (payload.html && payload.html.trim() !== '') {
+    try {
+      rich = prepareRichBody(payload.html, domain, { maxTotal: max });
+    } catch (err) {
+      if (err instanceof RichBodyError) throw new SendError(err.message, err.status);
+      throw err;
+    }
+    const inlineTotal = rich.inline.reduce((n, i) => n + i.content.length, 0);
+    if (total + inlineTotal > max) {
+      throw new SendError(`Attachments and pictures together are larger than the ${formatLimit(max)} limit.`, 413);
+    }
+  }
+
   const messageId = `<${randomUUID()}@${domain}>`;
 
   const mailOptions: nodemailer.SendMailOptions = {
@@ -217,7 +234,20 @@ async function doSend(config: AccountConfig, payload: SendEmailPayload): Promise
       contentType: att.contentType
     }))
   };
-  if (payload.text !== undefined) {
+  if (rich) {
+    mailOptions.html = rich.html;
+    mailOptions.text = rich.text;
+    mailOptions.attachments = [
+      ...(mailOptions.attachments as nodemailer.SendMailOptions['attachments'] & unknown[]),
+      ...rich.inline.map((i) => ({
+        filename: i.filename,
+        content: i.content,
+        contentType: i.contentType,
+        cid: i.cid,
+        contentDisposition: 'inline' as const
+      }))
+    ];
+  } else if (payload.text !== undefined) {
     mailOptions.text = payload.text;
     mailOptions.html = textToHtml(payload.text);
   } else {

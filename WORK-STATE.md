@@ -18,6 +18,9 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 5. Trial on the real server with a test mailbox (waits on Om's go-ahead).
 
 ## Later
+- Rich composer built on builder-b (TipTap): needs a browser check (typing, paste from Word/Gmail, picture paste/drop, signature logo, phone width).
+- Signatures (and the logo) are still stored per browser in localStorage; move to server account settings (waits on a settings store).
+- Pictures in a message are sent as data: in the request JSON and turned into cid parts on the server; large messages could use multipart upload instead.
 - Drafts do not keep attachments; reopened drafts cannot restore them (needs multipart draft save).
 - Folder create/rename/delete, drag to folder (wait on v1 in daily use).
 - Mail 'Message-ID' header search for drafts on servers without UIDPLUS is untested on real Dovecot.

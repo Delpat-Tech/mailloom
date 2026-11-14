@@ -35,3 +35,20 @@
 .bg-slate-900 ::-webkit-scrollbar-thumb:hover {
   background: rgba(71, 85, 105, 0.8);
 }
+
+/* ---- Rich-text editor (RichEditor.tsx): plain classes, restyle freely ---- */
+.ml-editor-content p { margin: 0 0 0.6em; }
+.ml-editor-content ul { list-style: disc; padding-left: 1.4rem; margin: 0 0 0.6em; }
+.ml-editor-content ol { list-style: decimal; padding-left: 1.4rem; margin: 0 0 0.6em; }
+.ml-editor-content li > p { margin: 0; }
+.ml-editor-content blockquote { margin: 0.5em 0; padding-left: 12px; border-left: 3px solid #cbd5e1; color: #475569; }
+.ml-editor-content a { color: #0369a1; text-decoration: underline; }
+.ml-editor-content img { max-width: 100%; height: auto; display: inline-block; vertical-align: bottom; }
+.ml-editor-content img.ProseMirror-selectednode { outline: 2px solid #0ea5e9; outline-offset: 2px; }
+.ml-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

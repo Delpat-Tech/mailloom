@@ -197,7 +197,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // Register routes at / and behind the /mail subpath used by nginx.
   for (const prefix of ['', '/mail']) {
     await fastify.register(authRoutes, { prefix });
-    await fastify.register(mailRoutes, { prefix });
+    await fastify.register(mailRoutes, { prefix, maxMessageBytes: config.maxMessageBytes });
     await fastify.register(connectionRoutes, { prefix });
     await fastify.register(agentRoutes, { prefix });
     await fastify.register(pushRoutes, { prefix });

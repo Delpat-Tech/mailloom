@@ -15,7 +15,7 @@ import {
   restoreLiveMessage,
   isImapAuthError
 } from '../services/imap.js';
-import { saveLiveDraft, deleteLiveDraft } from '../services/drafts.js';
+import { saveLiveDraft, deleteLiveDraft, DraftError } from '../services/drafts.js';
 import { acquireSlot } from '../utils/limiter.js';
 import { contentDisposition } from '../utils/mime.js';
 import { renderEmail } from '../utils/sanitize.js';
@@ -49,7 +49,8 @@ function parseUid(raw: string): number {
 
 // Mail routes. Sign-in, sign-out and session checks live in ./auth.ts; requireAuth
 // sets req.accountConfig (server-configured mail host plus the session's credentials).
-export async function mailRoutes(fastify: FastifyInstance) {
+export async function mailRoutes(fastify: FastifyInstance, opts: { maxMessageBytes?: number } = {}) {
+  const draftBodyLimit = Math.ceil((opts.maxMessageBytes || 10 * 1024 * 1024) * 1.4) + 256 * 1024;
   // 4. List Mailbox Folders
   fastify.get('/api/mailboxes', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
@@ -353,7 +354,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
   );
 
   // 11d. Drafts: save (create or replace) and delete
-  fastify.post('/api/drafts', { preHandler: [requireAuth] }, async (req: AuthenticatedRequest, reply) => {
+  fastify.post('/api/drafts', { preHandler: [requireAuth], bodyLimit: draftBodyLimit }, async (req: AuthenticatedRequest, reply) => {
     const config = req.accountConfig!;
     const raw = (req.body as Record<string, unknown>) || {};
     const strList = (v: unknown): string[] =>
@@ -368,6 +369,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
           bcc: strList(raw.bcc),
           subject: typeof raw.subject === 'string' ? raw.subject : '',
           text: typeof raw.text === 'string' ? raw.text : '',
+          html: typeof raw.html === 'string' ? raw.html : undefined,
           inReplyTo: typeof raw.inReplyTo === 'string' ? raw.inReplyTo : undefined,
           references: strList(raw.references)
         },
@@ -375,6 +377,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       );
       return { success: true, uid: saved.uid, folder: saved.folder };
     } catch (err) {
+      if (err instanceof DraftError) return reply.status(err.status).send({ error: err.message });
       return failMail(req, reply, err, 'The draft could not be saved');
     }
   });
@@ -418,7 +421,7 @@ export async function mailRoutes(fastify: FastifyInstance) {
       try {
         if (req.isMultipart()) {
           let total = 0;
-          for await (const part of req.parts({ limits: { fileSize: max + 1, files: 30, fieldSize: 2 * 1024 * 1024 } })) {
+          for await (const part of req.parts({ limits: { fileSize: max + 1, files: 30, fieldSize: Math.ceil(max * 1.4) + 256 * 1024 } })) {
             if (part.type === 'file') {
               const buf = await part.toBuffer();
               if (part.file.truncated || buf.length > max) {
@@ -427,6 +430,10 @@ export async function mailRoutes(fastify: FastifyInstance) {
               total += buf.length;
               if (total > max) {
                 return tooLarge('Attachments together are larger than the allowed size.');
+              }
+              if (part.fieldname.toLowerCase().startsWith('cid:')) {
+                // Pictures travel only as data: images in the HTML; a client-chosen Content-ID is never accepted.
+                return reply.status(400).send({ error: 'Pictures must be part of the message, not separate uploads.' });
               }
               attachments.push({
                 filename: part.filename || 'attachment',
