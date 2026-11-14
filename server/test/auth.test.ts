@@ -633,7 +633,7 @@ describe('mail errors and expired credentials', () => {
     });
     // The send route answers with SendError's fixed plain message (no server transcript).
     assert.equal(res.statusCode, 502);
-    assert.deepEqual(res.json(), { error: 'The message could not be sent.' });
+    assert.deepEqual(res.json(), { error: 'Could not reach the outgoing mail server.' });
     await strict.close();
 
     const t2 = await signIn(app, TESTER);
