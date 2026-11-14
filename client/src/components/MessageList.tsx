@@ -25,6 +25,7 @@ import {
 import { rowTime, untilText, dayBucket, groupHeader } from '../services/time.js';
 import { avatarClass, initialsOf } from '../services/avatar.js';
 import type { MessageHeader, SpecialUseFolder } from '../types.js';
+import { SEARCH_EVENT } from '../services/searchAll.js';
 import type { SearchFilterParams, ListFilter } from '../services/api.js';
 import type { Label } from '../services/labels.js';
 import { LabelChip } from './LabelChip.js';
@@ -47,6 +48,13 @@ interface MessageListProps {
   isLoading: boolean;
   searchTerm: string;
   onSearchChange: (value: string) => void;
+  /** Where a search looks: every folder (default) or only the open one. */
+  searchScope?: 'all' | 'folder';
+  onSearchScopeChange?: (scope: 'all' | 'folder') => void;
+  /** The rows on screen are search results from every folder: each shows its folder. */
+  searchAll?: boolean;
+  /** Folder path to the name shown on screen. */
+  folderNames?: Record<string, string>;
   filters?: SearchFilterParams;
   onFiltersChange?: (filters: SearchFilterParams) => void;
   onBatchDelete: () => void;
@@ -162,6 +170,8 @@ interface RowProps {
   labelMap: Map<string, Label>;
   snoozeOpen: boolean;
   ctl: RowController;
+  /** Name of the folder the row lives in, shown on search results. */
+  folderText?: string;
 }
 
 const QUICK =
@@ -276,7 +286,7 @@ function RevealContent({ unread }: { unread: boolean }) {
 
 /** One row: avatar, three lines, chips. Memoised so that a change elsewhere does not redraw every row. */
 const MessageRow = React.memo(function MessageRow({
-  msg, who, dateText, isSelected, isChecked, isUnread, tab, isDraft, leaving, canArchive, labelMap, snoozeOpen, ctl
+  msg, who, dateText, isSelected, isChecked, isUnread, tab, isDraft, leaving, canArchive, labelMap, snoozeOpen, ctl, folderText
 }: RowProps) {
   const bounce = msg.bounce;
   const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
@@ -436,8 +446,13 @@ const MessageRow = React.memo(function MessageRow({
                   </>
                 )}
               </span>
-              {(msg.hasAttachments || shownLabels.length > 0) && (
+              {(msg.hasAttachments || shownLabels.length > 0 || folderText) && (
                 <span className="mt-[7px] flex items-center gap-1.5 flex-wrap">
+                  {folderText && (
+                    <span className="inline-flex items-center h-[22px] px-2 rounded-[3px] bg-sheet text-xs font-bold text-ink-2 border border-line" title={`In ${folderText}`}>
+                      {folderText}
+                    </span>
+                  )}
                   {msg.hasAttachments && (
                     <span className="inline-flex items-center gap-1 h-[22px] pl-1.5 pr-2 border border-line-2 rounded-[3px] text-xs font-semibold text-ink-2">
                       <Paperclip className="w-[13px] h-[13px] shrink-0" aria-hidden="true" />
@@ -550,6 +565,10 @@ export const MessageList: React.FC<MessageListProps> = ({
   isLoading,
   searchTerm,
   onSearchChange,
+  searchScope = 'all',
+  onSearchScopeChange,
+  searchAll = false,
+  folderNames,
   filters = {},
   onFiltersChange,
   onBatchDelete,
@@ -591,8 +610,8 @@ export const MessageList: React.FC<MessageListProps> = ({
       setSearchOpen(true);
       setTimeout(() => document.querySelector<HTMLInputElement>('[data-search-input]')?.focus(), 30);
     };
-    window.addEventListener('mailloom:search', open);
-    return () => window.removeEventListener('mailloom:search', open);
+    window.addEventListener(SEARCH_EVENT, open);
+    return () => window.removeEventListener(SEARCH_EVENT, open);
   }, []);
   const scrollerRef = useRef<HTMLUListElement>(null);
   const pull = usePullToRefresh(scrollerRef as React.RefObject<HTMLElement>, { enabled: isVisible, refreshing: isLoading, onRefresh });
@@ -778,13 +797,16 @@ export const MessageList: React.FC<MessageListProps> = ({
         <div role="search" className={`relative flex items-center ${searchOpen || searchTerm ? '' : 'max-lg:hidden'}`}>
           <Search className="w-4 h-4 text-ink-3 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
           <input
-            type="text"
+            type="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            autoCapitalize="none"
             aria-label="Search messages"
             data-search-input
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search mail"
-            className="w-full bg-sheet border border-line text-ink placeholder:text-ink-3 text-base sm:text-[13px] rounded pl-9 pr-24 sm:pr-16 py-2 min-h-[44px] sm:min-h-[34px] focus:outline-none focus:border-focus focus:ring-1 focus:ring-focus transition-colors"
+            className="w-full bg-sheet border border-line text-ink placeholder:text-ink-3 text-base sm:text-[13px] rounded pl-9 pr-24 sm:pr-16 py-2 min-h-[44px] sm:min-h-[34px] [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden focus:outline-none focus:border-focus focus:ring-1 focus:ring-focus transition-colors"
           />
           <div className="absolute right-0 sm:right-2 top-1/2 -translate-y-1/2 flex items-center gap-0 sm:gap-1">
             {searchTerm && (
@@ -816,6 +838,29 @@ export const MessageList: React.FC<MessageListProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Where the search looks */}
+        {(searchTerm.trim() || hasActiveFilters) && (
+          viewKind ? (
+            <p className="text-xs font-semibold text-ink-3 max-lg:text-rail-2" role="status">Searching all folders</p>
+          ) : (
+            <div role="group" aria-label="Search in" className="flex items-center gap-1.5 text-xs">
+              {(['all', 'folder'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={searchScope === v}
+                  onClick={() => onSearchScopeChange?.(v)}
+                  className={`min-h-[36px] sm:min-h-0 px-2.5 py-1 rounded font-bold border ${
+                    searchScope === v ? 'bg-sel text-sel-ink border-transparent' : 'bg-surface text-ink-2 border-line hover:bg-hover'
+                  }`}
+                >
+                  {v === 'all' ? 'All folders' : 'This folder'}
+                </button>
+              ))}
+            </div>
+          )
+        )}
 
         {/* Expandable IMAP Filter Panel */}
         {showFilters && (
@@ -1100,6 +1145,7 @@ export const MessageList: React.FC<MessageListProps> = ({
                     labelMap={labelMap}
                     snoozeOpen={snoozeUid === msg.uid}
                     ctl={ctl}
+                    folderText={searchAll && msg.mailbox ? folderNames?.[msg.mailbox] ?? msg.mailbox : undefined}
                   />
                 );
               })}

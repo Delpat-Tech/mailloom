@@ -16,6 +16,7 @@ import { folderTitle, quoteLine, fullDate } from './services/time.js';
 import { Presence } from './components/Presence.js';
 import { sentToText } from './services/recipients';
 import { realUid, keyFor } from './services/uidKey.js';
+import { hasSearch, searchEverywhere, openSearch } from './services/searchAll.js';
 import { shownTotal, loadView, parseViewPath, STARRED_PATH, labelPath } from './services/views.js';
 import { PendingActions } from './services/pendingActions.js';
 import { LruCache, Limiter } from './services/cache.js';
@@ -132,6 +133,8 @@ export const App: React.FC = () => {
   const [filterInput, setFilterInput] = useState<SearchFilterParams>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [searchFilters, setSearchFilters] = useState<SearchFilterParams>({});
+  // Search looks in every folder unless "This folder" is chosen. Views (Starred, Snoozed, labels) always search everywhere.
+  const [searchScope, setSearchScope] = useState<'all' | 'folder'>('all');
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   // False until the first answer for the folder on screen: no count and no "empty" message before that.
   const [listReady, setListReady] = useState(false);
@@ -356,7 +359,9 @@ export const App: React.FC = () => {
     async (silent = false) => {
       if (!account || !selectedFolder) return;
       const seq = ++loadSeq.current;
-      const key = `${account.handle}|${selectedFolder}|${page}|${filter}|${searchTerm}|${JSON.stringify(searchFilters)}`;
+      const searching = hasSearch(searchTerm, searchFilters);
+      const everywhere = searching && (searchScope === 'all' || !!parseViewPath(selectedFolder));
+      const key = `${account.handle}|${everywhere ? '*all*' : selectedFolder}|${page}|${filter}|${searchTerm}|${JSON.stringify(searchFilters)}`;
       const more = page > 1 && !silent; // the next page is added under the rows already shown
       const cached = page === 1 ? listCache.get(key) : undefined;
       if (cached && !silent) {
@@ -370,7 +375,11 @@ export const App: React.FC = () => {
       try {
         const view = parseViewPath(selectedFolder);
         const fetchPage = (p: number) =>
-          view ? loadView(view, p, 50) : api.getMessages(selectedFolder, p, 50, searchTerm, searchFilters, filter);
+          everywhere
+            ? searchEverywhere(searchTerm, searchFilters, filter, p, 50)
+            : view
+              ? loadView(view, p, 50)
+              : api.getMessages(selectedFolder, p, 50, searchTerm, searchFilters, filter);
         if (more) {
           const res = await fetchPage(page);
           if (seq !== loadSeq.current) return;
@@ -406,7 +415,7 @@ export const App: React.FC = () => {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [account, selectedFolder, page, searchTerm, searchFilters, filter]
+    [account, selectedFolder, page, searchTerm, searchFilters, filter, searchScope]
   );
 
   useEffect(() => {
@@ -432,8 +441,21 @@ export const App: React.FC = () => {
   }, [searchInput, filterInput]);
 
   // Reset pagination & message detail when switching folders
+  // Search from anywhere, also with a mail open: the reader layer closes first, then the search box opens.
+  const openSearchRef = useRef(() => {});
+  openSearchRef.current = () =>
+    openSearch(() => {
+      setMobileView('list');
+      setShowMobileSidebar(false);
+    }, mobileView === 'message');
+
   const handleSelectFolder = (folderPath: string) => {
-    if (folderPath.toLowerCase() === selectedFolder.toLowerCase()) return;
+    if (folderPath.toLowerCase() === selectedFolder.toLowerCase()) {
+      // Choosing the folder that is open ends a search and shows the folder again.
+      setSearchInput('');
+      setFilterInput({});
+      return;
+    }
     detailSeq.current++; // any detail request still in flight belongs to the old folder
     setIsDetailLoading(false);
     setSelectedFolder(folderPath);
@@ -630,7 +652,12 @@ export const App: React.FC = () => {
   const shownTotalNow = shownTotal(totalMessages, messages, visibleMessages, (m) => hidden.has(m.uid));
   const inboxLike = folders.find((f) => f.path.toLowerCase() === selectedFolder.toLowerCase());
   const viewRef = parseViewPath(selectedFolder);
-  const headerName = viewRef
+  const searchingNow = hasSearch(searchTerm, searchFilters);
+  const searchAllNow = searchingNow && (searchScope === 'all' || !!viewRef);
+  const folderNames = useMemo(() => Object.fromEntries(folders.map((f) => [f.path, folderLabel(f)])), [folders]);
+  const headerName = searchAllNow
+    ? 'Search results'
+    : viewRef
     ? viewRef.kind === 'starred'
       ? 'Starred'
       : viewRef.kind === 'snoozed'
@@ -1452,8 +1479,7 @@ export const App: React.FC = () => {
         openComposer({});
         break;
       case 'search':
-        setMobileView('list');
-        window.dispatchEvent(new Event('mailloom:search'));
+        openSearchRef.current();
         break;
       case 'help':
         setShowShortcuts((v) => !v);
@@ -1626,6 +1652,13 @@ export const App: React.FC = () => {
               isLoading={isMessagesLoading}
               searchTerm={searchInput}
               onSearchChange={setSearchInput}
+              searchScope={searchScope}
+              onSearchScopeChange={(v) => {
+                setSearchScope(v);
+                setPage(1);
+              }}
+              searchAll={searchAllNow}
+              folderNames={folderNames}
               filters={filterInput}
               onFiltersChange={setFilterInput}
               onBatchDelete={handleBatchDelete}
@@ -1712,7 +1745,7 @@ export const App: React.FC = () => {
             else if (tab === 'inbox') handleSelectFolder(folders.find((f) => f.specialUse === 'Inbox')?.path ?? 'INBOX');
             else if (tab === 'starred') handleSelectFolder(STARRED_PATH);
             else if (tab === 'folders') setShowMobileSidebar(true);
-            else window.dispatchEvent(new Event('mailloom:search'));
+            else openSearchRef.current();
           }}
         />
       )}
