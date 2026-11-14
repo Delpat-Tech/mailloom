@@ -61,7 +61,8 @@ before(async () => {
     // Start without the folder: the first snooze creates it.
     await c.mailboxDelete('Snoozed').catch(() => {});
   });
-  app = await buildTestApp({}, { now });
+  // The tests drive the timer themselves (tick); the real one must not fire in between.
+  app = await buildTestApp({}, { now, organise: { snoozeIntervalMs: 3_600_000 } });
   t = await signIn(app, GM.tester);
 });
 
@@ -175,14 +176,14 @@ test('snoozes survive a restart and wake on the next sign-in', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mailloom-snooze-'));
   const env = { SESSION_DB_PATH: path.join(dir, 'db.sqlite'), SESSION_SECRET: crypto.randomBytes(32).toString('hex') };
   try {
-    let a = await buildTestApp(env, { now });
+    let a = await buildTestApp(env, { now, organise: { snoozeIntervalMs: 3_600_000 } });
     const s1 = await signIn(a, GM.tester);
     const uid = await put('INBOX', 'across restart', '<snz-5@delpat.test>', ['\\Seen']);
     assert.equal((await snooze(s1, { mailbox: 'INBOX', uids: [uid], until: new Date(clock + 5 * MIN).toISOString() }, a)).statusCode, 200);
     await a.close();
 
     clock += 10 * MIN;
-    a = await buildTestApp(env, { now });
+    a = await buildTestApp(env, { now, organise: { snoozeIntervalMs: 3_600_000 } });
     try {
       const s2 = await signIn(a, GM.tester);
       assert.equal(s2.res.statusCode, 200);

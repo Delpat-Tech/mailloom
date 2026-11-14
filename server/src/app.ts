@@ -41,7 +41,7 @@ export interface BuildAppOptions {
     endpointAllowed?: (endpoint: string) => boolean;
   };
   /** Test hooks for the conversation index (never set in production). */
-  organise?: Pick<IndexerOptions, 'batchSize' | 'retryMs' | 'onBatch'>;
+  organise?: Pick<IndexerOptions, 'batchSize' | 'retryMs' | 'onBatch'> & { snoozeIntervalMs?: number };
 }
 
 function isApiUrl(url: string): boolean {
@@ -173,7 +173,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // Labels, snooze and the conversation index (same database). Snoozed mail is woken by a timer for
   // mailboxes with a stored (push) login, and on the next signed-in request for everyone else.
   const organiseStore = new OrganiseStore(sessions.database, now);
-  const snoozer = new Snoozer(organiseStore, pushStore, config, fastify.log, now);
+  const snoozer = new Snoozer(organiseStore, pushStore, config, fastify.log, now, opts.organise?.snoozeIntervalMs);
   const indexer = new ConversationIndexer(organiseStore, { ...opts.organise, log: fastify.log, now });
   fastify.decorate('mailloomOrganise', { store: organiseStore, snoozer, indexer, now });
   fastify.addHook('onReady', async () => {
@@ -203,6 +203,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   fastify.addHook('onClose', async () => {
     clearInterval(sweeper);
     snoozer.stop();
+    await indexer.close();
     await pushWatcher?.stopAll();
     await closeAllPooledClients();
     sessions.close();

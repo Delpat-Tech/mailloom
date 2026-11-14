@@ -53,6 +53,7 @@ export class ConversationIndexer {
   private jobs = new Map<string, Promise<void>>();
   private retryAt = new Map<string, number>();
   private batchSize: number;
+  private stopped = false;
 
   constructor(
     private store: OrganiseStore,
@@ -104,7 +105,7 @@ export class ConversationIndexer {
   /** Start a background run for this mailbox unless one is running or a failed one is cooling off. */
   kick(config: AccountConfig): void {
     const key = config.email.toLowerCase();
-    if (this.jobs.has(key) || (this.retryAt.get(key) ?? 0) > this.now()) return;
+    if (this.stopped || this.jobs.has(key) || (this.retryAt.get(key) ?? 0) > this.now()) return;
     const job = this.run({ ...config })
       .then(() => {
         this.retryAt.delete(key);
@@ -120,6 +121,16 @@ export class ConversationIndexer {
   /** Resolves when the mailbox's background run (if any) has ended. */
   async idle(email: string): Promise<void> {
     await this.jobs.get(email.toLowerCase());
+  }
+
+  /** Server shutdown: no new runs; running ones stop after their current batch. */
+  async close(): Promise<void> {
+    this.stopped = true;
+    await Promise.all([...this.jobs.values()]);
+  }
+
+  private checkStopped(): void {
+    if (this.stopped) throw Object.assign(new Error('Server is shutting down'), { code: 'SHUTDOWN' });
   }
 
   running(email: string): boolean {
@@ -160,6 +171,7 @@ export class ConversationIndexer {
         this.store.saveBatch(email, folder, await readRows(client, part, folder, uidValidity), { high: part[part.length - 1] });
         await this.opts.onBatch?.({ email, folder, phase: 'new', count: part.length });
         await nextTick();
+        this.checkStopped();
       }
     }
     if (uidNext > 0) this.store.saveBatch(email, folder, [], { high: uidNext - 1 });
@@ -177,6 +189,7 @@ export class ConversationIndexer {
         this.store.saveBatch(email, folder, await readRows(client, part, folder, uidValidity), { low: part[part.length - 1] });
         await this.opts.onBatch?.({ email, folder, phase: 'backfill', count: part.length });
         await nextTick();
+        this.checkStopped();
       }
       this.store.saveBatch(email, folder, [], { complete: true });
     }
