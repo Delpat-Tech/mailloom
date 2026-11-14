@@ -2,6 +2,7 @@ import { fullDate } from '../services/time.js';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Bell, BellOff, AlertCircle, Smartphone, Share } from 'lucide-react';
 import { useDialog } from '../hooks/useDialog.js';
+import { PasswordInput } from './PasswordInput.js';
 import {
   currentSubscription,
   pushApi,
@@ -280,9 +281,8 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, o
                     <label htmlFor="push-password" className="block font-semibold text-ink mb-1">
                       Mailbox password
                     </label>
-                    <input
+                    <PasswordInput
                       id="push-password"
-                      type="password"
                       autoComplete="current-password"
                       required
                       value={password}

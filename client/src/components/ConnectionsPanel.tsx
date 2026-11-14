@@ -1,6 +1,7 @@
 import { fullDate } from '../services/time.js';
 import React, { useCallback, useEffect, useState } from 'react';
 import { X, KeyRound, Copy, Check, RotateCw, Ban, Pencil, AlertCircle, Plus } from 'lucide-react';
+import { PasswordInput } from './PasswordInput.js';
 import { connectionsApi, type AgentAuditEntry, type AgentKey, type AgentScope } from '../services/connections.js';
 
 interface ConnectionsPanelProps {
@@ -210,7 +211,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           maxLength={80}
-                          className="mt-1 w-full bg-sheet border border-line rounded px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-act"
+                          className="w-full bg-sheet border border-line rounded px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-act"
                         />
                       </label>
                       <fieldset className="space-y-1.5">
@@ -229,17 +230,18 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                       </fieldset>
                     </>
                   )}
-                  <label className="block text-[11px] text-ink-3">
-                    Your mailbox password (to confirm it is you)
-                    <input
-                      type="password"
+                  <div className="block text-[11px] text-ink-3">
+                    <label htmlFor="agent-key-password">Your mailbox password (to confirm it is you)</label>
+                    <PasswordInput
+                      id="agent-key-password"
+                      wrapperClassName="mt-1"
                       autoComplete="current-password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
-                      className="mt-1 w-full bg-sheet border border-line rounded px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-act"
+                      className="w-full bg-sheet border border-line rounded px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-act"
                     />
-                  </label>
+                  </div>
                   <div className="flex gap-2 justify-end">
                     <button
                       type="button"

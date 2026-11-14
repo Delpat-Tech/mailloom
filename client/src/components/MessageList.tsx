@@ -1,3 +1,4 @@
+import { useBackLayer } from '../hooks/useBackLayer.js';
 import { Presence } from './Presence.js';
 import React, { useState, useRef, useLayoutEffect, useEffect, useMemo } from 'react';
 import {
@@ -28,6 +29,8 @@ import type { SearchFilterParams, ListFilter } from '../services/api.js';
 import type { Label } from '../services/labels.js';
 import { LabelChip } from './LabelChip.js';
 import { SnoozeMenu } from './SnoozeMenu.js';
+import { usePullToRefresh } from '../hooks/usePullToRefresh.js';
+import { actionFor, commitDistance, startsInEdge, swipeIntent, swipeResult, swipeTravel } from '../services/rowSwipe.js';
 import { SkeletonRows, useAfterDelay } from './Skeleton.js';
 
 interface MessageListProps {
@@ -164,6 +167,113 @@ interface RowProps {
 const QUICK =
   't-fast w-7 h-6 grid place-items-center rounded-[3px] bg-surface border border-line text-ink-2 hover:bg-hover hover:text-ink';
 
+/**
+ * Phone row swipe: left archives, right marks read or unread. The row follows the finger over a coloured
+ * action; past the threshold a short tick sounds and letting go does it. Starts only after clear sideways
+ * intent, never within 20 px of the left edge, and never when the touch is mostly vertical (scroll, pull).
+ */
+function useRowSwipe(
+  moveRef: React.RefObject<HTMLElement>,
+  revealRef: React.RefObject<HTMLElement>,
+  opts: { canArchive: boolean; onAction: (a: 'archive' | 'read') => void; onStart: () => void }
+) {
+  const o = useRef(opts);
+  o.current = opts;
+  useEffect(() => {
+    const el = moveRef.current;
+    if (!el) return;
+    let s: { x: number; y: number; mode: 'pending' | 'drag' } | null = null;
+    let armed = false;
+    let width = 0;
+    const paint = (dx: number) => {
+      el.style.transform = `translateX(${swipeTravel(dx, width, o.current.canArchive)}px)`;
+      const rev = revealRef.current;
+      if (rev) {
+        const a = actionFor(dx, o.current.canArchive);
+        rev.dataset.side = dx < 0 ? 'left' : 'right';
+        rev.dataset.armed = String(Math.abs(dx) >= commitDistance(width) && !!a);
+        rev.style.visibility = a ? 'visible' : 'hidden';
+      }
+    };
+    const clear = () => {
+      el.style.transition = 'transform var(--dur-2) var(--ease-out)';
+      el.style.transform = '';
+      const rev = revealRef.current;
+      if (rev) rev.style.visibility = 'hidden';
+      setTimeout(() => (el.style.transition = ''), 200);
+    };
+    const start = (e: TouchEvent) => {
+      s = null;
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (startsInEdge(t.clientX)) return;
+      s = { x: t.clientX, y: t.clientY, mode: 'pending' };
+      armed = false;
+      width = el.clientWidth;
+    };
+    const move = (e: TouchEvent) => {
+      if (!s) return;
+      const t = e.touches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      if (s.mode === 'pending') {
+        const intent = swipeIntent(dx, dy);
+        if (intent === 'vertical') {
+          s = null;
+          return;
+        }
+        if (intent !== 'horizontal') return;
+        s.mode = 'drag';
+        el.style.transition = 'none';
+        o.current.onStart();
+      }
+      if (e.cancelable) e.preventDefault();
+      paint(dx);
+      const now = Math.abs(dx) >= commitDistance(width) && !!actionFor(dx, o.current.canArchive);
+      if (now && !armed) navigator.vibrate?.(8);
+      armed = now;
+    };
+    const end = (e: TouchEvent, cancelled: boolean) => {
+      if (!s || s.mode !== 'drag') {
+        s = null;
+        return;
+      }
+      const dx = (e.changedTouches[0]?.clientX ?? s.x) - s.x;
+      s = null;
+      const action = cancelled ? null : swipeResult(dx, width, o.current.canArchive);
+      clear();
+      if (action) o.current.onAction(action);
+    };
+    const onEnd = (e: TouchEvent) => end(e, false);
+    const onCancel = (e: TouchEvent) => end(e, true);
+    el.addEventListener('touchstart', start, { passive: true });
+    el.addEventListener('touchmove', move, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onCancel);
+    return () => {
+      el.removeEventListener('touchstart', start);
+      el.removeEventListener('touchmove', move);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onCancel);
+    };
+  }, [moveRef, revealRef]);
+}
+
+/** The action shown behind a swiped row: the side decides which part shows (see motion.css). */
+function RevealContent({ unread }: { unread: boolean }) {
+  return (
+    <>
+      <span className="row-reveal-archive items-center gap-2">
+        <Archive className="w-5 h-5" /> Archive
+      </span>
+      <span className="row-reveal-read items-center gap-2">
+        {unread ? <MailOpen className="w-5 h-5" /> : <Mail className="w-5 h-5" />}
+        {unread ? 'Mark read' : 'Mark unread'}
+      </span>
+    </>
+  );
+}
+
 /** One row: avatar, three lines, chips. Memoised so that a change elsewhere does not redraw every row. */
 const MessageRow = React.memo(function MessageRow({
   msg, who, dateText, isSelected, isChecked, isUnread, tab, isDraft, leaving, canArchive, labelMap, snoozeOpen, ctl
@@ -176,10 +286,30 @@ const MessageRow = React.memo(function MessageRow({
   const slotW = msg.snoozedUntil ? 'w-[100px]' : 'w-[72px] [@media(hover:hover)]:w-[96px]';
   const pressed = useRef(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout>>();
+  const moveRef = useRef<HTMLDivElement>(null);
+  const revealRef = useRef<HTMLDivElement>(null);
+  useRowSwipe(moveRef, revealRef, {
+    canArchive,
+    onStart: () => {
+      clearTimeout(pressTimer.current);
+      pressed.current = false;
+    },
+    onAction: (a) => (a === 'archive' ? ctl.archive(msg.uid, msg.mailbox) : ctl.flag(msg.uid, 'isSeen'))
+  });
   return (
     <li className="row-wrap list-none" data-leaving={leaving || undefined}>
-      <div className="row-inner">
+      <div className="row-inner relative">
         <div
+          ref={revealRef}
+          aria-hidden="true"
+          style={{ visibility: 'hidden' }}
+          className="row-reveal lg:hidden absolute inset-0 flex items-center px-5 text-sm font-extrabold data-[side=left]:justify-end data-[side=left]:bg-act data-[side=left]:text-act-ink data-[side=right]:justify-start data-[side=right]:bg-rail data-[side=right]:text-rail-ink data-[armed=false]:opacity-80"
+        >
+          <RevealContent unread={isUnread} />
+        </div>
+        <div
+          ref={moveRef}
+          style={{ touchAction: 'pan-y' }}
           onClick={(e) => {
             // A click anywhere on the row opens it, padding included. The avatar (selects), the star and the
             // quick actions are their own buttons and do their own thing.
@@ -449,6 +579,11 @@ export const MessageList: React.FC<MessageListProps> = ({
 }) => {
   const [showFilters, setShowFilters] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  // Phone Back closes the search box (and clears the search) before leaving the list.
+  useBackLayer(searchOpen || !!searchTerm, () => {
+    setSearchOpen(false);
+    onSearchChange('');
+  });
   const sentinelRef = useRef<HTMLLIElement>(null);
   // The Search tab and the "/" key ask for the search box (open on a phone, then focus).
   useEffect(() => {
@@ -460,6 +595,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     return () => window.removeEventListener('mailloom:search', open);
   }, []);
   const scrollerRef = useRef<HTMLUListElement>(null);
+  const pull = usePullToRefresh(scrollerRef as React.RefObject<HTMLElement>, { enabled: isVisible, refreshing: isLoading, onRefresh });
   const savedScroll = useRef(0);
   // Roving focus: one row is in the Tab order; arrow keys move between rows.
   const [activeUid, setActiveUid] = useState<number | null>(null);
@@ -567,6 +703,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   const showSkeleton = useAfterDelay((isLoading || !countReady) && messages.length === 0, 150);
   const labelMap = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
   const [snoozeUid, setSnoozeUid] = useState<number | null>(null);
+  useBackLayer(snoozeUid !== null, () => setSnoozeUid(null));
   const canArchive = !!onArchive && folderKind !== 'Archive' && folderKind !== 'Drafts' && folderKind !== 'Sent';
 
   const FIELD =
@@ -906,6 +1043,23 @@ export const MessageList: React.FC<MessageListProps> = ({
           )}
         </div>
       ) : (
+        <>
+        <div
+          aria-hidden="true"
+          data-testid="pull-indicator"
+          className="lg:hidden shrink-0 overflow-hidden flex items-end justify-center bg-surface"
+          style={{
+            height: pull.offset,
+            transition: pull.dragging ? 'none' : 'height var(--dur-3) var(--ease-out)'
+          }}
+        >
+          {pull.offset > 0 && (
+            <RotateCw
+              className={`w-5 h-5 mb-2 text-ink-2 ${pull.holding ? 'animate-spin motion-reduce:animate-none' : ''}`}
+              style={pull.holding ? undefined : { opacity: pull.progress, transform: `rotate(${pull.progress * 270}deg)` }}
+            />
+          )}
+        </div>
         <ul
           ref={scrollerRef}
           aria-label={`${folderName} messages`}
@@ -913,7 +1067,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           onScroll={(e) => {
             if (e.currentTarget.clientHeight > 0) savedScroll.current = e.currentTarget.scrollTop;
           }}
-          className="flex-1 overflow-y-auto list-none m-0 p-0"
+          className="flex-1 overflow-y-auto overscroll-y-contain list-none m-0 p-0"
         >
           {groups.map((g) => (
             <React.Fragment key={g.key}>
@@ -963,6 +1117,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             </li>
           )}
         </ul>
+        </>
       )}
 
       {/* New Message: always reachable on small screens (the sidebar is hidden there) */}

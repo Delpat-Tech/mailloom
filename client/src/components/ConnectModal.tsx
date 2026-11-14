@@ -12,6 +12,7 @@ import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
 import type { UserAccount } from '../types.js';
 import { Logo } from './Logo.js';
+import { PasswordInput } from './PasswordInput.js';
 
 interface ConnectModalProps {
   onConnected: (account: UserAccount, rememberMe: boolean) => void;
@@ -43,6 +44,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
   const [password, setPassword] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
+  const [attempts, setAttempts] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(
     reauthEmail !== undefined ? 'Your session has ended. Sign in again to continue; open drafts are kept.' : null
   );
@@ -68,6 +70,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
 
     setIsLoading(true);
     setErrorMsg(null);
+    setAttempts((n) => n + 1);
     try {
       // Only the email and password are sent; the mail server is fixed in the server's configuration.
       const res = await api.connect({ email: email.trim(), password, rememberMe });
@@ -116,15 +119,15 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
         </div>
 
         {/* Error notification */}
-        {errorMsg && (
-          <div id="connect-error" role="alert" className="bg-warn-bg border-b border-warn-line px-6 py-2.5 text-xs text-warn-ink flex items-center gap-2 -mt-3">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span className="flex-1">{errorMsg}</span>
-          </div>
-        )}
-
         {/* Direct Mailbox Login Form */}
         <form onSubmit={handleConnectCustom} className="p-6 space-y-4 text-xs">
+          {errorMsg && (
+            <div id="connect-error" role="alert" className="flex items-start gap-2 rounded border border-warn-line border-l-4 border-l-warn-ink bg-warn-bg px-3 py-2.5 text-xs text-warn-ink">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-px" aria-hidden="true" />
+              <span className="flex-1">{errorMsg}</span>
+            </div>
+          )}
+
           {/* Email Address */}
           <div>
             <label htmlFor="connect-email" className="block font-bold text-ink-2 mb-1">Email Address *</label>
@@ -133,6 +136,11 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
               ref={emailRef}
               type="email"
               required
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="next"
               autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -143,10 +151,14 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
           {/* Password */}
           <div>
             <label htmlFor="connect-password" className="block font-bold text-ink-2 mb-1">Password *</label>
-            <input
+            <PasswordInput
               id="connect-password"
               ref={passwordRef}
-              type="password"
+              resetSignal={attempts}
+              enterKeyHint="go"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
               autoComplete="current-password"
               value={password}
@@ -158,14 +170,16 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
 
           {/* Remember Me Checkbox */}
           <div className="flex items-center justify-between pt-1">
-            <label className="flex items-center gap-2 text-ink-2 cursor-pointer">
+            <label htmlFor="connect-remember" className="flex items-center gap-2 text-ink-2 cursor-pointer">
               <input
+                id="connect-remember"
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
                 className="rounded accent-act w-4 h-4"
+                aria-label="Keep me signed in for 30 days (not on a shared computer)"
               />
-              <span className="font-medium text-xs">Keep me signed in for 30 days (not on a shared computer)</span>
+              <span aria-hidden="true" className="font-medium text-xs">Keep me signed in for 30 days (not on a shared computer)</span>
             </label>
           </div>
 
