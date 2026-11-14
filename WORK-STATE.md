@@ -5,19 +5,17 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- builder-a: server side of list filters, labels, starred view, snooze, conversations and bounce summaries (branch builder-a, not merged; client by builder B).
-- On main, reviewed and tested (server 178, client 70): sign-in and sessions, sending, organising, reading, drafts,
-  live list, phone and keyboard basics, agent keys and API, push notifications, rich-text composer with inline images
-  and signature logo, release build (`pnpm release`), deploy runbook (docs/deploy.md), message deep links,
-  whole-app security review fixes (auth before body, nodemailer 10, CSP and headers, log hygiene, cid image types).
+- On main, reviewed and tested (server 197, client 112): sign-in and sessions, sending, organising, reading, drafts,
+  live list, phone and keyboard, agent keys and API, push notifications, rich-text composer with inline images and
+  signature logo, release build, deploy runbook, deep links, whole-app security fixes, and the Sky rail design in
+  Delpat colours with filters, starred and snoozed views, labels, snooze, conversations, bounce rows, shortcuts,
+  optimistic actions with undo, and motion. Browser-checked on desktop and phone (light and dark) on 15 Nov.
 - Work OS mail tools: branch mail-tools in Om/wos-mail, reviewed, 64 e2e checks + 36 live checks against real Mailloom;
   not merged into Work OS master (waits on Om).
 
-1. Design (Sky rail) with filters, views, labels, snooze, threads, shortcuts, motion and optimistic undo is built on builder-b; waits on review and merge.
-1. Design: Om picked Slab in Delpat colours, Sky rail (mailloom-design/round-3/direction-A-sky-rail.html); apply it across the app and build everything it shows (Om: UX first, nothing left out). Builder B: look, filters,
-   shortcuts, quick actions, composer, phone tab bar, and the client for labels, snooze, conversations, bounces.
-   Builder A: server for labels (IMAP keywords), snooze (with wake-up), conversations, bounce parsing, starred view.
-2. Full acceptance run in the browser (desktop and phone) after the design lands.
+## Next
+1. Full acceptance run in the browser (desktop and phone), every flow in plan v2's acceptance list, on the merged main.
+2. Push main to GitHub (Delpat-Tech/mailloom) (waits on Om).
 3. Trial on the real server with a test mailbox following docs/deploy.md (waits on Om's go-ahead).
 
 ## Later
