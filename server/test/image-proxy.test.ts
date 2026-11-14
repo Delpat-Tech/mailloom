@@ -300,3 +300,35 @@ describe('GET /api/image-proxy and detail rewriting', () => {
     assert.equal(res.statusCode, 415);
   });
 });
+
+describe('DNS timeout and concurrency caps', () => {
+  test('a lookup that never answers ends at the deadline', async () => {
+    const t0 = Date.now();
+    const hang = () => new Promise<string[]>(() => undefined);
+    assert.equal(await code(fetchRemoteImage('http://slow.test/a.png', { resolve: hang, timeoutMs: 300 })), 'TIMEOUT');
+    assert.ok(Date.now() - t0 < 3000);
+  });
+
+  test('per-session cap 6 (429) and global cap 16 (503) on in-flight fetches', async () => {
+    const app = await buildTestApp({}, { imageProxy: testOpts({ timeoutMs: 1500 }) });
+    try {
+      const secret = app.mailloom.config.sessionSecret;
+      const sessions = [await signIn(app, TESTER), await signIn(app, TESTER), await signIn(app, TESTER)];
+      const fire = (t: Awaited<ReturnType<typeof signIn>>) =>
+        app.inject({ method: 'GET', url: proxyImageUrl(secret, local('/hang'), { account: t.handle }), headers: { cookie: t.headers.cookie! } });
+      // One session: the 7th request is refused at once while 6 hang.
+      const first = Array.from({ length: 6 }, () => fire(sessions[0]!));
+      await new Promise((r) => setTimeout(r, 200));
+      assert.equal((await fire(sessions[0]!)).statusCode, 429);
+      const done1 = await Promise.all(first);
+      assert.ok(done1.every((r) => r.statusCode === 504));
+      // Three sessions x 6 = 18 > 16: two requests are refused with 503 while 16 hang.
+      const all = sessions.flatMap((t) => Array.from({ length: 6 }, () => fire(t)));
+      const results = await Promise.all(all);
+      assert.equal(results.filter((r) => r.statusCode === 503).length, 2);
+      assert.equal(results.filter((r) => r.statusCode === 504).length, 16);
+    } finally {
+      await app.close();
+    }
+  });
+});

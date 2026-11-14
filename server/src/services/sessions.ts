@@ -21,6 +21,8 @@ export interface SessionLifetimes {
   shortMaxMs: number;
   /** Lifetime for sessions with Remember Me. */
   rememberMs: number;
+  /** Absolute cap for Remember Me sessions, from creation, however much they are used. Default 180 days. */
+  rememberMaxMs?: number;
 }
 
 export interface Session {
@@ -108,7 +110,9 @@ export class SessionStore {
 
   private expiryFor(remember: boolean, createdAt: number, lastUsedAt: number): number {
     // Remember Me: a sliding window from last use; the idle limit does not apply.
-    if (remember) return lastUsedAt + this.lifetimes.rememberMs;
+    if (remember) {
+      return Math.min(lastUsedAt + this.lifetimes.rememberMs, createdAt + (this.lifetimes.rememberMaxMs ?? 180 * 86_400_000));
+    }
     return Math.min(createdAt + this.lifetimes.shortMaxMs, lastUsedAt + this.lifetimes.idleMs);
   }
 

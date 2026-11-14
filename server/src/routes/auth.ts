@@ -367,6 +367,6 @@ function setSessionCookie(req: FastifyRequest, reply: FastifyReply, session: Ses
   reply.setCookie(cookieName(req, session.handle), sessionId, {
     ...cookieOptions(req),
     // Remember Me: persistent cookie. Otherwise a browser-session cookie (server idle timeout still applies).
-    ...(session.remember ? { maxAge: Math.floor(config.sessionRememberMs / 1000) } : {})
+    ...(session.remember ? { maxAge: Math.floor(Math.min(config.sessionRememberMs, session.expiresAt - session.lastUsedAt) / 1000) } : {})
   });
 }

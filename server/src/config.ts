@@ -40,6 +40,8 @@ export interface AppConfig {
   sessionShortMaxMs: number;
   /** Lifetime for sessions with Remember Me. */
   sessionRememberMs: number;
+  /** Absolute cap for Remember Me sessions from creation (SESSION_REMEMBER_MAX_DAYS, default 180). */
+  sessionRememberMaxMs: number;
   /** Extra origins allowed to call the API with credentials (same origin is always allowed). */
   corsOrigins: string[];
   /** Force the Secure flag on cookies even for localhost. */
@@ -212,6 +214,7 @@ export function loadConfig(env: Env): AppConfig {
   const sessionIdleMinutes = collect(() => int(env, 'SESSION_IDLE_MINUTES', 30), 30);
   const sessionShortMaxHours = collect(() => int(env, 'SESSION_SHORT_MAX_HOURS', 12), 12);
   const sessionRememberDays = collect(() => int(env, 'SESSION_REMEMBER_DAYS', 30), 30);
+  const sessionRememberMaxDays = collect(() => int(env, 'SESSION_REMEMBER_MAX_DAYS', 180), 180);
 
   const corsOrigins = (env.CORS_ORIGINS || '')
     .split(',')
@@ -268,6 +271,7 @@ export function loadConfig(env: Env): AppConfig {
     sessionIdleMs: sessionIdleMinutes * 60_000,
     sessionShortMaxMs: sessionShortMaxHours * 3_600_000,
     sessionRememberMs: sessionRememberDays * 86_400_000,
+    sessionRememberMaxMs: Math.max(sessionRememberDays, sessionRememberMaxDays) * 86_400_000,
     corsOrigins,
     cookieAlwaysSecure,
     trustProxy,

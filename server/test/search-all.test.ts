@@ -90,3 +90,38 @@ describe('search with scope=all', () => {
     assert.equal(res.statusCode, 400);
   });
 });
+
+describe('search limits', () => {
+  let app: FastifyInstance;
+  before(async () => {
+    app = await buildTestApp();
+    await resetAccount(TESTER);
+  });
+  after(() => app.close());
+
+  test('q and every field are limited to 200 characters', async () => {
+    const t = await signIn(app, TESTER);
+    const get = (qs: string) => app.inject({ method: 'GET', url: `/api/mailboxes/INBOX/messages?${qs}`, headers: t.headers });
+    for (const f of ['search', 'from', 'to', 'cc', 'subject', 'body']) {
+      assert.equal((await get(`${f}=${'a'.repeat(201)}`)).statusCode, 400, f);
+      assert.equal((await get(`${f}=${'a'.repeat(200)}`)).statusCode, 200, f);
+      assert.equal((await get(`scope=all&${f}=${'a'.repeat(201)}`)).statusCode, 400, `${f} scope=all`);
+    }
+  });
+
+  test('a cross-folder search only looks at the newest hits (capped)', async () => {
+    const { crossFolderView } = await import('../src/services/organise.js');
+    const { accountFor } = await import('./helpers.js');
+    await withImap(TESTER, async (c) => {
+      for (let i = 1; i <= 4; i++) await c.append('INBOX', mail({ from: 'a@acme.test', to: 'tester@delpat.test', subject: `in ${i}`, body: 'cap' }), [], new Date(`2026-02-0${i}T10:00:00Z`));
+      for (let i = 1; i <= 4; i++) await c.append('Sent', mail({ from: 'tester@delpat.test', to: 'b@acme.test', subject: `out ${i}`, body: 'cap' }), [], new Date(`2026-03-0${i}T10:00:00Z`));
+    });
+    const r = await crossFolderView(accountFor(TESTER), { body: 'cap' }, ['INBOX', 'Sent'], 1, 50, 3);
+    assert.equal(r.total, 3);
+    assert.equal(r.capped, true);
+    assert.deepEqual(r.messages.map((m) => m.subject), ['out 4', 'out 3', 'out 2']);
+    const all = await crossFolderView(accountFor(TESTER), { body: 'cap' }, ['INBOX', 'Sent'], 1, 50);
+    assert.equal(all.total, 8);
+    assert.equal(all.capped, undefined);
+  });
+});

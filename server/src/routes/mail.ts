@@ -95,6 +95,8 @@ export async function failMail(req: FastifyRequest, reply: FastifyReply, err: un
 }
 
 const MAX_CONCURRENT_SENDS = 2;
+export const MAX_IMAGE_FETCHES_PER_SESSION = 6;
+export const MAX_IMAGE_FETCHES_GLOBAL = 16;
 
 /** A message UID from a URL: a positive integer, else 0 (callers answer 400). */
 function parseUid(raw: string): number {
@@ -175,6 +177,11 @@ export async function mailRoutes(
         before?: string;
       };
 
+      for (const [name, value] of Object.entries({ search, from, to, cc, subject, body })) {
+        if (typeof value !== 'string' || value.length > 200) {
+          return reply.status(400).send({ code: 'INVALID_INPUT', error: `${name} may be at most 200 characters.` });
+        }
+      }
       const pageNum = Math.max(1, parseInt(page, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
       const folderPath = path;
@@ -287,8 +294,19 @@ export async function mailRoutes(
     const sig = typeof q.sig === 'string' ? q.sig : '';
     if (!url || url.length > 4096 || !opts.sessionSecret) return reply.status(400).send({ error: 'Invalid image address' });
     if (!verifyImageSignature(opts.sessionSecret, url, sig)) return reply.status(403).send({ error: 'Image address not signed' });
-    const release = acquireSlot(`img|${req.mailSession!.key}`, 12);
-    if (!release) return reply.status(429).send({ error: 'Too many images at once' });
+    // Caps on in-flight fetches: per session first, then for the whole server.
+    const releaseSession = acquireSlot(`img|${req.mailSession!.key}`, MAX_IMAGE_FETCHES_PER_SESSION);
+    if (!releaseSession) return reply.status(429).send({ error: 'Too many images at once' });
+    const releaseGlobal = acquireSlot('img|global', MAX_IMAGE_FETCHES_GLOBAL);
+    if (!releaseGlobal) {
+      releaseSession();
+      reply.header('Retry-After', '2');
+      return reply.status(503).send({ error: 'The image service is busy' });
+    }
+    const release = () => {
+      releaseSession();
+      releaseGlobal();
+    };
     try {
       const img = await fetchRemoteImage(url, opts.imageFetch);
       reply.header('Content-Type', img.contentType);

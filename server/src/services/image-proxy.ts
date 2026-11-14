@@ -186,15 +186,32 @@ export interface FetchedImage {
   contentType: string;
 }
 
+// c-ares resolver (not getaddrinfo): a slow or dead name server cannot tie up libuv's thread pool, and
+// the query itself gives up after timeout x tries.
+const resolver = new dns.promises.Resolver({ timeout: 2500, tries: 2 });
+
 async function systemResolve(host: string): Promise<string[]> {
-  const all = await dns.promises.lookup(host, { all: true, verbatim: true });
-  return all.map((a) => a.address);
+  const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+  const out = [...(v4.status === 'fulfilled' ? v4.value : []), ...(v6.status === 'fulfilled' ? v6.value : [])];
+  if (out.length === 0) throw new Error('no addresses');
+  return out;
+}
+
+/** Rejects with TIMEOUT when the lookup has not finished by the request deadline. */
+function withDeadline<T>(p: Promise<T>, deadline: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new ImageProxyError('TIMEOUT')), Math.max(0, deadline - Date.now()));
+    p.then(
+      (v) => (clearTimeout(t), resolve(v)),
+      (e) => (clearTimeout(t), reject(e))
+    );
+  });
 }
 
 const defaultPortAllowed = (p: number) => p === 80 || p === 443;
 
 /** Checks a URL and returns the vetted address to connect to. */
-async function vet(url: URL, o: Required<Pick<ImageFetchOptions, 'resolve' | 'addressAllowed' | 'portAllowed'>>): Promise<string> {
+async function vet(url: URL, o: Required<Pick<ImageFetchOptions, 'resolve' | 'addressAllowed' | 'portAllowed'>>, deadline: number): Promise<string> {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new ImageProxyError('BAD_URL');
   if (url.username || url.password) throw new ImageProxyError('BAD_URL');
   const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
@@ -206,8 +223,9 @@ async function vet(url: URL, o: Required<Pick<ImageFetchOptions, 'resolve' | 'ad
     addresses = [host];
   } else {
     try {
-      addresses = await o.resolve(host);
-    } catch {
+      addresses = await withDeadline(o.resolve(host), deadline);
+    } catch (e) {
+      if (e instanceof ImageProxyError) throw e;
       throw new ImageProxyError('DNS_FAILED');
     }
   }
@@ -323,7 +341,7 @@ export async function fetchRemoteImage(rawUrl: string, options: ImageFetchOption
     throw new ImageProxyError('BAD_URL');
   }
   for (let hop = 0; ; hop++) {
-    const ip = await vet(url, o);
+    const ip = await vet(url, o, deadline);
     const r = await requestOnce(url, ip, deadline, maxBytes);
     if (r.body) {
       const type = sniffProxyImage(r.body);
