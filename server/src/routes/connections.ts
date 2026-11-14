@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { requireAuth } from './auth.js';
-import { createImapClient, closeSessionConnection } from '../services/imap.js';
+import { createImapClient, closeSessionConnection, isPasswordRefused } from '../services/imap.js';
 import type { AccountConfig } from '../types.js';
 import { SCOPES, type AgentKeyRecord, type AgentStore, type Scope } from '../agent/store.js';
 import type { AgentConfig } from '../agent/config.js';
@@ -70,7 +70,7 @@ async function checkPassword(account: AccountConfig, req: FastifyRequest): Promi
     return 'ok';
   } catch (err) {
     const e = err as { authenticationFailed?: boolean; serverResponseCode?: string; code?: string };
-    if (e.authenticationFailed || e.serverResponseCode === 'AUTHENTICATIONFAILED') return 'bad_credentials';
+    if (isPasswordRefused(err)) return 'bad_credentials';
     req.log.warn({ code: e.code }, 'IMAP password check failed (server problem)');
     return 'unreachable';
   } finally {

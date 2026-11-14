@@ -3,7 +3,7 @@ import type { AccountConfig } from '../types.js';
 import type { AppConfig } from '../config.js';
 import type { Session, SessionStore } from '../services/sessions.js';
 import type { LoginThrottle } from '../services/login-throttle.js';
-import { closeSessionConnection, createImapClient } from '../services/imap.js';
+import { closeSessionConnection, createImapClient, isPasswordRefused } from '../services/imap.js';
 
 /**
  * Sign-in, sign-out and the requireAuth pre-handler.
@@ -193,7 +193,7 @@ async function verifyMailLogin(account: AccountConfig, log: FastifyInstance['log
     return 'ok';
   } catch (err) {
     const e = err as { authenticationFailed?: boolean; serverResponseCode?: string; code?: string; message?: string };
-    if (e.authenticationFailed || e.serverResponseCode === 'AUTHENTICATIONFAILED') {
+    if (isPasswordRefused(err)) {
       return 'bad_credentials';
     }
     log.warn({ code: e.code, msg: e.message }, 'IMAP login check failed (server problem)');
@@ -283,16 +283,20 @@ export async function authRoutes(fastify: FastifyInstance) {
     throttle.succeed(email, req.ip);
 
     // Signing in again to an account this browser already has replaces that session.
+    const replacedKeys: string[] = [];
     for (const [handle, oldId] of accountCookies(req)) {
       const old = sessions.resolve(oldId);
       if (old.status === 'ok' && old.session.email.toLowerCase() === email.toLowerCase()) {
         sessions.deleteByKey(old.session.key);
         await closeSessionConnection(old.session.key);
         clearAccountCookie(req, reply, handle);
+        replacedKeys.push(old.session.key);
       }
     }
 
     const { sessionId, session } = sessions.create({ email, name, password, isDemo: false, remember });
+    // Devices with notifications on follow the new session, so signing out of it removes them.
+    for (const oldKey of replacedKeys) fastify.mailloomPush?.store.rebindSession(oldKey, session.key);
     setSessionCookie(req, reply, session, sessionId);
     return { account: publicAccount(session) };
   });
@@ -325,18 +329,28 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ code: 'NO_ACCOUNT', error: 'No account was named for sign-out.' });
     }
     const sessionId = accountCookies(req).get(handle);
+    // The browser sends its push endpoint so notifications stop even when the session already expired.
+    const rawEndpoint = (req.body as { endpoint?: unknown } | undefined)?.endpoint;
+    const endpoint = typeof rawEndpoint === 'string' && rawEndpoint.length > 0 && rawEndpoint.length <= 2048 ? rawEndpoint : null;
+    const push = fastify.mailloomPush;
+    const affected = new Set<string>();
     if (sessionId) {
       const result = sessions.resolve(sessionId);
       if (result.status === 'ok' && result.session.handle === handle) {
         sessions.deleteByKey(result.session.key);
         await closeSessionConnection(result.session.key);
         // Signing out on a device also turns off that device's notifications for this mailbox.
-        const push = fastify.mailloomPush;
         if (push) {
-          for (const email of push.store.deleteForSession(result.session.key)) await push.watcher?.refresh(email);
+          for (const email of push.store.deleteForSession(result.session.key)) affected.add(email);
+          if (endpoint && push.store.deleteByEndpoint(result.session.email, endpoint)) affected.add(result.session.email.toLowerCase());
         }
+      } else if (push && endpoint) {
+        for (const email of push.store.deleteOrphansByEndpoint(endpoint)) affected.add(email);
       }
+    } else if (push && endpoint) {
+      for (const email of push.store.deleteOrphansByEndpoint(endpoint)) affected.add(email);
     }
+    if (push) for (const email of affected) await push.watcher?.refresh(email);
     clearAccountCookie(req, reply, handle);
     // Either way, this browser no longer has a session for that account.
     return { success: true };

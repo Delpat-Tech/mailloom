@@ -91,6 +91,7 @@ function toSendError(err: unknown): Error {
   console.warn('[SMTP] send failed:', code || '', (err as Error)?.message?.split('\n')[0]);
   switch (code) {
     case 'EAUTH':
+      if ((err as { responseCode?: number }).responseCode! < 500) return new SendError('The mail server is temporarily unable to sign in. Try again shortly.');
       // Stored credentials were refused: end the session like an IMAP auth failure (route -> SESSION_EXPIRED).
       return new ImapAuthError();
     case 'EENVELOPE':

@@ -2,7 +2,7 @@ import type { ImapFlow } from 'imapflow';
 import type { FastifyBaseLogger } from 'fastify';
 import type { AppConfig } from '../config.js';
 import type { AccountConfig } from '../types.js';
-import { createImapClient, isImapAuthError } from '../services/imap.js';
+import { createImapClient, isDefinitePasswordRefusal, isPasswordRefused } from '../services/imap.js';
 import type { ActiveDevice, PushStore } from './store.js';
 import type { PushSendFn } from './sender.js';
 
@@ -30,6 +30,12 @@ export interface WatcherTiming {
   idlePollMs: number;
   /** First reconnect delay after a dropped connection (doubles up to 5 min). */
   retryMs: number;
+  /** Random extra delay (0 to this) before start-up connects and reconnects, so restarts do not stampede the mail server. */
+  jitterMs: number;
+  /** A refusal without the AUTHENTICATIONFAILED code only counts once a second one comes at least this long after the first. */
+  confirmRefusalMs: number;
+  /** Test hook: behave as if the mail server had no IDLE (poll every pollMs). */
+  noIdle?: boolean;
 }
 
 export const DEFAULT_TIMING: WatcherTiming = {
@@ -37,7 +43,9 @@ export const DEFAULT_TIMING: WatcherTiming = {
   collapseMs: 30_000,
   pollMs: 60_000,
   idlePollMs: 5 * 60_000,
-  retryMs: 5_000
+  retryMs: 5_000,
+  jitterMs: 30_000,
+  confirmRefusalMs: 3 * 60_000
 };
 
 const MAX_RETRY_MS = 5 * 60_000;
@@ -129,6 +137,8 @@ class MailboxWatcher {
   private queue: Promise<void> = Promise.resolve();
   /** Password the open connection uses. */
   private password: string | null = null;
+  /** When the mail server first gave an ambiguous refusal (plain NO) of this password. */
+  private refusedSince: { password: string; at: number } | null = null;
 
   constructor(
     readonly email: string,
@@ -137,8 +147,26 @@ class MailboxWatcher {
     this.retryDelay = mgr.timing.retryMs;
   }
 
-  start(): void {
-    void this.connect();
+  start(withJitter = false): void {
+    const delay = withJitter ? this.jitter() : 0;
+    if (delay <= 0) {
+      void this.connect();
+      return;
+    }
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.connect();
+    }, delay);
+    this.retryTimer.unref();
+  }
+
+  private jitter(): number {
+    return Math.floor(Math.random() * this.mgr.timing.jitterMs);
+  }
+
+  private clearRetry(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 
   get connected(): boolean {
@@ -175,7 +203,7 @@ class MailboxWatcher {
 
   private scheduleReconnect(): void {
     if (this.stopped || this.retryTimer) return;
-    const delay = this.retryDelay;
+    const delay = this.retryDelay + this.jitter();
     this.retryDelay = Math.min(this.retryDelay * 2, MAX_RETRY_MS);
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
@@ -185,7 +213,9 @@ class MailboxWatcher {
   }
 
   private async connect(): Promise<void> {
-    if (this.stopped || this.connecting) return;
+    // One connection at most: a refresh may already have connected before a retry timer fires.
+    if (this.stopped || this.connecting || this.client) return;
+    this.clearRetry();
     this.connecting = true;
     try {
       for (;;) {
@@ -196,12 +226,12 @@ class MailboxWatcher {
           return;
         }
         const password = devices[0]!.secrets.password;
+        const noIdle = this.mgr.timing.noIdle === true;
         const client = createImapClient(this.account(password), {
           connectionTimeout: 15_000,
           greetingTimeout: 10_000,
           // Dedicated connection: go into IDLE right after each command, restart IDLE every 4 min.
-          autoIdleDelay: 500,
-          maxIdleTime: 4 * 60_000
+          ...(noIdle ? { disableAutoIdle: true } : { autoIdleDelay: 500, maxIdleTime: 4 * 60_000 })
         });
         client.on('error', () => undefined);
         try {
@@ -216,6 +246,7 @@ class MailboxWatcher {
           this.uidValidity = mb.uidValidity;
           this.client = client;
           this.password = password;
+          this.refusedSince = null;
           this.retryDelay = this.mgr.timing.retryMs;
           client.on('exists', () => this.enqueueCheck());
           client.on('close', () => {
@@ -225,17 +256,31 @@ class MailboxWatcher {
             this.pollTimer = null;
             this.scheduleReconnect();
           });
-          const idle = client.capabilities.has('IDLE');
+          const idle = client.capabilities.has('IDLE') && !noIdle;
           this.pollTimer = setInterval(() => this.enqueueCheck(), idle ? this.mgr.timing.idlePollMs : this.mgr.timing.pollMs);
           this.pollTimer.unref();
           // Mail that arrived while we were reconnecting.
           this.enqueueCheck();
+          // A device changed the stored password while we were connecting: switch over.
+          setImmediate(() => {
+            if (this.client === client && !this.mgr.store.active(this.email).some((d) => d.secrets.password === password)) void this.refresh();
+          });
           return;
         } catch (err) {
           client.close();
-          if (isImapAuthError(err)) {
-            await this.mgr.disableForPassword(this.email, password, devices);
-            continue; // another device may hold a newer password
+          // Only a real "wrong password" answer ends notifications. A temporary failure (for example
+          // "[UNAVAILABLE] Temporary authentication failure") is treated as the server being unreachable.
+          if (isPasswordRefused(err)) {
+            const now = Date.now();
+            if (this.refusedSince?.password !== password) this.refusedSince = { password, at: now };
+            if (isDefinitePasswordRefusal(err) || now - this.refusedSince.at >= this.mgr.timing.confirmRefusalMs) {
+              this.refusedSince = null;
+              await this.mgr.disableForPassword(this.email, password, devices);
+              continue; // another device may hold a newer password
+            }
+            this.mgr.log.warn('Push watcher: mail server refused the saved password; will check again before giving up');
+            this.scheduleReconnect();
+            return;
           }
           this.mgr.log.warn({ code: (err as { code?: string }).code }, 'Push watcher could not reach the mail server; retrying');
           this.scheduleReconnect();
@@ -305,7 +350,10 @@ class MailboxWatcher {
       this.mgr.forget(this);
       return;
     }
+    // A pending retry must not connect a second time later.
+    this.clearRetry();
     if (this.client && devices.some((d) => d.secrets.password === this.password)) return;
+    if (this.connecting) return; // the in-flight connect re-checks the password when it finishes
     // The password in use is no longer stored by any device: drop the connection and use a stored one.
     const c = this.client;
     this.client = null;
@@ -329,11 +377,11 @@ export class PushWatcher {
 
   /** Starts watchers for every mailbox with a working device (server start). */
   startAll(): void {
-    for (const email of this.store.activeMailboxes()) this.ensure(email);
+    for (const email of this.store.activeMailboxes()) this.ensure(email, true);
   }
 
   /** Makes sure a mailbox is watched (after a device turned notifications on). */
-  ensure(email: string): void {
+  ensure(email: string, withJitter = false): void {
     const key = email.toLowerCase();
     const existing = this.watchers.get(key);
     if (existing) {
@@ -342,7 +390,7 @@ export class PushWatcher {
     }
     const w = new MailboxWatcher(key, this);
     this.watchers.set(key, w);
-    w.start();
+    w.start(withJitter);
   }
 
   /** After devices were removed: stop the watcher if none are left, or switch password. */

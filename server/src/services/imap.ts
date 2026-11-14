@@ -41,7 +41,7 @@ export function detectSpecialUse(name: string, specialUse?: string, path?: strin
 
 export function createImapClient(
   config: AccountConfig,
-  extra: { connectionTimeout?: number; greetingTimeout?: number; maxIdleTime?: number; autoIdleDelay?: number } = {}
+  extra: { connectionTimeout?: number; greetingTimeout?: number; maxIdleTime?: number; autoIdleDelay?: number; disableAutoIdle?: boolean } = {}
 ): ImapFlow {
   return new ImapFlow({
     host: config.imapHost,
@@ -60,7 +60,8 @@ export function createImapClient(
     connectionTimeout: extra.connectionTimeout ?? 15000,
     greetingTimeout: extra.greetingTimeout ?? 10000,
     ...(extra.maxIdleTime ? { maxIdleTime: extra.maxIdleTime } : {}),
-    ...(extra.autoIdleDelay ? { autoIdleDelay: extra.autoIdleDelay } : {})
+    ...(extra.autoIdleDelay ? { autoIdleDelay: extra.autoIdleDelay } : {}),
+    ...(extra.disableAutoIdle ? { disableAutoIdle: true } : {})
   });
 }
 
@@ -88,10 +89,26 @@ export class ImapAuthError extends Error {
   }
 }
 
-export function isImapAuthError(err: unknown): boolean {
-  if (err instanceof ImapAuthError) return true;
+/**
+ * True when the server refused the password: response code AUTHENTICATIONFAILED, or a plain NO to
+ * LOGIN with no response code. imapflow sets authenticationFailed on every NO to LOGIN, so a NO that
+ * carries any other code (`[UNAVAILABLE] Temporary authentication failure`, `[SERVERBUG]`, ...) is
+ * "server trouble", never a wrong password.
+ */
+export function isPasswordRefused(err: unknown): boolean {
   const e = err as { authenticationFailed?: boolean; serverResponseCode?: string } | null;
-  return !!e && (e.authenticationFailed === true || e.serverResponseCode === 'AUTHENTICATIONFAILED');
+  if (!e) return false;
+  if (e.serverResponseCode === 'AUTHENTICATIONFAILED') return true;
+  return e.authenticationFailed === true && !e.serverResponseCode;
+}
+
+/** The server said AUTHENTICATIONFAILED outright (a plain NO could still be a server hiccup). */
+export function isDefinitePasswordRefusal(err: unknown): boolean {
+  return (err as { serverResponseCode?: string } | null)?.serverResponseCode === 'AUTHENTICATIONFAILED';
+}
+
+export function isImapAuthError(err: unknown): boolean {
+  return err instanceof ImapAuthError || isPasswordRefused(err);
 }
 
 const connectionPool = new Map<string, PoolEntry>();

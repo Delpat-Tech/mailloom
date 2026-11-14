@@ -65,7 +65,8 @@ export function failedBeforeData(err: unknown): boolean {
 
 export function isSmtpAuthError(err: unknown): boolean {
   const e = err as { code?: string; responseCode?: number } | null;
-  return !!e && (e.code === 'EAUTH' || e.responseCode === 535);
+  // A 4xx answer (for example 454 temporary authentication failure) is not a refused password.
+  return !!e && (e.responseCode === 535 || (e.code === 'EAUTH' && !(e.responseCode !== undefined && e.responseCode < 500)));
 }
 
 export function newMessageId(fromAddress: string): string {
