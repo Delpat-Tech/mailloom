@@ -37,6 +37,8 @@ export interface RichEditorProps {
   toolbarExtra?: React.ReactNode;
   /** Hide the formatting row (the composer toggles it from its bottom bar). */
   hideToolbar?: boolean;
+  /** Pictures are not allowed in the text (the signature keeps its logo apart): the message shown if one is pasted or dropped. The picture button is hidden. */
+  noPictures?: string;
 }
 
 interface BtnProps {
@@ -119,7 +121,8 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   maxImageBytes = MAX_IMAGE_BYTES,
   contentClassName = 'min-h-[8rem]',
   toolbarExtra,
-  hideToolbar = false
+  hideToolbar = false,
+  noPictures
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [linkOpen, setLinkOpen] = useState(false);
@@ -128,10 +131,14 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   const linkInputRef = useRef<HTMLInputElement>(null);
 
   // The latest callbacks, without rebuilding the editor each render.
-  const cb = useRef({ onChange, onError, maxImageBytes });
-  cb.current = { onChange, onError, maxImageBytes };
+  const cb = useRef({ onChange, onError, maxImageBytes, noPictures });
+  cb.current = { onChange, onError, maxImageBytes, noPictures };
 
   const insertPictures = async (editor: Editor, files: File[]) => {
+    if (cb.current.noPictures) {
+      cb.current.onError?.(cb.current.noPictures);
+      return;
+    }
     for (const file of files) {
       try {
         const src = await readImageFile(file, cb.current.maxImageBytes);
@@ -249,9 +256,11 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         <ToolButton label="Link" shortcut="Ctrl+K" active={editor.isActive('link')} onClick={openLinkRow}>
           <LinkIcon className="w-4 h-4" />
         </ToolButton>
-        <ToolButton label="Insert picture" onClick={() => fileRef.current?.click()}>
-          <ImagePlus className="w-4 h-4" />
-        </ToolButton>
+        {!noPictures && (
+          <ToolButton label="Insert picture" onClick={() => fileRef.current?.click()}>
+            <ImagePlus className="w-4 h-4" />
+          </ToolButton>
+        )}
         <ToolButton label="Clear formatting" onClick={() => chain(editor).unsetAllMarks().clearNodes().run()}>
           <RemoveFormatting className="w-4 h-4" />
         </ToolButton>

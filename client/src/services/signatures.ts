@@ -93,3 +93,30 @@ export function formatSignatureText(sig: AccountSignature): string {
   const text = htmlToPlainText(html);
   return text ? `--\n${text}` : '';
 }
+
+/** The picture a signature carries: the logo from the settings, as a small paragraph at the end. */
+export function composeSignatureHtml(sig: { html: string; logo: string | null } | null | undefined): string {
+  if (!sig) return '';
+  const body = sig.html.trim();
+  const logo = sig.logo ? `<p><img src="${esc(sig.logo)}" alt="Logo"></p>` : '';
+  return body || logo ? body + logo : '';
+}
+
+const IMG_RE = /<img\b[^>]*>/gi;
+const DATA_SRC_RE = /\ssrc=["'](data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2})["']/i;
+
+/**
+ * An older signature kept its logo as a picture inside the text. The server keeps the logo apart (and the text
+ * small), so the first embedded picture becomes the logo and every picture is taken out of the text.
+ */
+export function splitSignatureHtml(html: string): { html: string; logo: string | null } {
+  let logo: string | null = null;
+  for (const tag of html.match(IMG_RE) ?? []) {
+    const m = DATA_SRC_RE.exec(tag);
+    if (m) {
+      logo = m[1]!;
+      break;
+    }
+  }
+  return { html: html.replace(IMG_RE, '').replace(/<p>\s*<\/p>/gi, ''), logo };
+}

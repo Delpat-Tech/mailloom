@@ -7,6 +7,8 @@ import { connectionsApi, type AgentAuditEntry, type AgentKey, type AgentScope } 
 interface ConnectionsPanelProps {
   email: string;
   onClose: () => void;
+  /** Drawn inside the Settings page (no dialog, no header, no close button). */
+  embedded?: boolean;
 }
 
 const SCOPE_LABELS: Record<AgentScope, string> = {
@@ -25,7 +27,7 @@ function errorText(err: unknown): string {
 }
 
 /** Connections: keys that let Work OS (Claude) use this mailbox, and what they did. */
-export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClose }) => {
+export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClose, embedded = false }) => {
   const [keys, setKeys] = useState<AgentKey[]>([]);
   const [apiEnabled, setApiEnabled] = useState(true);
   const [audit, setAudit] = useState<AgentAuditEntry[]>([]);
@@ -61,12 +63,13 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
   }, [load]);
 
   useEffect(() => {
+    if (embedded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, embedded]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,7 +130,10 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
 
   const noScope = !Object.values(scopes).some(Boolean);
 
-  return (
+  const shell = (inner: React.ReactNode) =>
+    embedded ? (
+      inner
+    ) : (
     <div
       className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4"
       role="dialog"
@@ -148,7 +154,14 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
           </button>
         </div>
 
-        <div className="flex gap-1 px-5 pt-3">
+        {inner}
+      </div>
+    </div>
+    );
+
+  return shell(
+      <>
+        <div className={embedded ? 'flex gap-1 pb-3' : 'flex gap-1 px-5 pt-3'}>
           {(['keys', 'activity'] as const).map((t) => (
             <button
               key={t}
@@ -161,7 +174,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div className={embedded ? 'space-y-4 text-[13.5px]' : 'flex-1 overflow-y-auto px-5 py-4 space-y-4'}>
           {error && (
             <div className="flex items-start gap-2 text-xs text-warn-ink bg-warn-bg border border-warn-line rounded px-3 py-2" role="alert">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -350,7 +363,6 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
             )
           )}
         </div>
-      </div>
-    </div>
-  );
+      </>
+    );
 };

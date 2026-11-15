@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { rowTime, untilText, dayBucket, groupHeader } from '../services/time.js';
 import { avatarClass, initialsOf } from '../services/avatar.js';
+import { AccountMenu, type AccountMenuProps } from './AccountMenu.js';
 import type { MessageHeader, SpecialUseFolder } from '../types.js';
 import { SEARCH_EVENT } from '../services/searchAll.js';
 import type { SearchFilterParams, ListFilter } from '../services/api.js';
@@ -74,8 +75,8 @@ interface MessageListProps {
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
   /** Phone: the account avatar in the top bar opens the folder drawer. */
-  onOpenMobileSidebar?: () => void;
-  accountLabel?: string;
+  /** The avatar at the top right: opens the account menu (mailboxes, Settings, sign out). */
+  accountMenu?: AccountMenuProps;
   onClearSelection?: () => void;
   /** Set when more messages exist than are loaded: offers "Select all N in this folder". */
   selectAllInFolder?: { count: number; active: boolean; onChange: (on: boolean) => void };
@@ -586,8 +587,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   hasMore = false,
   isLoadingMore = false,
   onLoadMore,
-  onOpenMobileSidebar,
-  accountLabel,
+  accountMenu,
   onClearSelection,
   selectAllInFolder,
   onMarkAllRead,
@@ -792,22 +792,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             >
               <Search className="w-4 h-4" />
             </button>
-            {onOpenMobileSidebar && (
-              <button
-                type="button"
-                onClick={onOpenMobileSidebar}
-                aria-label="Open folders and account"
-                title="Folders and account"
-                className={`lg:hidden ${TOUCH}`}
-              >
-                <span
-                  aria-hidden="true"
-                  className={`cut-av w-8 h-8 grid place-items-center text-[12px] font-extrabold text-white ${avatarClass(accountLabel || 'me')}`}
-                >
-                  {initialsOf(accountLabel || '?')}
-                </span>
-              </button>
-            )}
+            {accountMenu && <AccountMenu {...accountMenu} touchClass={TOUCH} />}
           </div>
         </div>
 

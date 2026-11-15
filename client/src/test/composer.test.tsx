@@ -12,7 +12,7 @@ vi.mock('../services/api.js', () => ({
 }));
 
 import { ComposerModal } from '../components/ComposerModal.js';
-import { getSignatureForAccount, saveSignatureForAccount } from '../services/signatures.js';
+import { getSignatureForAccount } from '../services/signatures.js';
 
 beforeAll(() => {
   const rect = { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, toJSON: () => ({}) };
@@ -47,8 +47,7 @@ function renderComposer(extra: Partial<React.ComponentProps<typeof ComposerModal
 
 describe('composer with the rich editor', () => {
   it('puts the signature (with its logo) above the quoted original', () => {
-    saveSignatureForAccount('a@delpat.test', { enabled: true, html: `<p>Rahul</p><p><img src="${PNG}" alt="Delpat logo"></p>` });
-    renderComposer({ initialHtml: '<p>On Monday, Sam wrote:</p><blockquote><p>old words</p></blockquote>' });
+    renderComposer({ signature: `<p>Rahul</p><p><img src="${PNG}" alt="Delpat logo"></p>`, initialHtml: '<p>On Monday, Sam wrote:</p><blockquote><p>old words</p></blockquote>' });
     const html = screen.getByRole('textbox', { name: 'Message' }).innerHTML;
     const logo = html.indexOf('Delpat logo');
     const quote = html.indexOf('<blockquote');
@@ -68,8 +67,7 @@ describe('composer with the rich editor', () => {
   });
 
   it('sends rich mail as html (the picture stays in the text, no attachment files) and no separate text', async () => {
-    saveSignatureForAccount('a@delpat.test', { enabled: true, html: `<p>Rahul</p><p><img src="${PNG}" alt="logo"></p>` });
-    renderComposer();
+    renderComposer({ signature: `<p>Rahul</p><p><img src="${PNG}" alt="logo"></p>` });
     await userEvent.setup().click(screen.getByRole('button', { name: /^send/i }));
     await waitFor(() => expect(sendEmail).toHaveBeenCalled());
     const payload = sendEmail.mock.calls[0][0] as Record<string, unknown>;
@@ -98,8 +96,7 @@ describe('composer with the rich editor', () => {
   });
 
   it('Plain text switch asks first when pictures or formatting would be lost', async () => {
-    saveSignatureForAccount('a@delpat.test', { enabled: true, html: `<p><img src="${PNG}" alt="logo"></p>` });
-    const { requestConfirm } = renderComposer();
+    const { requestConfirm } = renderComposer({ signature: `<p><img src="${PNG}" alt="logo"></p>` });
     const u2 = userEvent.setup();
     await u2.click(screen.getByRole('button', { name: 'More composer options' }));
     await u2.click(screen.getByRole('menuitem', { name: 'Plain text' }));
@@ -137,13 +134,14 @@ describe('composer footer and chips', () => {
     expect(chip.textContent).toContain('PS');
   });
 
-  it('keeps Templates, Signature and Plain text in one menu and the bottom bar on one row', async () => {
+  it('keeps Templates and Plain text in one menu (the signature lives in Settings) and the bottom bar on one row', async () => {
     renderComposer();
     const send = screen.getByRole('button', { name: /^send/i });
     expect(send.parentElement!.className).toMatch(/flex-nowrap/);
     const u = userEvent.setup();
     await u.click(screen.getByRole('button', { name: 'More composer options' }));
-    for (const n of ['Templates', 'Signature', 'Plain text']) {
+    expect(screen.queryByRole('menuitem', { name: /Signature/ })).toBeNull();
+    for (const n of ['Templates', 'Plain text']) {
       expect(screen.getByRole('menuitem', { name: new RegExp(n) })).toBeTruthy();
     }
   });

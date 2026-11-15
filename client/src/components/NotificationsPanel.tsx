@@ -18,6 +18,8 @@ interface NotificationsPanelProps {
   /** Other accounts signed in in this browser (they may share this device's push subscription). */
   otherAccounts: number;
   onClose: () => void;
+  /** Drawn inside the Settings page (no dialog, no header, no close button). */
+  embedded?: boolean;
 }
 
 function errorText(err: unknown): string {
@@ -36,9 +38,9 @@ const AVAILABILITY_TEXT: Record<Exclude<PushAvailability, 'ok' | 'ios-needs-inst
 };
 
 /** Notification settings for this device and mailbox. */
-export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, otherAccounts, onClose }) => {
+export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, otherAccounts, onClose, embedded = false }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
-  useDialog(dialogRef, { open: true, onEscape: onClose });
+  useDialog(dialogRef, { open: !embedded, onEscape: onClose });
 
   const [loading, setLoading] = useState(true);
   const [serverOn, setServerOn] = useState(false);
@@ -158,7 +160,10 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, o
   const others = devices.filter((d) => d.id !== device?.id);
   const canTurnOn = serverOn && availability === 'ok' && !!publicKey;
 
-  return (
+  const shell = (body: React.ReactNode) =>
+    embedded ? (
+      body
+    ) : (
     <div className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4">
       <div
         ref={dialogRef}
@@ -180,7 +185,13 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, o
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs text-ink-2">
+        {body}
+      </div>
+    </div>
+    );
+
+  return shell(
+        <div className={embedded ? 'space-y-4 text-[13.5px] text-ink-2' : 'flex-1 overflow-y-auto p-5 space-y-4 text-xs text-ink-2'}>
           <div aria-live="polite" className="space-y-2">
             {error && (
               <p role="alert" className="flex items-start gap-2 p-3 rounded bg-warn-bg border border-warn-line text-warn-ink">
@@ -253,7 +264,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, o
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => void sendTest()} className="px-3 py-2 min-h-[44px] rounded bg-hover hover:bg-line text-ink font-semibold">
-                      Send a test
+                      Send a test notification
                     </button>
                     <button
                       type="button"
@@ -340,7 +351,5 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({ email, o
             </button>
           )}
         </div>
-      </div>
-    </div>
   );
 };

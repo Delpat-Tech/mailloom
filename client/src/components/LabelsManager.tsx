@@ -14,16 +14,21 @@ interface Props {
   onMove?: (id: string, position: number) => void;
   requestConfirm: (r: ConfirmRequest) => void;
   onClose: () => void;
+  /** Drawn inside the Settings page (no dialog, no header, no close button). */
+  embedded?: boolean;
 }
 
 /** Manage labels from the rail: rename, colour, delete (with a confirmation). */
-export const LabelsManager: React.FC<Props> = ({ labels, onRename, onRecolour, onDelete, onCreate, onMove, requestConfirm, onClose }) => {
+export const LabelsManager: React.FC<Props> = ({ labels, onRename, onRecolour, onDelete, onCreate, onMove, requestConfirm, onClose, embedded = false }) => {
   const ref = useRef<HTMLDivElement>(null);
-  useDialog(ref, { open: true, onEscape: onClose });
+  useDialog(ref, { open: !embedded, onEscape: onClose });
   const [newName, setNewName] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  return (
+  const shell = (inner: React.ReactNode) =>
+    embedded ? (
+      <div className="rounded border border-line bg-surface">{inner}</div>
+    ) : (
     <div className="fixed inset-0 z-50 bg-scrim anim-scrim flex items-center justify-center p-4">
       <div
         ref={ref}
@@ -45,7 +50,14 @@ export const LabelsManager: React.FC<Props> = ({ labels, onRename, onRecolour, o
             <X className="w-4 h-4" />
           </button>
         </div>
-        <ul className="flex-1 overflow-y-auto p-3 space-y-2 list-none m-0">
+        {inner}
+      </div>
+    </div>
+    );
+
+  return shell(
+      <>
+        <ul className={embedded ? 'p-3 space-y-2 list-none m-0' : 'flex-1 overflow-y-auto p-3 space-y-2 list-none m-0'}>
           {labels.length === 0 && <li className="text-[13px] text-ink-3 px-2">No labels yet.</li>}
           {labels.map((l, idx) => (
             <li key={l.id} className="flex items-center gap-2 flex-wrap">
@@ -166,7 +178,6 @@ export const LabelsManager: React.FC<Props> = ({ labels, onRename, onRecolour, o
             {errors.new}
           </p>
         )}
-      </div>
-    </div>
-  );
+      </>
+    );
 };

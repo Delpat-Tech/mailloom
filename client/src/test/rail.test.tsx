@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { Sidebar } from '../components/Sidebar.js';
 import type { MailboxFolder } from '../types.js';
 
@@ -32,10 +32,6 @@ function renderRail() {
       selectedFolder="INBOX"
       onSelectFolder={() => {}}
       onOpenComposer={() => {}}
-      onLogout={() => {}}
-      canInstall
-      onInstallApp={() => {}}
-      onOpenNotifications={() => {}}
       onManageLabels={() => {}}
       syncedAt={new Date()}
     />
@@ -53,29 +49,47 @@ describe('rail layout', () => {
     expect(nav.className).toMatch(/overflow-y-auto/);
     expect(nav.className).toMatch(/rail-scroll/);
     expect(screen.getByRole('button', { name: /^Write/ }).parentElement!.className).toMatch(/shrink-0/);
-    expect(screen.getByRole('button', { name: 'Install desktop app' }).parentElement!.className).toMatch(/shrink-0/);
-    expect(screen.getByRole('button', { name: /Accounts\. Signed in/ }).parentElement!.className).toMatch(/shrink-0/);
+    expect(screen.getByRole('status').closest('.shrink-0')).not.toBeNull();
     // Every label is in the scrolling area, so it can be reached however short the window is.
     for (const n of ['People', 'Ops']) expect(nav.textContent).toContain(n);
     expect(nav.parentElement!.className).toMatch(/overflow-hidden/);
   });
 
-  it('hides "Install desktop app" on a short window, and not at all when it cannot be installed', () => {
-    const { unmount } = renderRail();
-    expect(screen.getByRole('button', { name: 'Install desktop app' }).className).toMatch(/max-height:780px/);
-    unmount();
+  it('has only Write, folders, labels with Manage, and the synced line: no settings, install, notifications or account block', () => {
+    const manage = vi.fn();
     render(
       <Sidebar
         account={{ handle: 'h', email: 'a@delpat.test', name: 'A' }}
         folders={folders}
+        labels={labels}
         selectedFolder="INBOX"
         onSelectFolder={() => {}}
         onOpenComposer={() => {}}
-        onLogout={() => {}}
-        canInstall={false}
-        onInstallApp={() => {}}
+        onManageLabels={manage}
+        syncedAt={new Date(2026, 0, 1, 9, 5)}
       />
     );
-    expect(screen.queryByRole('button', { name: 'Install desktop app' })).toBeNull();
+    for (const gone of [
+      /Install desktop app/,
+      /Notifications/,
+      /Allow notifications/,
+      /Connected accounts/,
+      /Add Another Mailbox/,
+      /Disconnect Active Account/,
+      /Connections/,
+      /Accounts./,
+      /Theme/,
+      /Light/,
+      /pictures/i
+    ]) {
+      expect(screen.queryByText(gone)).toBeNull();
+      expect(screen.queryByRole('button', { name: gone })).toBeNull();
+    }
+    expect(screen.getByRole('status').textContent).toMatch(/^Synced at /);
+    fireEvent.click(screen.getByRole('button', { name: 'Manage labels' }));
+    expect(manage).toHaveBeenCalledTimes(1);
+    // Only these buttons: close (phone), Write, folders, labels, Manage.
+    const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') || b.textContent || '');
+    expect(names.some((n) => /sign out|settings|install/i.test(n))).toBe(false);
   });
 });

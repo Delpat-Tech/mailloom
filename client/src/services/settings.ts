@@ -29,3 +29,8 @@ export function setLoadPictures(handle: string, on: boolean): void {
     // Storage unavailable: the choice lasts until the page is closed only.
   }
 }
+
+/** True when this browser has an explicit pictures choice for the account (used to import it once). */
+export function hasStoredLoadPictures(handle: string | null | undefined): boolean {
+  return !!handle && typeof readMap()[handle] === 'boolean';
+}

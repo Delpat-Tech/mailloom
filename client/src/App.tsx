@@ -4,7 +4,13 @@ import { Sidebar } from './components/Sidebar.js';
 import { Logo } from './components/Logo.js';
 import { MobileTabBar, type PhoneTab } from './components/MobileTabBar.js';
 import { ShortcutsSheet } from './components/ShortcutsSheet.js';
-import { LabelsManager } from './components/LabelsManager.js';
+import { SettingsPage } from './components/settings/SettingsPage.js';
+import { parseSettingsHash, settingsHash, type SectionId } from './components/settings/sections.js';
+import { useAccountSettings } from './hooks/useAccountSettings.js';
+import { useDesktop } from './hooks/useMediaQuery.js';
+import { composeSignatureHtml } from './services/signatures.js';
+import { fromAccountTemplate } from './services/templates.js';
+import type { AccountSettingsPatch } from './services/accountSettings.js';
 import { labelsApi, labelErrorText, type Label, type LabelColour } from './services/labels.js';
 import { snoozeApi } from './services/snooze.js';
 import { threadsApi, type ThreadInfo } from './services/threads.js';
@@ -26,8 +32,6 @@ import { LruCache, Limiter } from './services/cache.js';
 import { actionForKey } from './services/shortcuts.js';
 import { snoozeText } from './services/time.js';
 import type { ListFilter } from './services/api.js';
-import { ConnectionsPanel } from './components/ConnectionsPanel.js';
-import { NotificationsPanel } from './components/NotificationsPanel.js';
 import {
   currentSubscription,
   pushApi,
@@ -98,7 +102,6 @@ export const App: React.FC = () => {
   const filter: ListFilter = filterState.folder === selectedFolder ? filterState.value : 'all';
   const setFilter = (value: ListFilter) => setFilterState({ folder: selectedFolder, value });
   const [labels, setLabels] = useState<Label[]>([]);
-  const [showLabelsManager, setShowLabelsManager] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [menu, setMenu] = useState<'label' | 'snooze' | null>(null);
   const [syncedAt, setSyncedAt] = useState<Date | null>(null);
@@ -161,8 +164,6 @@ export const App: React.FC = () => {
 
   // Composer
   const [isComposerOpen, setIsComposerOpen] = useState(false);
-  const [showConnections, setShowConnections] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
   // Push notifications are on for this device and the active account: the in-tab poll then stays quiet
   // (the service worker already shows a notification for the same mail).
   const pushActiveRef = useRef(false);
@@ -189,19 +190,27 @@ export const App: React.FC = () => {
 
   // Mobile responsive state
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+  // Settings (opened from the avatar menu). On a desktop its place is the URL hash (#/settings/<section>).
+  const desktop = useDesktop();
+  const desktopRef = useRef(desktop);
+  desktopRef.current = desktop;
+  const [settingsOpen, setSettingsOpen] = useState(() => parseSettingsHash(window.location.hash) !== null);
+  const [settingsSection, setSettingsSection] = useState<SectionId | null>(() => parseSettingsHash(window.location.hash));
+  const accountSettings = useAccountSettings(account?.handle ?? null, account?.email ?? null);
   const [mobileView, setMobileView] = useState<'list' | 'message'>('list');
   useSwipeBack(readerPaneRef, mobileView === 'message' && !!account, () => setMobileView('list'));
   // Phone Back button: each screen a phone user sees is a layer; Back closes the top one only.
   useBackLayer(mobileView === 'message' && !!account, () => setMobileView('list'));
   useBackLayer(showMobileSidebar, () => setShowMobileSidebar(false));
   useBackLayer(menu !== null, () => setMenu(null));
-  useBackLayer(showLabelsManager, () => setShowLabelsManager(false));
   useBackLayer(showShortcuts, () => setShowShortcuts(false));
-  useBackLayer(showConnections, () => setShowConnections(false));
-  useBackLayer(showNotifications, () => {
-    setShowNotifications(false);
+  // Settings: on a phone it is a full screen (one layer) and an open section is a second layer on top of it,
+  // so Back goes section -> list of sections -> where you came from.
+  useBackLayer(settingsOpen && !!account, () => {
+    setSettingsOpen(false);
     setNotificationPerm(getNotificationPermission());
   });
+  useBackLayer(settingsOpen && !!account && !desktop && settingsSection !== null, () => setSettingsSection(null));
   useBackLayer(isAddingAccount, () => setIsAddingAccount(false));
   useBackLayer(confirmRequest !== null, () => setConfirmRequest(null));
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -1443,7 +1452,7 @@ export const App: React.FC = () => {
   // 11c. Is push on for this device and account? Checked on account change and after the settings close.
   useEffect(() => {
     pushActiveRef.current = false;
-    if (!account || showNotifications) return;
+    if (!account || settingsOpen) return;
     let cancelled = false;
     void (async () => {
       const sub = await currentSubscription();
@@ -1458,7 +1467,7 @@ export const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [account, showNotifications]);
+  }, [account, settingsOpen]);
 
   // 11d. Messages from the service worker: a notification was tapped, or new mail arrived.
   const loadFoldersRef = useRef(loadFolders);
@@ -1557,6 +1566,62 @@ export const App: React.FC = () => {
   }, [openTarget, account, selectedFolder, isAuthChecking]);
 
   // 12. Logout Active Account (this browser only; other devices stay signed in)
+  const openSettings = (section?: SectionId) => {
+    if (desktop) {
+      const id = section ?? 'general';
+      if (parseSettingsHash(window.location.hash) === null) window.history.pushState({ mlSettings: true }, '', settingsHash(id));
+      else window.history.replaceState(window.history.state, '', settingsHash(id));
+      setSettingsSection(id);
+    } else {
+      setSettingsSection(section ?? null);
+    }
+    setSettingsOpen(true);
+    setShowMobileSidebar(false);
+  };
+  const changeSettingsSection = (id: SectionId | null) => {
+    setSettingsSection(id);
+    if (desktop && id) window.history.replaceState(window.history.state, '', settingsHash(id));
+  };
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    setNotificationPerm(getNotificationPermission());
+    if (desktop && parseSettingsHash(window.location.hash) !== null) {
+      if ((window.history.state as { mlSettings?: boolean } | null)?.mlSettings) window.history.back();
+      else window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
+    }
+  };
+  // Desktop: the back and forward buttons and a pasted link move in and out of Settings.
+  useEffect(() => {
+    const sync = () => {
+      if (!desktopRef.current) return;
+      const id = parseSettingsHash(window.location.hash);
+      setSettingsOpen(id !== null);
+      if (id) setSettingsSection(id);
+    };
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
+  useEffect(() => {
+    if (!account && !isAuthChecking) setSettingsOpen(false);
+  }, [account, isAuthChecking]);
+
+  const handleSettingsUpdate = async (patch: AccountSettingsPatch) => {
+    await accountSettings.update(patch);
+    if (patch.loadPictures !== undefined) {
+      // Open messages are fetched again, with or without pictures.
+      detailCache.clear();
+      if (selectedUid !== null) void handleSelectMessageRef.current(selectedUid);
+    }
+  };
+
+  // 12b. Settings seen by the composer and the reader.
+  const ownTemplates = useMemo(() => (accountSettings.settings?.templates ?? []).map(fromAccountTemplate), [accountSettings.settings?.templates]);
+  const signatureForComposer = composeSignatureHtml(accountSettings.settings?.signature);
+
   const handleLogout = async () => {
     if (!account) return;
     if (!(await signOutAccount(account.handle, account.email))) return;
@@ -1568,7 +1633,7 @@ export const App: React.FC = () => {
   kbRef.current = (e: KeyboardEvent) => {
     if (!account) return;
     const blocked =
-      isComposerOpen || !!confirmRequest || showConnections || showNotifications || showLabelsManager ||
+      isComposerOpen || !!confirmRequest || settingsOpen ||
       isAddingAccount || !!reauth || showShortcuts || menu !== null || showMobileSidebar;
     const action = actionForKey(e, { blocked });
     if (!action) return;
@@ -1695,45 +1760,24 @@ export const App: React.FC = () => {
           >
             <Sidebar
               labels={labels}
-              onManageLabels={() => {
-                setShowLabelsManager(true);
-                setShowMobileSidebar(false);
-              }}
+              onManageLabels={() => openSettings('labels')}
               syncedAt={syncedAt}
               account={account}
               folders={folders}
               selectedFolder={selectedFolder}
-              onSelectFolder={handleSelectFolder}
+              onSelectFolder={(path) => {
+                if (settingsOpen) closeSettings();
+                handleSelectFolder(path);
+              }}
               onOpenComposer={() => {
                 openComposer({});
                 setShowMobileSidebar(false);
               }}
-              onLogout={handleLogout}
-              savedAccounts={savedAccounts}
-              onSwitchAccount={handleSwitchAccount}
-              onAddAccount={() => setIsAddingAccount(true)}
-              onRemoveAccount={handleRemoveAccount}
-              canInstall={!isInstalled}
-              onInstallApp={handleInstallApp}
-              notificationPermission={notificationPerm}
-              onRequestNotifications={handleRequestNotifications}
               onCloseMobileSidebar={() => setShowMobileSidebar(false)}
-              onPicturesChange={() => {
-                detailCache.clear();
-                if (selectedUid !== null) void handleSelectMessageRef.current(selectedUid);
-              }}
-              onOpenConnections={() => {
-                setShowConnections(true);
-                setShowMobileSidebar(false);
-              }}
-              onOpenNotifications={() => {
-                setShowNotifications(true);
-                setShowMobileSidebar(false);
-              }}
             />
           </div>
 
-          <main className="flex-1 flex min-w-0 overflow-hidden relative">
+          <main className="flex-1 flex min-w-0 overflow-hidden relative" {...(settingsOpen ? ({ inert: '' } as object) : {})}>
           {/* Middle Pane: Message List */}
           <div
             className={`
@@ -1790,8 +1834,15 @@ export const App: React.FC = () => {
               hasMore={messages.length < totalMessages}
               isLoadingMore={isLoadingMore}
               onLoadMore={() => setPage((p) => p + 1)}
-              onOpenMobileSidebar={() => setShowMobileSidebar(true)}
-              accountLabel={account?.name || account?.email}
+              accountMenu={{
+                label: account.name || account.email,
+                email: account.email,
+                accounts: savedAccounts,
+                onSwitch: (email) => void handleSwitchAccount(email),
+                onAdd: () => setIsAddingAccount(true),
+                onSettings: () => openSettings(),
+                onSignOut: () => void handleLogout()
+              }}
               onClearSelection={() => setSelectedUids(new Set())}
               selectAllInFolder={
                 !viewRef && !searchingNow && filter === 'all' && totalMessages > messages.length
@@ -1824,6 +1875,7 @@ export const App: React.FC = () => {
               onShowImages={handleShowImages}
               isLoadingImages={isLoadingImages}
               onReply={handleReply}
+              defaultReplyAll={accountSettings.settings?.defaultReply === 'replyAll'}
               onForward={handleForward}
               folders={folders}
               onBackToList={() => setMobileView('list')}
@@ -1854,6 +1906,38 @@ export const App: React.FC = () => {
             />
           </div>
           </main>
+
+          {settingsOpen && (
+            <div className="print-hide fixed inset-0 z-[45] bg-sheet lg:absolute lg:left-56 lg:z-30">
+              <SettingsPage
+                section={settingsSection}
+                onSection={changeSettingsSection}
+                onClose={closeSettings}
+                settings={accountSettings.settings}
+                loadError={accountSettings.loadError}
+                onUpdate={handleSettingsUpdate}
+                account={account}
+                accounts={savedAccounts}
+                onSwitchAccount={(email) => void handleSwitchAccount(email)}
+                onRemoveAccount={(email) => void handleRemoveAccount(email)}
+                onAddAccount={() => setIsAddingAccount(true)}
+                onSignOut={() => void handleLogout()}
+                labels={labels}
+                onRenameLabel={handleRenameLabel}
+                onRecolourLabel={(id, c) => void handleRecolourLabel(id, c)}
+                onDeleteLabel={(id) => void handleDeleteLabel(id)}
+                onCreateLabel={(name, c) => handleCreateLabel(name, c, false)}
+                onMoveLabel={(id, pos) => void handleMoveLabel(id, pos)}
+                requestConfirm={setConfirmRequest}
+                notificationPerm={notificationPerm}
+                onOpenShortcuts={() => setShowShortcuts(true)}
+                onInstalled={() => {
+                  showToast('Mailloom app installed successfully!');
+                  setIsInstalled(true);
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -1876,20 +1960,6 @@ export const App: React.FC = () => {
         />
       )}
 
-      <Presence show={showLabelsManager}>
-      {showLabelsManager && (
-        <LabelsManager
-          labels={labels}
-          onRename={handleRenameLabel}
-          onMove={(id, pos) => void handleMoveLabel(id, pos)}
-          onRecolour={(id, c) => void handleRecolourLabel(id, c)}
-          onDelete={(id) => void handleDeleteLabel(id)}
-          onCreate={(name, c) => handleCreateLabel(name, c, false)}
-          requestConfirm={setConfirmRequest}
-          onClose={() => setShowLabelsManager(false)}
-        />
-      )}
-      </Presence>
       <Presence show={showShortcuts}>{showShortcuts && <ShortcutsSheet onClose={() => setShowShortcuts(false)} />}</Presence>
 
       {/* Add Account Modal (Overlay on active session) */}
@@ -1914,26 +1984,6 @@ export const App: React.FC = () => {
           onCancel={handleCancelReauth}
         />
       )}
-
-      <Presence show={showNotifications && !!account}>
-      {showNotifications && account && (
-        <NotificationsPanel
-          key={account.handle}
-          email={account.email}
-          otherAccounts={Math.max(0, savedAccounts.length - 1)}
-          onClose={() => {
-            setShowNotifications(false);
-            setNotificationPerm(getNotificationPermission());
-          }}
-        />
-      )}
-
-      </Presence>
-      <Presence show={showConnections && !!account}>
-      {showConnections && account && (
-        <ConnectionsPanel key={account.handle} email={account.email} onClose={() => setShowConnections(false)} />
-      )}
-      </Presence>
 
       {/* Floating Composer Modal */}
       <ComposerModal
@@ -1964,6 +2014,8 @@ export const App: React.FC = () => {
         replyMeta={composerInitial.meta}
         accountEmail={account?.email}
         accountName={account?.name}
+        signature={signatureForComposer}
+        templates={ownTemplates}
       />
 
       <ConfirmDialog request={confirmRequest} onClose={() => setConfirmRequest(null)} />

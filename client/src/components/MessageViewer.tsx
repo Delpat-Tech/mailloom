@@ -239,6 +239,8 @@ interface MessageViewerProps {
   onShowImages?: (uid: number) => void;
   isLoadingImages?: boolean;
   onReply: (message: ParsedEmailMessage, replyAll: boolean) => void;
+  /** Settings > General > Default reply: the main reply button answers everyone instead of the sender. */
+  defaultReplyAll?: boolean;
   onForward: (message: ParsedEmailMessage) => void;
   folders: MailboxFolder[];
   onBackToList?: () => void;
@@ -282,6 +284,7 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
   onShowImages,
   isLoadingImages,
   onReply,
+  defaultReplyAll = false,
   onForward,
   folders,
   onBackToList,
@@ -813,17 +816,17 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
               {timeAgo && <div className="text-xs text-ink-3 whitespace-nowrap">{timeAgo}</div>}
             </div>
             <button
-              onClick={() => onReply(message, false)}
-              title="Reply (R)"
-              aria-label="Reply"
-              aria-keyshortcuts="R"
+              onClick={() => onReply(message, defaultReplyAll)}
+              title={defaultReplyAll ? 'Reply all (A)' : 'Reply (R)'}
+              aria-label={defaultReplyAll ? 'Reply all' : 'Reply'}
+              aria-keyshortcuts={defaultReplyAll ? 'A' : 'R'}
               className={`text-ink-2 hover:bg-hover rounded transition-colors ${TOUCH}`}
             >
-              <Reply className="w-4 h-4" />
+              {defaultReplyAll ? <ReplyAll className="w-4 h-4" /> : <Reply className="w-4 h-4" />}
             </button>
             <MoreMenu
               items={[
-                { key: 'replyAll', label: 'Reply all', icon: <ReplyAll className="w-4 h-4" />, onSelect: () => onReply(message, true) },
+                { key: 'replyAll', label: defaultReplyAll ? 'Reply' : 'Reply all', icon: defaultReplyAll ? <Reply className="w-4 h-4" /> : <ReplyAll className="w-4 h-4" />, onSelect: () => onReply(message, !defaultReplyAll) },
                 { key: 'forward', label: 'Forward', icon: <Forward className="w-4 h-4" />, onSelect: () => onForward(message) },
                 {
                   key: 'star',
@@ -922,19 +925,19 @@ export const MessageViewer: React.FC<MessageViewerProps> = ({
             <div className="mt-6 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => onReply(message, false)}
+                onClick={() => onReply(message, defaultReplyAll)}
                 className="cut-tr inline-flex items-center gap-2 bg-act hover:bg-act-hov text-act-ink font-extrabold text-[14px] px-4 min-h-[44px] sm:min-h-[38px]"
               >
-                <Reply className="w-4 h-4" aria-hidden="true" />
-                Reply
+                {defaultReplyAll ? <ReplyAll className="w-4 h-4" aria-hidden="true" /> : <Reply className="w-4 h-4" aria-hidden="true" />}
+                {defaultReplyAll ? 'Reply all' : 'Reply'}
               </button>
               <button
                 type="button"
-                onClick={() => onReply(message, true)}
+                onClick={() => onReply(message, !defaultReplyAll)}
                 className="inline-flex items-center gap-2 border border-line-2 bg-surface hover:bg-hover text-ink-2 font-extrabold text-[14px] px-4 min-h-[44px] sm:min-h-[38px] rounded"
               >
-                <ReplyAll className="w-4 h-4" aria-hidden="true" />
-                Reply all
+                {defaultReplyAll ? <Reply className="w-4 h-4" aria-hidden="true" /> : <ReplyAll className="w-4 h-4" aria-hidden="true" />}
+                {defaultReplyAll ? 'Reply' : 'Reply all'}
               </button>
             </div>
           )}

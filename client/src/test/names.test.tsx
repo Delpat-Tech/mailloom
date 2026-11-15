@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, cleanup } from '@testing-library/react';
 import { Sidebar } from '../components/Sidebar.js';
 import { MessageList } from '../components/MessageList.js';
 import { MessageViewer } from '../components/MessageViewer.js';
@@ -55,7 +55,7 @@ const message = {
 } as unknown as ParsedEmailMessage;
 
 describe('every button has an accessible name', () => {
-  it('Sidebar, with install, notifications and the account switcher open', () => {
+  it('Sidebar', () => {
     const { container } = render(
       <Sidebar
         account={{ handle: 'h', email: 'a@delpat.test', name: 'A' }}
@@ -63,20 +63,11 @@ describe('every button has an accessible name', () => {
         selectedFolder="INBOX"
         onSelectFolder={() => {}}
         onOpenComposer={() => {}}
-        onLogout={() => {}}
-        savedAccounts={[{ handle: 'h', email: 'a@delpat.test', name: 'A', lastActive: 1 }, { handle: 'g', email: 'b@delpat.test', lastActive: 0 }]}
-        onSwitchAccount={() => {}}
-        onAddAccount={() => {}}
-        onRemoveAccount={() => {}}
-        canInstall
-        onInstallApp={() => {}}
-        notificationPermission="default"
-        onRequestNotifications={() => {}}
+        onManageLabels={() => {}}
         onCloseMobileSidebar={() => {}}
+        syncedAt={new Date()}
       />
     );
-    expectAllButtonsNamed(container);
-    fireEvent.click(screen.getByRole('button', { name: /^Accounts/ }));
     expectAllButtonsNamed(container);
   });
 

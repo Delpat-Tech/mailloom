@@ -55,3 +55,34 @@ export async function promptPwaInstall(): Promise<boolean> {
   installListeners.forEach((fn) => fn(false));
   return choice.outcome === 'accepted';
 }
+
+/** Phones and tablets from Apple: no install button there, the Share menu is the way. */
+export function isAppleTouchDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Asks the browser to look for a newer version of the app. 'updated' means a new version was found and has
+ * taken over (reload to use it); 'current' means this is the latest; 'unsupported' means there is no service
+ * worker here (for example a private window).
+ */
+export async function checkForUpdate(timeoutMs = 6000): Promise<'updated' | 'current' | 'unsupported'> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return 'unsupported';
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) return 'unsupported';
+  await reg.update();
+  const worker = reg.installing ?? reg.waiting;
+  if (!worker) return 'current';
+  if (worker.state === 'activated') return 'updated';
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      resolve('updated');
+    };
+    const timer = setTimeout(done, timeoutMs);
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'activated' || worker.state === 'installed') done();
+    });
+  });
+}

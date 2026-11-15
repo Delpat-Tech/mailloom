@@ -16,7 +16,6 @@ import {
   Trash2,
   AlertCircle,
   FileSpreadsheet,
-  PenTool,
   Info,
   Bold,
   ImagePlus,
@@ -27,19 +26,12 @@ import { api, ApiError } from '../services/api.js';
 import { clockTime } from '../services/time.js';
 import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
-import { findPlaceholder } from '../services/templates.js';
+import { findPlaceholder, type EmailTemplate } from '../services/templates.js';
 import { RecipientField } from './RecipientField.js';
 import { TemplateSelectorModal } from './TemplateSelectorModal.js';
 import type { ConfirmRequest } from './ConfirmDialog.js';
-import {
-  getSignatureForAccount,
-  saveSignatureForAccount,
-  signatureHtml,
-  SIGNATURE_IMAGE_MAX_BYTES,
-  type AccountSignature
-} from '../services/signatures.js';
 import type { Editor } from '@tiptap/react';
-import { RichEditor, normalizeEditorHtml } from './RichEditor.js';
+import { RichEditor } from './RichEditor.js';
 import {
   plainTextToHtml,
   htmlToPlainText,
@@ -108,6 +100,10 @@ interface ComposerModalProps {
   replyMeta?: ComposerReplyMeta;
   accountEmail?: string;
   accountName?: string;
+  /** The signature to add (editor HTML, logo included); empty for none. It comes from the server settings. */
+  signature?: string;
+  /** The person's own templates, shown with the starters. */
+  templates?: EmailTemplate[];
 }
 
 function formatFileSize(bytes: number): string {
@@ -169,8 +165,8 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   initialBody = '',
   initialHtml,
   replyMeta,
-  accountEmail = '',
-  accountName = ''
+  signature = '',
+  templates = []
 }) => {
   const [toInput, setToInput] = useState('');
   const [toList, setToList] = useState<string[]>(() => initialTo ?? []);
@@ -199,18 +195,12 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
   const moreBtn = useRef<HTMLButtonElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const nameOf = (email: string) => replyMeta?.names?.[email.toLowerCase()] || '';
-  const [showSigModal, setShowSigModal] = useState(false);
-  const [signature, setSignature] = useState<AccountSignature>(() =>
-    getSignatureForAccount(accountEmail, accountName)
-  );
-  const [sigForm, setSigForm] = useState<AccountSignature>(signature);
-  const [sigError, setSigError] = useState<string | null>(null);
   // A plain-text draft reopens as plain text. Everything else starts in the rich editor.
   const [plainMode, setPlainMode] = useState(isDraft && !initialHtml);
   const [bodyText, setBodyText] = useState(() => (isDraft && !initialHtml ? initialBody : ''));
   const [bodyHtml, setBodyHtml] = useState(() => {
     if (isDraft) return initialHtml ?? '';
-    const sig = signatureHtml(signature);
+    const sig = signature;
     const quoted = initialHtml ?? plainTextToHtml(initialBody);
     return sig || quoted ? `<p></p>${sig}${quoted}` : '';
   });
@@ -222,7 +212,6 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const sigRef = useRef<HTMLDivElement>(null);
   const toInputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
@@ -391,10 +380,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
 
   // Phone Back asks the same as the close button (keep as draft, discard, or keep editing).
   useBackLayer(isOpen, handleCloseClick);
-  useBackLayer(showSigModal, () => setShowSigModal(false));
   useBackLayer(showTemplateModal, () => setShowTemplateModal(false));
-
-  useDialog(sigRef, { open: showSigModal, onEscape: () => setShowSigModal(false) });
 
   // Phone: the composer fills the visible screen (above the on-screen keyboard), so Send stays in view.
   useEffect(() => {
@@ -586,37 +572,6 @@ ${plainMode ? bodyText : htmlToPlainText(bodyHtml)}`);
       sentRef.current = false; // sending failed: the composer stays open and keeps autosaving
       setIsSending(false);
       setErrorMsg(friendlyError(err, 'The message could not be sent. Check your connection and try again.'));
-    }
-  };
-
-  const handleSaveSignature = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (accountEmail && !saveSignatureForAccount(accountEmail, sigForm)) {
-      setSigError('This browser could not store the signature (its storage is full or blocked). Try a smaller logo.');
-      return;
-    }
-    setSigError(null);
-    const prev = signatureHtml(signature);
-    const next = signatureHtml(sigForm);
-    setSignature(sigForm);
-    setShowSigModal(false);
-    if (plainMode || prev === next) return;
-
-    // Swap the old signature for the new one in the message being written (or add it if it is not there).
-    const ed = editorRef.current;
-    if (!ed) return;
-    const current = ed.getHTML();
-    const oldNorm = prev ? normalizeEditorHtml(prev) : '';
-    let updated = current;
-    if (oldNorm && current.includes(oldNorm)) {
-      updated = current.replace(oldNorm, next ? normalizeEditorHtml(next) : '');
-    } else if (next) {
-      const q = current.indexOf('<blockquote>');
-      const add = normalizeEditorHtml(next);
-      updated = q >= 0 ? current.slice(0, q) + add + current.slice(q) : current + add;
-    }
-    if (updated !== current) {
-      ed.commands.setContent(updated, true);
     }
   };
 
@@ -968,16 +923,6 @@ ${plainMode ? bodyText : htmlToPlainText(bodyHtml)}`);
                         onSelect: () => setShowTemplateModal(true)
                       },
                       {
-                        key: 'signature',
-                        label: signature.enabled ? 'Signature (on)' : 'Signature',
-                        icon: <PenTool className="w-4 h-4" />,
-                        onSelect: () => {
-                          setSigForm(signature);
-                          setSigError(null);
-                          setShowSigModal(true);
-                        }
-                      },
-                      {
                         key: 'plain',
                         label: plainMode ? 'Back to formatted text' : 'Plain text',
                         icon: <Type className="w-4 h-4" />,
@@ -1022,88 +967,9 @@ ${plainMode ? bodyText : htmlToPlainText(bodyHtml)}`);
         isOpen={showTemplateModal}
         onClose={() => setShowTemplateModal(false)}
         onApplyTemplate={applyTemplate}
+        ownTemplates={templates}
       />
 
-      {/* Signature Settings Modal */}
-      {showSigModal && (
-        <div className="fixed inset-0 z-[60] bg-scrim anim-scrim flex items-center justify-center p-4">
-          <div
-            ref={sigRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="signature-title"
-            className="bg-surface rounded shadow-2xl border border-line w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-full overflow-y-auto"
-          >
-            <div className="px-4 py-3 bg-cmp-top text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <PenTool className="w-4 h-4" />
-                <span id="signature-title" className="text-[13.5px] font-extrabold">Corporate Email Signature</span>
-              </div>
-              <button
-                onClick={() => setShowSigModal(false)}
-                aria-label="Close signature settings"
-                className="text-white hover:bg-white/15 rounded min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveSignature} className="p-4 space-y-3 text-xs">
-              <label className="flex items-center gap-2 select-none cursor-pointer pb-2 border-b border-line">
-                <input
-                  type="checkbox"
-                  checked={sigForm.enabled}
-                  onChange={(e) => setSigForm({ ...sigForm, enabled: e.target.checked })}
-                  className="rounded border-line-2 text-act focus:ring-focus"
-                />
-                <span className="font-medium text-ink">Add my signature to new messages and replies</span>
-              </label>
-
-              <div>
-                <span id="sig-editor-label" className="block text-[11px] font-semibold text-ink-3 mb-1">
-                  Signature
-                </span>
-                <div className="border border-line rounded p-2 bg-sheet">
-                  <RichEditor
-                    content={sigForm.html}
-                    onChange={(html) => setSigForm((f) => ({ ...f, html }))}
-                    onError={setSigError}
-                    ariaLabel="Signature text"
-                    placeholder="Name, role, phone, website. Use the picture button to add your logo."
-                    maxImageBytes={SIGNATURE_IMAGE_MAX_BYTES}
-                    contentClassName="min-h-[7rem] max-h-56"
-                  />
-                </div>
-                <p className="mt-1 text-[11px] text-ink-3">
-                  Logos are sent inside the message, not as an attachment (up to {formatBytes(SIGNATURE_IMAGE_MAX_BYTES)}).
-                  The signature is saved in this browser only.
-                </p>
-                {sigError && (
-                  <p role="alert" className="mt-1 text-[11px] text-warn-ink">
-                    {sigError}
-                  </p>
-                )}
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-line">
-                <button
-                  type="button"
-                  onClick={() => setShowSigModal(false)}
-                  className="px-3 py-1.5 text-ink-2 hover:bg-hover rounded text-xs"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 bg-act hover:bg-act-hov text-act-ink font-medium rounded text-xs shadow-sm"
-                >
-                  Save Signature
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>,
     document.body
   );

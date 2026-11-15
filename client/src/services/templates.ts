@@ -1,3 +1,6 @@
+import { htmlToPlainText, plainTextToHtml } from './richtext.js';
+import type { AccountTemplate } from './accountSettings.js';
+
 export interface TemplateVariable {
   key: string;
   label: string;
@@ -208,4 +211,33 @@ export function fillTemplateVariables(
   });
 
   return { subject, body };
+}
+
+/** The {{placeholders}} in a subject and body, in the order they first appear. */
+export function extractVariables(...texts: string[]): TemplateVariable[] {
+  const out: TemplateVariable[] = [];
+  const re = /\{\{([a-zA-Z0-9_]+)\}\}/g;
+  for (const t of texts) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) !== null) {
+      const key = m[1]!;
+      if (!out.some((v) => v.key === key)) out.push({ key, label: key.replace(/_/g, ' ') });
+    }
+  }
+  return out;
+}
+
+/** One of the person's own (server) templates, ready for the composer. */
+export function fromAccountTemplate(t: AccountTemplate): EmailTemplate {
+  const body = htmlToPlainText(t.html);
+  return { id: t.id, name: t.name, category: 'Custom', subject: t.subject, body, variables: extractVariables(t.subject, body), isCustom: true };
+}
+
+/** A template as the server stores it (the body becomes simple HTML). */
+export function toAccountTemplate(t: { id: string; name: string; subject: string; body: string }): AccountTemplate {
+  return { id: t.id, name: t.name.trim(), subject: t.subject, html: plainTextToHtml(t.body) };
+}
+
+export function newTemplateId(): string {
+  return `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }

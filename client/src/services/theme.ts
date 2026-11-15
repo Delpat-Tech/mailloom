@@ -13,6 +13,16 @@ export function readThemeChoice(): ThemeChoice {
   return 'system';
 }
 
+/** True once this device has a choice of its own (System counts); until then the server's theme is the default. */
+export function hasStoredThemeChoice(): boolean {
+  try {
+    const v = localStorage.getItem(KEY);
+    return v === 'light' || v === 'dark' || v === 'system';
+  } catch {
+    return false;
+  }
+}
+
 /** Put the choice on <html>: System removes the attribute so the media query decides. */
 export function applyThemeChoice(choice: ThemeChoice): void {
   const root = document.documentElement;
@@ -22,8 +32,7 @@ export function applyThemeChoice(choice: ThemeChoice): void {
 
 export function saveThemeChoice(choice: ThemeChoice): void {
   try {
-    if (choice === 'system') localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, choice);
+    localStorage.setItem(KEY, choice);
   } catch {
     /* not remembered; still applied for this visit */
   }
