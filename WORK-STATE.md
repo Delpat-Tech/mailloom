@@ -21,10 +21,13 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 1. Settings live 16 Nov (v2026.11.16b): avatar menu (accounts, Settings, Sign out); sections General, Writing, Notifications,
    Labels, Accounts, Connections, App; settings stored per mailbox on the server; sidebar back to mail only. Full tests, built-app
    check, then release for Om.
+2. New icon and motion (Aurora app icon, Dusk in-app mark, intro, step loader, run-off outro) released as v2026.11.16c
+   (8c08763) on 16 Nov; waits on Om running `sudo mailloom-update`. All explorations kept in design/brand/.
 3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, Write shortcut, mailto) wait on Om using the phone.
 4. Server: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
 
 ## Later
+- Brand: MarkLoader (inline loader) exists but is unused; button spinners unchanged. index.html theme-color is #2F6CB5 while the launch screen is navy; first paint is white before JS (needs index.html/CSP touch) (waits on Om's view after phone use).
 - Spam learning (Dovecot imapsieve + sa-learn): reporting only moves mail today. Om said not for now (16 Nov).
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
 - Earlier note: Om first said local only; Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).
