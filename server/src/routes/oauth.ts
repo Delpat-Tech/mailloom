@@ -87,7 +87,7 @@ function cleanLabel(raw: string): string | null {
 
 function connectClient(config: AgentConfig): ConnectClient | null {
   // Connect also needs the agent API on: without AGENT_ALLOWED_IPS the token swap can never be called.
-  return config.allowList ? config.connect : null;
+  return config.allowList && config.publicUrl ? config.connect : null;
 }
 
 /** redirect_uri with code/error, state and iss added (existing query kept). */
@@ -97,8 +97,9 @@ function callbackUrl(redirectUri: string, params: Record<string, string>): strin
   return u.toString();
 }
 
-function issuer(req: FastifyRequest, config: AgentConfig): string {
-  return config.publicUrl ?? `${req.protocol}://${req.host}`;
+/** The issuer is the configured public address, never taken from the Host header. */
+function issuer(config: AgentConfig): string {
+  return config.publicUrl!;
 }
 
 function noStore(reply: FastifyReply) {
@@ -157,7 +158,7 @@ export async function oauthRoutes(fastify: FastifyInstance) {
       if (label === null) return errorPage(reply, 400, 'The request is not valid (label).');
     }
 
-    const pending = store.createRequest({
+    const pending = store.signRequest({
       clientId: client.id,
       redirectUri,
       scopes: SCOPES.filter((s) => scopes.has(s)),
@@ -165,21 +166,18 @@ export async function oauthRoutes(fastify: FastifyInstance) {
       codeChallenge: challenge,
       label
     });
-    if (!pending) {
-      reply.header('Retry-After', '60');
-      return errorPage(reply, 429, 'Mailloom is busy with other connection requests. Try again in a few minutes.');
-    }
-    // Back to the app's own page: absolute when the public address is set, otherwise relative to this
-    // page (/oauth/authorize or /mail/oauth/authorize, both one level below the app root).
+    // Nothing is stored here: the request travels in the signed blob, in the URL hash of the consent screen.
     noStore(reply);
     reply.header('Referrer-Policy', 'no-referrer');
-    return reply.redirect(`${agentConfig.publicUrl ?? '..'}/#/connect/${pending.id}`, 302);
+    return reply.redirect(`${agentConfig.publicUrl}/#/connect/${pending.id}`, 302);
   });
 
-  fastify.get('/api/oauth/requests/:id', auth, async (req, reply) => {
+  // The blob is passed as ?request= (not in the path: it is long, and the query is kept out of the logs).
+  fastify.get('/api/oauth/requests', auth, async (req, reply) => {
     noStore(reply);
     const client = connectClient(agentConfig);
-    const found = store.getRequest((req.params as { id: string }).id);
+    const q = (req.query ?? {}) as { request?: unknown };
+    const found = typeof q.request === 'string' ? store.getRequest(q.request) : null;
     if (!client || !found || found.clientId !== client.id || !client.redirectUris.includes(found.redirectUri)) {
       return reply.status(404).send({ code: 'REQUEST_NOT_FOUND', error: 'This connection request has expired. Start again from the other app.' });
     }
@@ -203,7 +201,7 @@ export async function oauthRoutes(fastify: FastifyInstance) {
     if (!client || !found || found.clientId !== client.id || !client.redirectUris.includes(found.redirectUri)) {
       return reply.status(404).send({ code: 'REQUEST_NOT_FOUND', error: 'This connection request has expired. Start again from the other app.' });
     }
-    const iss = issuer(req, agentConfig);
+    const iss = issuer(agentConfig);
 
     if (!body.allow) {
       if (!store.consumeRequest(found.id)) {

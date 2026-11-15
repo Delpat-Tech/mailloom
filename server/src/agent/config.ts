@@ -15,6 +15,8 @@ import { ConfigError } from '../config.js';
  *   AGENT_CLIENT_ID,            "Connect Mailloom" (OAuth authorization code + PKCE for Work OS). All three must be set
  *   AGENT_CLIENT_SECRET,        or Connect is off. The secret needs 32+ characters (a shorter one stops start-up);
  *   AGENT_CLIENT_REDIRECT_URIS  redirect URIs are a comma list matched exactly, https only (http for localhost).
+ *                               MAILLOOM_PUBLIC_URL is then required too (issuer and consent address); localhost
+ *                               redirect URIs are refused when NODE_ENV=production.
  *   AGENT_CLIENT_NAME           optional name shown to people and kept with the key (default "Work OS").
  *
  * The caller's address is req.ip, so behind a proxy TRUST_PROXY must name that proxy.
@@ -97,13 +99,16 @@ function parseConnect(env: Env): ConnectClient | null {
     .filter(Boolean);
   if (!id || !secret || uriList.length === 0) return null;
   if (!CLIENT_ID_RE.test(id)) throw new ConfigError('AGENT_CLIENT_ID may only use letters, digits, ".", "_" and "-" (1 to 64 characters).');
-  if (secret.length < 32) throw new ConfigError('AGENT_CLIENT_SECRET must be at least 32 characters. Connect stays off until it is.');
+  if (secret.length < 32) throw new ConfigError('AGENT_CLIENT_SECRET must be at least 32 characters; the server will not start with a shorter one.');
   const redirectUris = uriList.map((raw) => {
     let u: URL;
     try {
       u = new URL(raw);
     } catch {
       throw new ConfigError(`AGENT_CLIENT_REDIRECT_URIS entry "${raw}" is not a web address.`);
+    }
+    if (isLocalHost(u.hostname) && env.NODE_ENV === 'production') {
+      throw new ConfigError('AGENT_CLIENT_REDIRECT_URIS must not point at localhost when NODE_ENV=production.');
     }
     if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLocalHost(u.hostname))) {
       throw new ConfigError('AGENT_CLIENT_REDIRECT_URIS entries must start with https:// (http:// only for localhost or 127.0.0.1).');
@@ -114,6 +119,9 @@ function parseConnect(env: Env): ConnectClient | null {
     return raw;
   });
   const name = (env.AGENT_CLIENT_NAME || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60) || 'Work OS';
+  if (!parsePublicUrl(env.MAILLOOM_PUBLIC_URL)) {
+    throw new ConfigError('Connect needs MAILLOOM_PUBLIC_URL (the address people use to open Mailloom, e.g. https://mail.delpat.in/mail); the server will not start without it.');
+  }
   return { id, secret, name, redirectUris };
 }
 

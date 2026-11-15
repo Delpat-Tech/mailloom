@@ -7,7 +7,7 @@ import type { Scope } from './store.js';
  * Connect Mailloom (OAuth authorization code + PKCE): pending authorisation requests, one-use codes and the
  * short memory of spent codes. Same node:sqlite database as the sessions.
  *
- *   agent_auth_requests  a request that passed the client/redirect checks and waits for the person (10 minutes)
+ *   (requests)           not stored: a signed blob (see signRequest); agent_auth_used remembers answered ones
  *   agent_auth_codes     a granted request: sha256(code) only, the mailbox password sealed with a key that needs the
  *                        code, valid 60 seconds, deleted the moment it is used
  *   agent_auth_spent     sha256(code) -> key id of the key the first use minted, kept 10 minutes, so a reused code
@@ -17,8 +17,6 @@ import type { Scope } from './store.js';
 export const REQUEST_TTL_MS = 10 * 60_000;
 export const CODE_TTL_MS = 60_000;
 export const SPENT_TTL_MS = 10 * 60_000;
-/** Most pending requests at once; the page is open to anyone who can reach it, so it is capped. */
-export const MAX_PENDING_REQUESTS = 500;
 
 export interface AuthRequest {
   id: string;
@@ -45,22 +43,22 @@ export interface GrantedCode {
 
 export type TakeCode = { status: 'ok'; grant: GrantedCode } | { status: 'unknown' } | { status: 'reused'; keyId: string };
 
+function hashBlob(blob: string): string {
+  return crypto.createHash('sha256').update(blob, 'utf8').digest('hex');
+}
+
 export class ConnectStore {
+  private requestKey: Buffer;
+
   constructor(
     private db: DatabaseSync,
     private secret: string,
     private now: () => number = Date.now
   ) {
+    this.requestKey = Buffer.from(crypto.hkdfSync('sha256', Buffer.from(secret, 'utf8'), Buffer.alloc(0), 'mailloom:connect-request:v1', 32));
     db.exec(`
-      CREATE TABLE IF NOT EXISTS agent_auth_requests (
-        id TEXT PRIMARY KEY,
-        client_id TEXT NOT NULL,
-        redirect_uri TEXT NOT NULL,
-        scopes TEXT NOT NULL,
-        state TEXT NOT NULL,
-        code_challenge TEXT NOT NULL,
-        label TEXT,
-        created_at INTEGER NOT NULL,
+      CREATE TABLE IF NOT EXISTS agent_auth_used (
+        blob_hash TEXT PRIMARY KEY,
         expires_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS agent_auth_codes (
@@ -85,45 +83,62 @@ export class ConnectStore {
 
   // ---------------------------------------------------------------- requests
 
-  /** Stores a pending request; null when too many are pending already. */
-  createRequest(input: Omit<AuthRequest, 'id' | 'createdAt' | 'expiresAt'>): AuthRequest | null {
+  /**
+   * A validated authorisation request as a signed blob. Nothing is stored at authorize, so the unauthenticated
+   * page cannot fill the database. The blob carries its own expiry (10 minutes) and an HMAC made with a key
+   * derived from SESSION_SECRET under its own label; the consent screen carries it in the URL hash.
+   */
+  signRequest(input: Omit<AuthRequest, 'id' | 'createdAt' | 'expiresAt'>): AuthRequest {
     const now = this.now();
-    this.prune();
-    const pending = Number((this.db.prepare('SELECT COUNT(*) AS n FROM agent_auth_requests').get() as { n: number }).n);
-    if (pending >= MAX_PENDING_REQUESTS) return null;
-    const id = crypto.randomBytes(16).toString('base64url');
-    this.db
-      .prepare(
-        `INSERT INTO agent_auth_requests (id, client_id, redirect_uri, scopes, state, code_challenge, label, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(id, input.clientId, input.redirectUri, input.scopes.join(','), input.state, input.codeChallenge, input.label, now, now + REQUEST_TTL_MS);
-    return { ...input, id, createdAt: now, expiresAt: now + REQUEST_TTL_MS };
+    const expiresAt = now + REQUEST_TTL_MS;
+    const payload = Buffer.from(
+      JSON.stringify([input.clientId, input.redirectUri, input.scopes.join(','), input.state, input.codeChallenge, input.label, now, expiresAt])
+    ).toString('base64url');
+    const id = `${payload}.${this.mac(payload)}`;
+    return { ...input, id, createdAt: now, expiresAt };
   }
 
-  /** The request when it exists and has not expired. */
-  getRequest(id: string): AuthRequest | null {
-    if (!/^[A-Za-z0-9_-]{22}$/.test(id)) return null;
-    const r = this.db.prepare('SELECT * FROM agent_auth_requests WHERE id = ? AND expires_at > ?').get(id, this.now()) as
-      | Record<string, unknown>
-      | undefined;
-    if (!r) return null;
+  private mac(payload: string): string {
+    return crypto.createHmac('sha256', this.requestKey).update(payload).digest('base64url');
+  }
+
+  /** The request when the blob is genuine, not expired and not yet answered. */
+  getRequest(blob: string): AuthRequest | null {
+    if (typeof blob !== 'string' || blob.length > 4000) return null;
+    const dot = blob.indexOf('.');
+    if (dot < 1 || dot !== blob.lastIndexOf('.')) return null;
+    const payload = blob.slice(0, dot);
+    const given = Buffer.from(blob.slice(dot + 1), 'base64url');
+    const want = Buffer.from(this.mac(payload), 'base64url');
+    if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) return null;
+    let v: unknown;
+    try {
+      v = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(v) || v.length !== 8) return null;
+    const [clientId, redirectUri, scopes, state, codeChallenge, label, createdAt, expiresAt] = v as [string, string, string, string, string, string | null, number, number];
+    if (typeof expiresAt !== 'number' || expiresAt <= this.now()) return null;
+    if (this.db.prepare('SELECT 1 FROM agent_auth_used WHERE blob_hash = ?').get(hashBlob(blob))) return null;
     return {
-      id: String(r.id),
-      clientId: String(r.client_id),
-      redirectUri: String(r.redirect_uri),
-      scopes: String(r.scopes).split(',') as Scope[],
-      state: String(r.state),
-      codeChallenge: String(r.code_challenge),
-      label: (r.label as string | null) ?? null,
-      createdAt: Number(r.created_at),
-      expiresAt: Number(r.expires_at)
+      id: blob,
+      clientId,
+      redirectUri,
+      scopes: String(scopes).split(',') as Scope[],
+      state,
+      codeChallenge,
+      label: label ?? null,
+      createdAt,
+      expiresAt
     };
   }
 
-  /** Uses the request up: true for exactly one caller. */
-  consumeRequest(id: string): boolean {
-    return Number(this.db.prepare('DELETE FROM agent_auth_requests WHERE id = ? AND expires_at > ?').run(id, this.now()).changes) === 1;
+  /** Uses the request up (records the blob's hash until it would have expired): true for exactly one caller. */
+  consumeRequest(blob: string): boolean {
+    const req = this.getRequest(blob);
+    if (!req) return false;
+    return Number(this.db.prepare('INSERT OR IGNORE INTO agent_auth_used (blob_hash, expires_at) VALUES (?, ?)').run(hashBlob(blob), req.expiresAt).changes) === 1;
   }
 
   // ---------------------------------------------------------------- codes
@@ -205,7 +220,7 @@ export class ConnectStore {
 
   prune(): void {
     const now = this.now();
-    this.db.prepare('DELETE FROM agent_auth_requests WHERE expires_at <= ?').run(now);
+    this.db.prepare('DELETE FROM agent_auth_used WHERE expires_at <= ?').run(now);
     this.db.prepare('DELETE FROM agent_auth_codes WHERE expires_at <= ?').run(now);
     this.db.prepare('DELETE FROM agent_auth_spent WHERE expires_at <= ?').run(now);
   }

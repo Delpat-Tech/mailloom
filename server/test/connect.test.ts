@@ -22,7 +22,9 @@ const SECRET = 'connect-secret-' + 'x'.repeat(30);
 const CLIENT_ID = 'work-os';
 const REDIRECT = 'https://os.example/api/mail/callback';
 const LOCAL_REDIRECT = 'http://localhost:4000/api/mail/callback';
+const PUBLIC_URL = 'https://mail.example.test/mail';
 const ENV = {
+  MAILLOOM_PUBLIC_URL: PUBLIC_URL,
   AGENT_ALLOWED_IPS: '127.0.0.1',
   AGENT_CLIENT_ID: CLIENT_ID,
   AGENT_CLIENT_SECRET: SECRET,
@@ -61,7 +63,7 @@ async function authorize(app: FastifyInstance, p: ReturnType<typeof pkce>, over:
   const withState = { state: 'state-' + crypto.randomBytes(8).toString('hex'), ...over };
   const res = await app.inject({ method: 'GET', url: `${prefix}/oauth/authorize?${authorizeQuery(p, withState)}` });
   const loc = String(res.headers.location ?? '');
-  const id = /#\/connect\/([A-Za-z0-9_-]+)$/.exec(loc)?.[1];
+  const id = /#\/connect\/([A-Za-z0-9_.-]+)$/.exec(loc)?.[1];
   return { res, id, state: withState.state! };
 }
 
@@ -174,37 +176,71 @@ describe('Connect Mailloom', () => {
     assert.equal(ok.res.statusCode, 302);
   });
 
-  test('authorize: redirects to the consent screen, one level up (works under / and /mail, absolute with a public URL)', async () => {
+  test('authorize: redirects to the consent screen at the public address (under / and /mail), storing nothing', async () => {
     const p = pkce();
+    const db = app.mailloom.sessions.database;
+    const before = JSON.stringify(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all());
     for (const prefix of ['', '/mail']) {
       const a = await authorize(app, p, {}, prefix);
       assert.equal(a.res.statusCode, 302);
-      assert.match(String(a.res.headers.location), /^\.\.\/#\/connect\/[A-Za-z0-9_-]{22}$/);
+      const loc = String(a.res.headers.location);
+      assert.ok(loc.startsWith(`${PUBLIC_URL}/#/connect/`), loc);
+      assert.ok(loc.length < 800, `the link stays short (${loc.length} characters)`);
       assert.match(String(a.res.headers['cache-control']), /no-store/);
     }
-    const withUrl = await buildTestApp({ ...ENV, MAILLOOM_PUBLIC_URL: 'https://mail.delpat.in/mail' }, { now });
-    try {
-      const a = await authorize(withUrl, p);
-      assert.match(String(a.res.headers.location), /^https:\/\/mail\.delpat\.in\/mail\/#\/connect\/[A-Za-z0-9_-]{22}$/);
-    } finally {
-      await withUrl.close();
+    assert.equal(Number((db.prepare('SELECT COUNT(*) AS n FROM agent_auth_used').get() as { n: number }).n), 0, 'nothing is stored at authorize');
+    assert.equal(JSON.stringify(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()), before);
+  });
+
+  test('authorize cannot be used to fill the database or lock others out: 50 requests all succeed', async () => {
+    for (let i = 0; i < 50; i++) assert.equal((await authorize(app, pkce())).res.statusCode, 302);
+  });
+
+  test('the request blob is signed: a changed or foreign blob is refused', async () => {
+    const a = await authorize(app, pkce());
+    const [payload, sig] = a.id!.split('.');
+    const forged = Buffer.from(JSON.stringify(['work-os', 'https://evil.example/cb', 'read', 's', 'c'.repeat(43), null, clock, clock + 600000])).toString('base64url');
+    for (const bad of [`${forged}.${sig}`, `${payload}.${sig!.slice(0, -2)}AA`, payload!, `${payload}.`, '.', `${payload}.${sig}.x`]) {
+      assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${encodeURIComponent(bad)}`, headers: t.headers })).statusCode, 404);
+      assert.equal((await consent(app, t, { request_id: bad, allow: true, scopes: ['read'], password: TEST_PASSWORD })).statusCode, 404);
     }
+    // A blob made by another Mailloom (another SESSION_SECRET) is not accepted either.
+    const other = await buildTestApp(ENV, { now });
+    try {
+      const o = await authorize(other, pkce());
+      assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${o.id}`, headers: t.headers })).statusCode, 404);
+    } finally {
+      await other.close();
+    }
+    assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${a.id}`, headers: t.headers })).statusCode, 200);
+  });
+
+  test('an answered request is remembered by hash until it would have expired, then forgotten', async () => {
+    const a = await authorize(app, pkce());
+    assert.equal((await consent(app, t, { request_id: a.id, allow: false })).statusCode, 200);
+    const db = app.mailloom.sessions.database;
+    const rows = db.prepare('SELECT blob_hash FROM agent_auth_used').all() as Array<{ blob_hash: string }>;
+    assert.ok(rows.some((r) => r.blob_hash === crypto.createHash('sha256').update(a.id!).digest('hex')));
+    assert.ok(!JSON.stringify(rows).includes(a.id!.slice(0, 20)), 'only a hash is kept');
+    advance(11 * 60_000);
+    app.mailloomConnect.prune();
+    assert.equal(Number((db.prepare('SELECT COUNT(*) AS n FROM agent_auth_used').get() as { n: number }).n), 0);
   });
 
   test('request details need a session; expired or unknown requests are 404', async () => {
     const p = pkce();
     const a = await authorize(app, p);
-    const anon = await app.inject({ method: 'GET', url: `/api/oauth/requests/${a.id}` });
+    const anon = await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${a.id}` });
     assert.equal(anon.statusCode, 401);
-    const ok = await app.inject({ method: 'GET', url: `/api/oauth/requests/${a.id}`, headers: t.headers });
+    const ok = await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${a.id}`, headers: t.headers });
     assert.equal(ok.statusCode, 200);
     assert.deepEqual(ok.json().scopes, ['read', 'organise', 'send']);
     assert.equal(ok.json().label, 'Delpat');
     assert.equal(ok.json().client_name, 'Work OS');
     assert.equal(ok.json().redirect_host, 'os.example');
-    assert.equal((await app.inject({ method: 'GET', url: '/api/oauth/requests/nope', headers: t.headers })).statusCode, 404);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/oauth/requests?request=nope', headers: t.headers })).statusCode, 404);
     advance(10 * 60_000 + 1000);
-    assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests/${a.id}`, headers: t.headers })).statusCode, 404);
+    assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${a.id}`, headers: t.headers })).statusCode, 404);
     const late = await consent(app, t, { request_id: a.id, allow: true, scopes: ['read'], password: TEST_PASSWORD });
     assert.equal(late.statusCode, 404);
   });
@@ -219,7 +255,7 @@ describe('Connect Mailloom', () => {
     const crossSite = await consent(app, t, body, { origin: 'https://evil.example' });
     assert.equal(crossSite.statusCode, 403);
     // The request is still there after all of that.
-    assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests/${a.id}`, headers: t.headers })).statusCode, 200);
+    assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${a.id}`, headers: t.headers })).statusCode, 200);
   });
 
   test('consent: a wrong or missing password does not use the request up; the right one works once', async () => {
@@ -297,7 +333,7 @@ describe('Connect Mailloom', () => {
     const g = await grant(app, t, p, { scopes: ['read', 'send'] });
     assert.equal(g.url.origin + g.url.pathname, REDIRECT);
     assert.equal(g.url.searchParams.get('state'), g.state);
-    assert.ok(g.url.searchParams.get('iss'));
+    assert.equal(g.url.searchParams.get('iss'), PUBLIC_URL, 'iss is the configured public address');
     assert.match(g.code, /^[A-Za-z0-9_-]{43}$/);
 
     // The code is stored hashed, the password sealed: neither appears in the database.
@@ -353,6 +389,24 @@ describe('Connect Mailloom', () => {
     // Self-revoke sits under the IP check like every agent call.
     const other = await app.inject({ method: 'POST', url: '/mail/api/agent/v1/key/revoke', remoteAddress: '8.8.8.8', headers: bearer(key) });
     assert.equal(other.statusCode, 403);
+  });
+
+  test('a broken key can still revoke itself, and only that', async () => {
+    const p = pkce();
+    const made = (await token(app, { code: (await grant(app, t, p)).code, code_verifier: p.verifier })).json();
+    const key = made.key as string;
+    app.mailloomAgent.store.markBroken(made.key_id, 'test: password changed');
+    const who = await app.inject({ method: 'GET', url: '/api/agent/v1/whoami', headers: bearer(key) });
+    assert.equal(who.statusCode, 403);
+    assert.equal(who.json().code, 'KEY_BROKEN');
+    const folders = await app.inject({ method: 'GET', url: '/api/agent/v1/folders', headers: bearer(key) });
+    assert.equal(folders.statusCode, 403, 'other routes still refuse a broken key');
+    const rv = await app.inject({ method: 'POST', url: '/api/agent/v1/key/revoke', headers: bearer(key) });
+    assert.equal(rv.statusCode, 200, rv.body);
+    const after = await app.inject({ method: 'GET', url: '/api/agent/v1/whoami', headers: bearer(key) });
+    assert.equal(after.statusCode, 401);
+    assert.equal(after.json().code, 'KEY_REVOKED');
+    assert.ok(app.mailloomAgent.store.getRecord(made.key_id)?.revokedAt, 'revoked, not just refused');
   });
 
   test('self-revoke closes only its own key', async () => {
@@ -528,7 +582,7 @@ describe('Connect Mailloom configuration and storage', () => {
   });
 
   test('a secret shorter than 32 characters refuses to start; so do bad redirect addresses', async () => {
-    const base = { AGENT_ALLOWED_IPS: '127.0.0.1', AGENT_CLIENT_ID: CLIENT_ID, AGENT_CLIENT_SECRET: SECRET, AGENT_CLIENT_REDIRECT_URIS: REDIRECT };
+    const base = { MAILLOOM_PUBLIC_URL: PUBLIC_URL, AGENT_ALLOWED_IPS: '127.0.0.1', AGENT_CLIENT_ID: CLIENT_ID, AGENT_CLIENT_SECRET: SECRET, AGENT_CLIENT_REDIRECT_URIS: REDIRECT };
     assert.throws(() => loadAgentConfig({ ...base, AGENT_CLIENT_SECRET: 'x'.repeat(31) }), /at least 32/);
     assert.ok(loadAgentConfig({ ...base, AGENT_CLIENT_SECRET: 'x'.repeat(32) }).connect);
     assert.throws(() => loadAgentConfig({ ...base, AGENT_CLIENT_REDIRECT_URIS: 'http://os.example/cb' }), /https/);
@@ -538,6 +592,12 @@ describe('Connect Mailloom configuration and storage', () => {
     for (const local of ['http://localhost:3000/cb', 'http://127.0.0.1:3000/cb']) {
       assert.deepEqual(loadAgentConfig({ ...base, AGENT_CLIENT_REDIRECT_URIS: `${REDIRECT}, ${local}` }).connect?.redirectUris, [REDIRECT, local]);
     }
+    // Connect needs the public address (it is the issuer); localhost redirects are refused in production.
+    assert.throws(() => loadAgentConfig({ ...base, MAILLOOM_PUBLIC_URL: undefined }), /MAILLOOM_PUBLIC_URL/);
+    assert.throws(() => loadAgentConfig({ ...base, NODE_ENV: 'production', AGENT_CLIENT_REDIRECT_URIS: LOCAL_REDIRECT }), /localhost/);
+    assert.throws(() => loadAgentConfig({ ...base, NODE_ENV: 'production', AGENT_CLIENT_REDIRECT_URIS: `${REDIRECT},http://127.0.0.1:3000/cb` }), /localhost/);
+    assert.ok(loadAgentConfig({ ...base, NODE_ENV: 'production' }).connect, 'https redirects are fine in production');
+    assert.ok(loadAgentConfig({ ...base, NODE_ENV: 'development', AGENT_CLIENT_REDIRECT_URIS: LOCAL_REDIRECT }).connect);
     // The app refuses to build with a short secret, and the message never repeats the secret.
     await assert.rejects(
       buildApp({ clientDist: null, env: testEnv({ ...base, AGENT_CLIENT_SECRET: 'short-secret' }) }),
