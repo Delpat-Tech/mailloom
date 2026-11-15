@@ -15,32 +15,15 @@ users tester@ and colleague@delpat.test). Never the live mail server.
   not merged into Work OS master (waits on Om).
 
 ## Next
-0. Live since 15 Nov at https://mail.delpat.in/mail/ (release v2026.11.15, 5101def), replacing the intern's build in place:
-   systemd mailloom.service (www-data, /opt/www/mailloom, .env there), Nginx /etc/nginx/templates/roundcube.tmpl
-   (/mail/ strips the prefix, /api/ added). Rollback: /opt/www/mailloom.intern and /root/roundcube.tmpl.bak.
-   Waits on Om signing in and the checklist (docs/deploy.md section 9) on desktop and phone.
-1. DONE, merged e226438, release v2026.11.15b (awaiting Om's server update): phone basics batch (Om found gaps on 15 Nov): sign-in alert glitch, password show/hide, pull-to-refresh,
-   back button/history (opening a mail adds no history: back exits the app), offline banner, sign-in field hints,
-   row swipe actions, composer with keyboard. Then review, release, update the live server.
-   DONE, merged 252197d, release v2026.11.16 (awaiting Om's server update): Builder-a: remember sessions slide 30 days; SSRF-safe image proxy (images on by default,
-   Junk always blocked); inline image/PDF view; recipient suggestions endpoint; search all folders; drop sample labels and
-   fix label counts; batch actions and mark all read. Security review before merge (sessions, proxy, attachments).
-   Then builder-b client batch 3 (from the Opus review, 15 Nov): wire the above (suggestions UI with Backspace removes
-   last chip, image setting, inline viewer, search everywhere incl. from the reader and in views, mark all read);
-   refresh on reopen (visibilitychange/online); print view; templates with no made-up data and insert at cursor
-   (block send while {{...}} remains); remember-me on by default in the installed app; composer fields 16px on phones;
-   flush pending undo actions on hide; 20 s request timeouts with retry; label counts refreshed and consistent
-   (unread vs total, aria text); search enterkeyhint; drafts saved on hide; no example.com placeholder; manifest
-   Compose shortcut and mailto: handling.
-1b. Settings (Om, 16 Nov): one entry from the avatar menu (accounts, Settings, Sign out); sections General, Writing,
-   Notifications, Labels, Accounts, Connections, App; phone full-screen list with back per level, desktop two-pane page;
-   sidebar back to mail only. Server store done on builder-a c82be40 (not merged). Screens wait on Om: build or mock first.
-2. Install on a real phone (iPhone and Android) and check push, install and the phone composer with a keyboard (waits on a deploy; phones need HTTPS).
-## Builder B batch 3 (branch builder-b, awaiting review and merge)
-- All 14 client items done (suggestions, pictures setting, inline viewer, search everywhere, print, refresh on reopen, templates, remember me,
-  16 px phone fields, undo/draft flush on hide, request timeouts, label counts, bulk actions, manifest shortcut and mailto). Client tests 179.
-- Not verified: PDF inside the viewer frame in Chrome (the server sends `default-src 'none'` on inline attachments; the viewer also has
-  an "Open in new tab" link), real iPhone behaviour, the manifest protocol handler on a real install.
+0. Live at https://mail.delpat.in/mail/ (v2026.11.16, installed by Om 16 Nov with `sudo mailloom-update`; rollback
+   `sudo mailloom-update --rollback`, the intern's build in /opt/www/mailloom.intern, Nginx backup /root/roundcube.tmpl.bak).
+   systemd mailloom.service (www-data, /opt/www/mailloom with its .env); Nginx /etc/nginx/templates/roundcube.tmpl.
+1. Settings release (merged on main 16 Nov): avatar menu (accounts, Settings, Sign out); sections General, Writing, Notifications,
+   Labels, Accounts, Connections, App; settings stored per mailbox on the server; sidebar back to mail only. Full tests, built-app
+   check, then release for Om.
+2. Spam learning: Dovecot has no imapsieve; reporting only moves mail. Waits on Om's yes and a read-only look at Amavis/SpamAssassin.
+3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, Write shortcut, mailto) wait on Om using the phone.
+4. Server: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
 
 ## Later
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
