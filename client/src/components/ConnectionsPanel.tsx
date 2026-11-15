@@ -22,6 +22,12 @@ function when(iso: string | null): string {
   return fullDate(iso) || iso;
 }
 
+/** "16 Nov": the day a connection was made. */
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : 'Something went wrong. Please try again.';
 }
@@ -311,7 +317,10 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                         </div>
                         <div className="text-[11px] text-ink-3 mt-0.5">{k.scopes.join(', ')}</div>
                         <div className="text-[11px] text-ink-3">
-                          Created {when(k.created_at)} · Last used {when(k.last_used_at)}
+                          {k.client_id
+                            ? `${k.name}${k.label ? ` (${k.label})` : ''}, connected ${shortDate(k.created_at)}`
+                            : `Created ${when(k.created_at)}`}{' '}
+                          · Last used {when(k.last_used_at)}
                         </div>
                         {k.status === 'broken' && (
                           <div className="text-[11px] text-caution mt-0.5">

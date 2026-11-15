@@ -15,6 +15,9 @@ export interface AgentKey {
   revoked_at: string | null;
   broken_at: string | null;
   broken_reason: string | null;
+  /** Set when the key was made by Connect: the app that asked and its label (e.g. "Delpat"). */
+  client_id?: string | null;
+  label?: string | null;
   status: 'active' | 'revoked' | 'broken';
 }
 
