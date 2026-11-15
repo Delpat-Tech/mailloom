@@ -18,14 +18,14 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 0. Live at https://mail.delpat.in/mail/ (v2026.11.16, installed by Om 16 Nov with `sudo mailloom-update`; rollback
    `sudo mailloom-update --rollback`, the intern's build in /opt/www/mailloom.intern, Nginx backup /root/roundcube.tmpl.bak).
    systemd mailloom.service (www-data, /opt/www/mailloom with its .env); Nginx /etc/nginx/templates/roundcube.tmpl.
-1. Settings release (merged on main 16 Nov): avatar menu (accounts, Settings, Sign out); sections General, Writing, Notifications,
+1. Settings live 16 Nov (v2026.11.16b): avatar menu (accounts, Settings, Sign out); sections General, Writing, Notifications,
    Labels, Accounts, Connections, App; settings stored per mailbox on the server; sidebar back to mail only. Full tests, built-app
    check, then release for Om.
-2. Spam learning: Dovecot has no imapsieve; reporting only moves mail. Waits on Om's yes and a read-only look at Amavis/SpamAssassin.
 3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, Write shortcut, mailto) wait on Om using the phone.
 4. Server: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
 
 ## Later
+- Spam learning (Dovecot imapsieve + sa-learn): reporting only moves mail today. Om said not for now (16 Nov).
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
 - Earlier note: Om first said local only; Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).
 - ydco.in mail is on Google (MX), so it cannot sign in to Mailloom; dropped from MAIL_DOMAINS examples (builder-a).
