@@ -12,9 +12,20 @@ import { ConfigError } from '../config.js';
  *   AGENT_MAX_ATTACHMENT_BYTES  largest attachment returned as base64 (default 10 MB).
  *   MAILLOOM_PUBLIC_URL         optional public address of Mailloom (https://mail.example.com, a path like /mail is
  *                               allowed). When set, every message in agent responses carries a web_url that opens it.
+ *   AGENT_CLIENT_ID,            "Connect Mailloom" (OAuth authorization code + PKCE for Work OS). All three must be set
+ *   AGENT_CLIENT_SECRET,        or Connect is off. The secret needs 32+ characters (a shorter one stops start-up);
+ *   AGENT_CLIENT_REDIRECT_URIS  redirect URIs are a comma list matched exactly, https only (http for localhost).
+ *   AGENT_CLIENT_NAME           optional name shown to people and kept with the key (default "Work OS").
  *
  * The caller's address is req.ip, so behind a proxy TRUST_PROXY must name that proxy.
  */
+export interface ConnectClient {
+  id: string;
+  secret: string;
+  name: string;
+  redirectUris: string[];
+}
+
 export interface AgentConfig {
   /** null = agent API off. */
   allowList: net.BlockList | null;
@@ -25,6 +36,8 @@ export interface AgentConfig {
   maxAttachmentBytes: number;
   /** MAILLOOM_PUBLIC_URL without a trailing slash, or null. */
   publicUrl: string | null;
+  /** The one registered Connect client, or null when Connect is off. */
+  connect: ConnectClient | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -69,6 +82,41 @@ export function messageWebUrl(config: { publicUrl: string | null }, messageId: s
   return `${config.publicUrl}/#/m/${encodeURIComponent(`<${id}>`)}`;
 }
 
+const CLIENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+function isLocalHost(hostname: string): boolean {
+  return ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
+}
+
+function parseConnect(env: Env): ConnectClient | null {
+  const id = env.AGENT_CLIENT_ID?.trim() || '';
+  const secret = env.AGENT_CLIENT_SECRET?.trim() || '';
+  const uriList = (env.AGENT_CLIENT_REDIRECT_URIS || '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter(Boolean);
+  if (!id || !secret || uriList.length === 0) return null;
+  if (!CLIENT_ID_RE.test(id)) throw new ConfigError('AGENT_CLIENT_ID may only use letters, digits, ".", "_" and "-" (1 to 64 characters).');
+  if (secret.length < 32) throw new ConfigError('AGENT_CLIENT_SECRET must be at least 32 characters. Connect stays off until it is.');
+  const redirectUris = uriList.map((raw) => {
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      throw new ConfigError(`AGENT_CLIENT_REDIRECT_URIS entry "${raw}" is not a web address.`);
+    }
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLocalHost(u.hostname))) {
+      throw new ConfigError('AGENT_CLIENT_REDIRECT_URIS entries must start with https:// (http:// only for localhost or 127.0.0.1).');
+    }
+    if (u.hash || u.username || u.password) {
+      throw new ConfigError(`AGENT_CLIENT_REDIRECT_URIS entry "${raw}" must not have a # part or a login.`);
+    }
+    return raw;
+  });
+  const name = (env.AGENT_CLIENT_NAME || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60) || 'Work OS';
+  return { id, secret, name, redirectUris };
+}
+
 export function loadAgentConfig(env: Env): AgentConfig {
   const entries = (env.AGENT_ALLOWED_IPS || '')
     .split(',')
@@ -100,7 +148,8 @@ export function loadAgentConfig(env: Env): AgentConfig {
     maxRecipients: int(env, 'AGENT_MAX_RECIPIENTS', 100),
     maxTextChars: int(env, 'AGENT_MAX_TEXT_CHARS', 100_000),
     maxAttachmentBytes: int(env, 'AGENT_MAX_ATTACHMENT_BYTES', 10 * 1024 * 1024),
-    publicUrl: parsePublicUrl(env.MAILLOOM_PUBLIC_URL)
+    publicUrl: parsePublicUrl(env.MAILLOOM_PUBLIC_URL),
+    connect: parseConnect(env)
   };
 }
 

@@ -30,6 +30,8 @@ export function publicKey(r: AgentKeyRecord) {
     scopes: r.scopes,
     created_at: new Date(r.createdAt).toISOString(),
     last_used_at: r.lastUsedAt ? new Date(r.lastUsedAt).toISOString() : null,
+    client_id: r.clientId,
+    label: r.label,
     revoked_at: r.revokedAt ? new Date(r.revokedAt).toISOString() : null,
     broken_at: r.brokenAt ? new Date(r.brokenAt).toISOString() : null,
     broken_reason: r.brokenReason,

@@ -15,6 +15,8 @@ import { loadAgentConfig } from './agent/config.js';
 import { AgentStore } from './agent/store.js';
 import { connectionRoutes } from './routes/connections.js';
 import { agentRoutes } from './routes/agent.js';
+import { agentOAuthRoutes, oauthRoutes } from './routes/oauth.js';
+import { ConnectStore } from './agent/connect-store.js';
 import { pushRoutes } from './routes/push.js';
 import { isAllowedPushEndpoint, loadPushConfig } from './push/config.js';
 import { PushStore } from './push/store.js';
@@ -161,6 +163,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const agentStore = new AgentStore(sessions.database, config.sessionSecret, now);
   agentStore.prune();
   fastify.decorate('mailloomAgent', { store: agentStore, config: agentConfig });
+  const connectStore = new ConnectStore(sessions.database, config.sessionSecret, now);
+  connectStore.prune();
+  fastify.decorate('mailloomConnect', connectStore);
 
   // New-mail notifications (Web Push). The table always exists so sign-out can clean it up.
   const pushConfig = loadPushConfig(env);
@@ -211,6 +216,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     for (const key of sessions.sweep()) void closeSessionConnection(key);
     throttle.prune();
     agentStore.prune();
+    connectStore.prune();
   }, 10 * 60_000);
   sweeper.unref();
 
@@ -284,6 +290,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     });
     await fastify.register(connectionRoutes, { prefix });
     await fastify.register(agentRoutes, { prefix });
+    await fastify.register(oauthRoutes, { prefix });
+    await fastify.register(agentOAuthRoutes, { prefix });
     await fastify.register(pushRoutes, { prefix });
     await fastify.register(organiseRoutes, { prefix });
     await fastify.register(settingsRoutes, { prefix });

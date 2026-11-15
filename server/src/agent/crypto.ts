@@ -38,9 +38,9 @@ export function newKeyId(): string {
   return crypto.randomBytes(9).toString('base64url');
 }
 
-function derive(secret: string, agentKey: string): Buffer {
+function derive(secret: string, agentKey: string, info: string = HKDF_INFO): Buffer {
   const ikm = Buffer.concat([Buffer.from(secret, 'utf8'), Buffer.from([0]), Buffer.from(agentKey, 'utf8')]);
-  return Buffer.from(crypto.hkdfSync('sha256', ikm, Buffer.alloc(0), HKDF_INFO, 32));
+  return Buffer.from(crypto.hkdfSync('sha256', ikm, Buffer.alloc(0), info, 32));
 }
 
 function aad(id: string, email: string): Buffer {
@@ -62,6 +62,51 @@ export function decryptMailboxPassword(secret: string, agentKey: string, id: str
     if (format !== FORMAT || !iv || !tag || data === undefined) return null;
     const decipher = crypto.createDecipheriv('aes-256-gcm', derive(secret, agentKey), Buffer.from(iv, 'base64url'));
     decipher.setAAD(aad(id, email));
+    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(data, 'base64url')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------ Connect (authorization codes)
+
+const CODE_HKDF_INFO = 'mailloom:connect-code-password:v1';
+const CODE_RE = /^[A-Za-z0-9_-]{43}$/;
+
+/** An authorization code: 256 random bits, base64url. Only its hash is stored. */
+export function newAuthCode(): string {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+export function isWellFormedAuthCode(code: string): boolean {
+  return CODE_RE.test(code);
+}
+
+export function hashAuthCode(code: string): string {
+  return crypto.createHash('sha256').update(code, 'utf8').digest('hex');
+}
+
+/**
+ * The mailbox password waiting between Allow and the token swap. Sealed with a key derived from
+ * SESSION_SECRET and the code itself (a different HKDF label from agent keys), so the database plus
+ * SESSION_SECRET cannot open it: the code, which is never stored, is needed too. The code hash and
+ * mailbox are bound as AAD.
+ */
+export function sealCodePassword(secret: string, code: string, email: string, password: string): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', derive(secret, code, CODE_HKDF_INFO), iv);
+  cipher.setAAD(aad(hashAuthCode(code), email));
+  const data = Buffer.concat([cipher.update(password, 'utf8'), cipher.final()]);
+  return [FORMAT, iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), data.toString('base64url')].join('.');
+}
+
+export function openCodePassword(secret: string, code: string, email: string, payload: string): string | null {
+  try {
+    const [format, iv, tag, data] = payload.split('.');
+    if (format !== FORMAT || !iv || !tag || data === undefined) return null;
+    const decipher = crypto.createDecipheriv('aes-256-gcm', derive(secret, code, CODE_HKDF_INFO), Buffer.from(iv, 'base64url'));
+    decipher.setAAD(aad(hashAuthCode(code), email));
     decipher.setAuthTag(Buffer.from(tag, 'base64url'));
     return Buffer.concat([decipher.update(Buffer.from(data, 'base64url')), decipher.final()]).toString('utf8');
   } catch {

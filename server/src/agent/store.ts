@@ -29,6 +29,10 @@ export interface AgentKeyRecord {
   revokedAt: number | null;
   brokenAt: number | null;
   brokenReason: string | null;
+  /** OAuth client that minted this key (Connect), or null for a key made by hand. */
+  clientId: string | null;
+  /** Free label shown with the client, e.g. the Work OS organisation name. */
+  label: string | null;
 }
 
 interface KeyRow {
@@ -44,6 +48,8 @@ interface KeyRow {
   revoked_at: number | null;
   broken_at: number | null;
   broken_reason: string | null;
+  client_id: string | null;
+  label: string | null;
 }
 
 export type AuthResult =
@@ -92,7 +98,9 @@ function toRecord(row: KeyRow): AgentKeyRecord {
     lastUsedAt: row.last_used_at,
     revokedAt: row.revoked_at,
     brokenAt: row.broken_at,
-    brokenReason: row.broken_reason
+    brokenReason: row.broken_reason,
+    clientId: row.client_id ?? null,
+    label: row.label ?? null
   };
 }
 
@@ -153,19 +161,24 @@ export class AgentStore {
       );
       CREATE INDEX IF NOT EXISTS agent_sends_key ON agent_sends (key_id, at);
     `);
+    // Additive migration for databases made before Connect: two nullable columns, no data touched.
+    const cols = (db.prepare('PRAGMA table_info(agent_keys)').all() as Array<{ name: string }>).map((c) => c.name);
+    for (const col of ['client_id', 'label']) {
+      if (!cols.includes(col)) db.exec(`ALTER TABLE agent_keys ADD COLUMN ${col} TEXT`);
+    }
   }
 
   // ---------------------------------------------------------------- keys
 
-  createKey(input: { email: string; name: string; scopes: Scope[]; password: string }): { key: string; record: AgentKeyRecord } {
+  createKey(input: { email: string; name: string; scopes: Scope[]; password: string; clientId?: string | null; label?: string | null }): { key: string; record: AgentKeyRecord } {
     const key = newAgentKey();
     const id = newKeyId();
     const email = input.email.toLowerCase();
     const now = this.now();
     this.db
       .prepare(
-        `INSERT INTO agent_keys (id, key_hash, prefix, name, email, scopes, enc_password, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO agent_keys (id, key_hash, prefix, name, email, scopes, enc_password, created_at, client_id, label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -175,7 +188,9 @@ export class AgentStore {
         email,
         input.scopes.join(','),
         encryptMailboxPassword(this.secret, key, id, email, input.password),
-        now
+        now,
+        input.clientId ?? null,
+        input.label ?? null
       );
     return { key, record: this.getRecord(id)! };
   }
@@ -222,6 +237,13 @@ export class AgentStore {
       this.db.prepare("UPDATE agent_keys SET revoked_at = ?, enc_password = '' WHERE id = ?").run(this.now(), id);
     }
     return this.getRecord(id);
+  }
+
+  /** Revokes by id alone (a code was reused: the key the first use minted must die). Null when there is no such key. */
+  revokeById(id: string): AgentKeyRecord | null {
+    const row = this.getRow(id);
+    if (!row) return null;
+    return this.revoke(id, row.email);
   }
 
   /** New key value for the same record (name, scopes, history kept). The old value stops working at once. */
