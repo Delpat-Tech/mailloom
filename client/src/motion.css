@@ -150,7 +150,8 @@
 /*
  * The mark (LogoMotion, BrandCurtain). The one deliberate exception to "nothing longer than 240 ms":
  * the brand intro runs 1.1 s, on a cold start and after signing in, and never holds the user up.
- * Everything is transform and opacity, except the intro's two sweeps (a dashed stroke inside a mask).
+ * The slab and the counter move by transform; the bowl and the lower piece are swept along their own arc
+ * (a dashed stroke inside a mask). Only the intro uses opacity.
  */
 .mk { transform-origin: 50% 50%; }
 .mk-slab, .mk-counter { transform-box: fill-box; }
@@ -186,57 +187,68 @@
 .mk-intro .mk-sweep-lower { animation: mk-lower-in 300ms cubic-bezier(0.2, 0.5, 0.2, 1) calc(var(--mk-wait, 0ms) + 660ms) both; }
 .mk-intro .mk-counter { animation: mk-counter-in 340ms cubic-bezier(0.2, 0.9, 0.3, 1.2) calc(var(--mk-wait, 0ms) + 760ms) both; }
 
-/* Outro: it comes apart. The counter closes, the bowl and the lower piece slide apart along their diagonal,
-   the slab drops away. */
-@keyframes mk-pull {
-  from { transform: none; }
-  to { transform: scale(0.95); }
-}
+/* Outro: it runs off. The counter slips into the stem, the bowl runs on round and off, the lower piece follows
+   it off its foot, and the slab sinks through the baseline (LogoMotion clips it there). 620 ms, no fades. */
 @keyframes mk-counter-out {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: scaleX(0.2); }
+  from { transform: none; }
+  to { transform: scaleX(0); }
 }
 @keyframes mk-bowl-out {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translate(calc(var(--mk-px) * -1), calc(var(--mk-py) * -1)); }
+  from { stroke-dashoffset: var(--mk-bowl); }
+  to { stroke-dashoffset: var(--mk-bowl-off); }
 }
 @keyframes mk-lower-out {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translate(var(--mk-px), var(--mk-py)); }
+  from { stroke-dashoffset: var(--mk-lower); }
+  to { stroke-dashoffset: var(--mk-lower-off); }
 }
 @keyframes mk-slab-out {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(24%); }
+  from { transform: none; }
+  to { transform: translateY(740px); }
 }
-.mk-outro { animation: mk-pull 460ms var(--ease-in) var(--mk-wait, 0ms) both; }
-.mk-outro .mk-counter { animation: mk-counter-out 170ms var(--ease-in) var(--mk-wait, 0ms) both; }
-.mk-outro .mk-bowl { animation: mk-bowl-out 260ms cubic-bezier(0.5, 0, 0.9, 0.6) calc(var(--mk-wait, 0ms) + 60ms) both; }
-.mk-outro .mk-lower { animation: mk-lower-out 260ms cubic-bezier(0.5, 0, 0.9, 0.6) calc(var(--mk-wait, 0ms) + 100ms) both; }
-.mk-outro .mk-slab { animation: mk-slab-out 230ms var(--ease-in) calc(var(--mk-wait, 0ms) + 230ms) both; }
+.mk-outro .mk-counter { animation: mk-counter-out 200ms cubic-bezier(0.5, 0, 0.9, 0.6) var(--mk-wait, 0ms) both; }
+.mk-outro .mk-sweep-bowl { animation: mk-bowl-out 300ms cubic-bezier(0.45, 0, 0.8, 0.7) calc(var(--mk-wait, 0ms) + 40ms) both; }
+.mk-outro .mk-sweep-lower { animation: mk-lower-out 220ms cubic-bezier(0.3, 0.3, 0.6, 1) calc(var(--mk-wait, 0ms) + 300ms) both; }
+.mk-outro .mk-slab { transform-box: view-box; animation: mk-slab-out 260ms cubic-bezier(0.5, 0, 0.9, 0.5) calc(var(--mk-wait, 0ms) + 360ms) both; }
 
-/* Loader: it waits. The D dims to a track and two lit arcs travel round it; the slab and the counter hold still. */
-@keyframes mk-track {
-  from { opacity: 1; }
-  to { opacity: 0.3; }
+/* Loader: steps. Each piece arrives in place (280 ms), 190 ms after the one before: slab, bowl, lower piece,
+   counter. The whole mark holds a beat, then they leave in the same order. One loop is 1600 ms, so the slab is
+   already returning (from 80 ms after the counter starts to leave) while the counter goes: there is no
+   seam and never an empty frame. All four pieces share one timeline, shifted by a negative delay; the delays
+   start the loop on the whole mark, so it follows the intro without a jump. It runs until it is removed. */
+@keyframes mk-step-slab {
+  0% { transform: translateY(760px); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { transform: none; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { transform: translateY(-760px); }
 }
-@keyframes mk-turn {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(180deg); }
+@keyframes mk-step-bowl {
+  0% { stroke-dashoffset: 360; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { stroke-dashoffset: var(--mk-bowl); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { stroke-dashoffset: var(--mk-bowl-off); }
 }
-.mk-loader .mk-bowl, .mk-loader .mk-lower { animation: mk-track 260ms var(--ease-out) both; }
-.mk-loader .mk-orbit { animation: ml-fade 260ms var(--ease-out) both; }
-.mk-loader .mk-orbit-turn { animation: mk-turn 1300ms linear infinite; }
+@keyframes mk-step-lower {
+  0% { stroke-dashoffset: 360; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { stroke-dashoffset: var(--mk-lower); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { stroke-dashoffset: var(--mk-lower-off); }
+}
+@keyframes mk-step-counter {
+  0% { transform: translateX(-260px); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { transform: none; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { transform: translateX(260px); }
+}
+.mk-loader .mk-win-slab { animation: mk-step-slab 1600ms linear -850ms infinite; }
+.mk-loader .mk-sweep-bowl { animation: mk-step-bowl 1600ms linear -660ms infinite; }
+.mk-loader .mk-sweep-lower { animation: mk-step-lower 1600ms linear -470ms infinite; }
+.mk-loader .mk-win-counter { animation: mk-step-counter 1600ms linear -280ms infinite; }
 
 /* The full-screen curtain: the app icon's ground, in both themes. Boot waits 150 ms before showing anything,
    so a fast start shows nothing. */
 .brand-curtain { background: linear-gradient(135deg, #232A66 0%, #2E4A9A 45%, #4A8FD6 100%); color: #FFFFFF; }
 .brand-curtain-boot { --mk-wait: 150ms; animation: ml-fade 120ms var(--ease-out) 150ms both; }
 .brand-curtain-intro { animation: ml-fade 120ms var(--ease-out) both; }
-.brand-curtain-outro { --mk-wait: 90ms; animation: ml-fade 90ms var(--ease-out) both; }
+.brand-curtain-outro { --mk-wait: 60ms; animation: ml-fade 90ms var(--ease-out) both; }
 .brand-curtain[data-leaving='true'] { animation: ml-leave-fade 180ms var(--ease-in) both; }
 .brand-curtain-label { opacity: 0.85; animation: ml-fade 300ms var(--ease-out) 900ms both; }
 
 @media (prefers-reduced-motion: reduce) {
   .mk, .mk * { animation: none !important; }
-  .mk-loader .mk-orbit { display: none; }
 }

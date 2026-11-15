@@ -1,24 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FROST, MARK_VIEWBOX, MarkGradients, markFill, useMarkId, type MarkTone } from './Logo.js';
-import { BOWL, BOWL_SWEEP, COUNTER, LOWER, LOWER_SWEEP, MARK_CX, MARK_CY, MARK_H, MARK_W, RING, SLAB, SPLIT } from './markPaths.js';
+import { MARK_VIEWBOX, MarkGradients, markFill, useMarkId, type MarkTone } from './Logo.js';
+import { BOWL, BOWL_SWEEP, COUNTER, LOWER, LOWER_SWEEP, MARK_CX, MARK_CY, MARK_H, MARK_W, SLAB } from './markPaths.js';
 
 export type MarkMode = 'still' | 'intro' | 'outro' | 'loader';
-
-/** How far the bowl and the lower piece slide apart along their shared diagonal in the outro (mark units). */
-const PART = 110;
 
 /**
  * The mark in motion (keyframes in motion.css, under "The mark"). Three different movements:
  *   intro   it is drawn: the slab rises, the D is swept round in one stroke (bowl, then lower piece), and the
  *           counter settles in the middle (1.1 s)
- *   loader  it waits: the D dims to a track and two lit arcs travel round it; slab and counter hold still
- *   outro   it comes apart: the counter closes, the bowl and the lower piece slide apart along their
- *           diagonal, the slab drops away (0.46 s)
+ *   loader  it comes and goes in steps, every piece staying exactly in its place: slab, bowl, lower piece and
+ *           counter arrive one after another, the whole mark holds a beat, then they leave in the same order.
+ *           The last piece is still leaving while the first one returns, so the loop has no seam and no empty
+ *           frame. It starts from the whole mark and runs for as long as it is shown.
+ *   outro   it runs off: the counter slips into the stem, the D runs on round and off its own foot, and the
+ *           slab sinks through the baseline (0.62 s). Movement only, no fades.
  *   still   no motion
  * With "reduce motion" on, every mode shows the still mark.
  *
- * The sweeps and the travelling arcs are masks (a thick circle stroke about the centre of the D, with
- * pathLength 360 so dash values are degrees). A mask leaves each piece's own fill untouched.
+ * The bowl and the lower piece are shown through a mask holding a thick circle stroke about the centre of the D
+ * (pathLength 360, so dash values are degrees): moving the dash sweeps the piece in or out along its own arc.
+ * In the loader the slab and the counter are shown through a window that slides across them. A mask leaves each
+ * piece's own fill untouched, and with no animation every mask shows its whole piece.
  */
 export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: string; tone?: MarkTone }> = ({
   mode,
@@ -29,7 +31,7 @@ export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: s
   const id = useMarkId();
   const fill = (piece: Parameters<typeof markFill>[2]) => markFill(id, tone, piece);
   const box = { maskUnits: 'userSpaceOnUse' as const, x: -200, y: -200, width: MARK_W + 400, height: MARK_H + 400 };
-  const ring = (cls: string, v: { r: number; w: number }, from: number, dash: string) => (
+  const ring = (cls: string, v: { r: number; w: number; from: number }) => (
     <circle
       className={cls}
       cx={MARK_CX}
@@ -39,17 +41,21 @@ export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: s
       stroke="#fff"
       strokeWidth={v.w}
       pathLength={360}
-      strokeDasharray={dash}
-      transform={`rotate(${from} ${MARK_CX} ${MARK_CY})`}
+      strokeDasharray="360 360"
+      transform={`rotate(${v.from} ${MARK_CX} ${MARK_CY})`}
     />
   );
+  // Dash offsets (degrees): 360 hides a piece before its start, --mk-bowl shows all of it, --mk-bowl-off hides
+  // it past its end.
   const vars = {
     '--mk-bowl': 360 - BOWL_SWEEP.sweep,
+    '--mk-bowl-off': -BOWL_SWEEP.sweep,
     '--mk-lower': 360 - LOWER_SWEEP.sweep,
-    '--mk-px': `${(SPLIT.x * PART).toFixed(1)}px`,
-    '--mk-py': `${(SPLIT.y * PART).toFixed(1)}px`
+    '--mk-lower-off': -LOWER_SWEEP.sweep
   } as React.CSSProperties;
-  const intro = mode === 'intro';
+  const moving = mode !== 'still';
+  const loader = mode === 'loader';
+  const slab = <path className="mk-slab" d={SLAB} {...fill('slab')} mask={loader ? `url(#${id}ms)` : undefined} />;
   return (
     <svg
       className={`mk mk-${mode}${className ? ` ${className}` : ''}`}
@@ -62,43 +68,41 @@ export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: s
     >
       <defs>
         {tone === 'theme' && <MarkGradients id={id} />}
-        {intro && (
+        {moving && (
           <>
             <mask id={`${id}mb`} {...box}>
-              {ring('mk-sweep-bowl', BOWL_SWEEP, BOWL_SWEEP.from, '360 360')}
+              {ring('mk-sweep-bowl', BOWL_SWEEP)}
             </mask>
             <mask id={`${id}ml`} {...box}>
-              {ring('mk-sweep-lower', LOWER_SWEEP, LOWER_SWEEP.from, '360 360')}
+              {ring('mk-sweep-lower', LOWER_SWEEP)}
             </mask>
           </>
         )}
-        {mode === 'loader' && (
-          <mask id={`${id}mo`} {...box}>
-            <g className="mk-orbit-turn" style={{ transformOrigin: `${MARK_CX}px ${MARK_CY}px` }}>
-              {ring('', RING, BOWL_SWEEP.from, '96 84')}
-            </g>
-          </mask>
+        {loader && (
+          <>
+            <mask id={`${id}ms`} {...box}>
+              <rect className="mk-win-slab" x={-20} y={-20} width={300} height={MARK_H + 40} fill="#fff" />
+            </mask>
+            <mask id={`${id}mc`} {...box}>
+              <rect className="mk-win-counter" x={284} y={240} width={260} height={240} fill="#fff" />
+            </mask>
+          </>
+        )}
+        {mode === 'outro' && (
+          <clipPath id={`${id}floor`}>
+            <rect x={-200} y={-200} width={MARK_W + 400} height={MARK_H + 200} />
+          </clipPath>
         )}
       </defs>
-      <g className="mk-bowl">
-        <path d={BOWL} {...fill('bowl')} mask={intro ? `url(#${id}mb)` : undefined} />
-      </g>
-      <path className="mk-slab" d={SLAB} {...fill('slab')} />
-      <path className="mk-counter" d={COUNTER} {...fill('counter')} />
-      <g className="mk-lower">
-        <path d={LOWER} {...fill('lower')} mask={intro ? `url(#${id}ml)` : undefined} />
-      </g>
-      {mode === 'loader' && (
-        <g className="mk-orbit" mask={`url(#${id}mo)`}>
-          <path d={BOWL} {...fill('bowl')} fillOpacity={tone === 'white' ? FROST + 0.3 : undefined} />
-          <path d={LOWER} {...fill('lower')} />
-        </g>
-      )}
+      <path className="mk-bowl" d={BOWL} {...fill('bowl')} mask={moving ? `url(#${id}mb)` : undefined} />
+      {mode === 'outro' ? <g clipPath={`url(#${id}floor)`}>{slab}</g> : slab}
+      <path className="mk-counter" d={COUNTER} {...fill('counter')} mask={loader ? `url(#${id}mc)` : undefined} />
+      <path className="mk-lower" d={LOWER} {...fill('lower')} mask={moving ? `url(#${id}ml)` : undefined} />
     </svg>
   );
 };
 
-/** A small looping mark for waiting states inside a page (the full-page one is BrandCurtain). */
+/** A small looping mark for waiting states inside a page (the full-page one is BrandCurtain). It loops until it is unmounted. */
 export const MarkLoader: React.FC<{ size?: number; label?: string; className?: string; tone?: MarkTone }> = ({
   size = 20,
   label = 'Loading',
@@ -113,7 +117,9 @@ export const MarkLoader: React.FC<{ size?: number; label?: string; className?: s
 export type CurtainKind = 'boot' | 'intro' | 'outro';
 
 const INTRO_MS = 1100;
-const OUTRO_MS = 460;
+const OUTRO_MS = 620;
+/** The outro waits this long while the curtain arrives (--mk-wait on .brand-curtain-outro). */
+const OUTRO_WAIT_MS = 60;
 const FADE_MS = 180;
 /** A boot faster than this shows no curtain at all. */
 const BOOT_GRACE_MS = 150;
@@ -159,7 +165,7 @@ export const BrandCurtain: React.FC<{ kind: CurtainKind; ready?: boolean; onGone
       setLeaving(true);
       return;
     }
-    const t = setTimeout(() => setLeaving(true), kind === 'intro' ? INTRO_MS : OUTRO_MS);
+    const t = setTimeout(() => setLeaving(true), kind === 'intro' ? INTRO_MS : OUTRO_WAIT_MS + OUTRO_MS);
     return () => clearTimeout(t);
   }, [kind, ready, leaving]);
 
