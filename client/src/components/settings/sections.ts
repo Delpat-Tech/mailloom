@@ -3,7 +3,7 @@ import { Bell, KeyRound, PenLine, Settings, Smartphone, Tag, Users } from 'lucid
 export type SectionId = 'general' | 'writing' | 'notifications' | 'labels' | 'accounts' | 'connections' | 'app';
 
 export const SECTIONS: { id: SectionId; title: string; icon: typeof Settings; blurb: string }[] = [
-  { id: 'general', title: 'General', icon: Settings, blurb: 'How Mailloom looks and behaves on this device.' },
+  { id: 'general', title: 'General', icon: Settings, blurb: 'Theme, pictures and replies.' },
   { id: 'writing', title: 'Writing', icon: PenLine, blurb: 'Your signature and reusable messages.' },
   { id: 'notifications', title: 'Notifications', icon: Bell, blurb: 'Hear about new mail on this device, even when Mailloom is closed.' },
   { id: 'labels', title: 'Labels', icon: Tag, blurb: 'Add, rename, recolour, reorder and delete labels.' },
