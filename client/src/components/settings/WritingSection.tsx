@@ -3,7 +3,7 @@ import { Copy, ImagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { AccountSettings, AccountTemplate } from '../../services/accountSettings.js';
 import { RichEditor } from '../RichEditor.js';
 import { composeSignatureHtml } from '../../services/signatures.js';
-import { readImageFile, htmlToPlainText, formatBytes } from '../../services/richtext.js';
+import { readImageFile, htmlToPlainText } from '../../services/richtext.js';
 import { BUILT_IN_TEMPLATES, extractVariables, newTemplateId, toAccountTemplate } from '../../services/templates.js';
 import type { ConfirmRequest } from '../ConfirmDialog.js';
 import { BTN, BTN_PRIMARY, Card, ErrorNote, INPUT, SectionTitle } from './ui.js';
@@ -94,7 +94,7 @@ const Signature: React.FC<Pick<Props, 'settings' | 'save'>> = ({ settings, save 
       <div>
         <span className="block text-[14.5px] font-bold text-ink mb-0.5">Logo</span>
         <p className="text-[13px] text-ink-3 mb-2.5">
-          Shown under your signature. PNG, JPEG, GIF or WebP, up to {formatBytes(LOGO_MAX_BYTES)}.
+          Shown under your signature. PNG, JPEG, GIF or WebP, up to {LOGO_MAX_BYTES / 1024} KB.
         </p>
         <div className="flex items-center gap-3 flex-wrap">
           {logo && (

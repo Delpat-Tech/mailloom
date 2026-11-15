@@ -75,3 +75,7 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 - Inter font loads from Google Fonts (allowed in CSP); self-hosting would let the CSP drop the two Google hosts (waits on a decision).
 - Unicode (IDN) domains are refused in recipients; punycode works (waits on real use).
 - @tiptap packages are on 2.x; the last audit finding (@tiptap/core <3.30.4) needs the 3.x major, which changes extensions and the editor API (waits on a compatibility pass of the rich-text composer).
+
+## Settings page (builder-b, 15 Nov, not merged)
+- Done on builder-b: avatar menu, Settings (7 sections), clean sidebar, server-backed signature/templates/pictures with importLocal on version 0.
+- Later: a disabled old local signature is not imported (empty = off on the server); theme choice stays per device (server theme is only the default).
