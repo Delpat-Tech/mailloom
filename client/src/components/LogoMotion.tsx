@@ -1,48 +1,55 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
-import { MARK_VIEWBOX, markTones } from './Logo.js';
-import { DBAND, D_SWEEP, PBOWL, P_SWEEP, SLAB } from './markPaths.js';
+import React, { useEffect, useRef, useState } from 'react';
+import { FROST, MARK_VIEWBOX, MarkGradients, markFill, useMarkId, type MarkTone } from './Logo.js';
+import { BOWL, BOWL_SWEEP, COUNTER, LOWER, LOWER_SWEEP, MARK_CX, MARK_CY, MARK_H, MARK_W, RING, SLAB, SPLIT } from './markPaths.js';
 
 export type MarkMode = 'still' | 'intro' | 'outro' | 'loader';
 
+/** How far the bowl and the lower piece slide apart along their shared diagonal in the outro (mark units). */
+const PART = 110;
+
 /**
- * The mark in motion (keyframes in motion.css, under "The mark"). It tells the name: the P first, then the D.
- *   intro   the slab rises, the bowl of the P is written from it, then the D draws round the P (1.1 s)
- *   loader  the P holds still; the D dims to a track and two arcs of it travel round
- *   outro   the D runs on round and off, the P follows it, the slab drops away (0.46 s)
+ * The mark in motion (keyframes in motion.css, under "The mark"). Three different movements:
+ *   intro   it is drawn: the slab rises, the D is swept round in one stroke (bowl, then lower piece), and the
+ *           counter settles in the middle (1.1 s)
+ *   loader  it waits: the D dims to a track and two lit arcs travel round it; slab and counter hold still
+ *   outro   it comes apart: the counter closes, the bowl and the lower piece slide apart along their
+ *           diagonal, the slab drops away (0.46 s)
  *   still   no motion
  * With "reduce motion" on, every mode shows the still mark.
  *
- * The bowl and the D are each a thick circle stroke clipped to the piece, so they can be drawn round.
- * Both circles use pathLength 360, so dash values are degrees.
+ * The sweeps and the travelling arcs are masks (a thick circle stroke about the centre of the D, with
+ * pathLength 360 so dash values are degrees). A mask leaves each piece's own fill untouched.
  */
-export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: string; tone?: 'rail' | 'page' }> = ({
+export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: string; tone?: MarkTone }> = ({
   mode,
   size = 28,
   className,
-  tone = 'page'
+  tone = 'theme'
 }) => {
-  const { a, b } = markTones(tone);
-  const id = useId().replace(/:/g, '');
-  const ring = (cls: string, v: typeof D_SWEEP, stroke: string, dash = '360 360') => (
+  const id = useMarkId();
+  const fill = (piece: Parameters<typeof markFill>[2]) => markFill(id, tone, piece);
+  const box = { maskUnits: 'userSpaceOnUse' as const, x: -200, y: -200, width: MARK_W + 400, height: MARK_H + 400 };
+  const ring = (cls: string, v: { r: number; w: number }, from: number, dash: string) => (
     <circle
       className={cls}
-      cx={v.cx}
-      cy={v.cy}
+      cx={MARK_CX}
+      cy={MARK_CY}
       r={v.r}
       fill="none"
-      stroke={stroke}
+      stroke="#fff"
       strokeWidth={v.w}
       pathLength={360}
       strokeDasharray={dash}
-      transform={`rotate(${v.from} ${v.cx} ${v.cy})`}
+      transform={`rotate(${from} ${MARK_CX} ${MARK_CY})`}
     />
   );
   const vars = {
-    '--mk-d': 360 - D_SWEEP.sweep,
-    '--mk-d-off': -D_SWEEP.sweep,
-    '--mk-p': 360 - P_SWEEP.sweep,
-    '--mk-p-off': -P_SWEEP.sweep
+    '--mk-bowl': 360 - BOWL_SWEEP.sweep,
+    '--mk-lower': 360 - LOWER_SWEEP.sweep,
+    '--mk-px': `${(SPLIT.x * PART).toFixed(1)}px`,
+    '--mk-py': `${(SPLIT.y * PART).toFixed(1)}px`
   } as React.CSSProperties;
+  const intro = mode === 'intro';
   return (
     <svg
       className={`mk mk-${mode}${className ? ` ${className}` : ''}`}
@@ -54,30 +61,45 @@ export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: s
       focusable="false"
     >
       <defs>
-        <clipPath id={`${id}d`}>
-          <path d={DBAND} />
-        </clipPath>
-        <clipPath id={`${id}p`}>
-          <path d={PBOWL} />
-        </clipPath>
+        {tone === 'theme' && <MarkGradients id={id} />}
+        {intro && (
+          <>
+            <mask id={`${id}mb`} {...box}>
+              {ring('mk-sweep-bowl', BOWL_SWEEP, BOWL_SWEEP.from, '360 360')}
+            </mask>
+            <mask id={`${id}ml`} {...box}>
+              {ring('mk-sweep-lower', LOWER_SWEEP, LOWER_SWEEP.from, '360 360')}
+            </mask>
+          </>
+        )}
+        {mode === 'loader' && (
+          <mask id={`${id}mo`} {...box}>
+            <g className="mk-orbit-turn" style={{ transformOrigin: `${MARK_CX}px ${MARK_CY}px` }}>
+              {ring('', RING, BOWL_SWEEP.from, '96 84')}
+            </g>
+          </mask>
+        )}
       </defs>
-      <g clipPath={`url(#${id}d)`}>{ring('mk-d', D_SWEEP, b)}</g>
+      <g className="mk-bowl">
+        <path d={BOWL} {...fill('bowl')} mask={intro ? `url(#${id}mb)` : undefined} />
+      </g>
+      <path className="mk-slab" d={SLAB} {...fill('slab')} />
+      <path className="mk-counter" d={COUNTER} {...fill('counter')} />
+      <g className="mk-lower">
+        <path d={LOWER} {...fill('lower')} mask={intro ? `url(#${id}ml)` : undefined} />
+      </g>
       {mode === 'loader' && (
-        <g clipPath={`url(#${id}d)`} className="mk-orbit">
-          {/* The rotation is a CSS transform, so the arcs sit in a group that carries the centre. */}
-          <g style={{ transformOrigin: `${D_SWEEP.cx}px ${D_SWEEP.cy}px` }} className="mk-orbit-turn">
-            {ring('', D_SWEEP, b, '100 80')}
-          </g>
+        <g className="mk-orbit" mask={`url(#${id}mo)`}>
+          <path d={BOWL} {...fill('bowl')} fillOpacity={tone === 'white' ? FROST + 0.3 : undefined} />
+          <path d={LOWER} {...fill('lower')} />
         </g>
       )}
-      <path className="mk-slab" d={SLAB} fill={a} />
-      <g clipPath={`url(#${id}p)`}>{ring('mk-p', P_SWEEP, a)}</g>
     </svg>
   );
 };
 
 /** A small looping mark for waiting states inside a page (the full-page one is BrandCurtain). */
-export const MarkLoader: React.FC<{ size?: number; label?: string; className?: string; tone?: 'rail' | 'page' }> = ({
+export const MarkLoader: React.FC<{ size?: number; label?: string; className?: string; tone?: MarkTone }> = ({
   size = 20,
   label = 'Loading',
   className,
@@ -103,6 +125,8 @@ const BOOT_GRACE_MS = 150;
  *   intro  after signing in: plays over the mailbox as it loads and lets clicks through. It goes when `ready`
  *          is true or the intro ends, whichever is first.
  *   outro  after signing out: plays over the sign-in screen and lets clicks through.
+ * It is the app icon at full size: the white mark on the navy-to-blue ground, in both themes, so it follows
+ * the launch screen (the manifest's navy background) without a flash.
  */
 export const BrandCurtain: React.FC<{ kind: CurtainKind; ready?: boolean; onGone: () => void }> = ({
   kind,
@@ -115,7 +139,7 @@ export const BrandCurtain: React.FC<{ kind: CurtainKind; ready?: boolean; onGone
   const gone = useRef(onGone);
   gone.current = onGone;
 
-  // Boot: once the intro has played, keep the ring turning.
+  // Boot: once the intro has played, switch to the loader.
   useEffect(() => {
     if (kind !== 'boot') return;
     const t = setTimeout(() => setLooping(true), BOOT_GRACE_MS + INTRO_MS + 60);
@@ -148,7 +172,7 @@ export const BrandCurtain: React.FC<{ kind: CurtainKind; ready?: boolean; onGone
   const blocking = kind === 'boot' && !leaving;
   return (
     <div
-      className={`brand-curtain brand-curtain-${kind} fixed inset-0 z-[200] flex items-center justify-center bg-surface text-ink ${
+      className={`brand-curtain brand-curtain-${kind} fixed inset-0 z-[200] flex items-center justify-center ${
         blocking ? '' : 'pointer-events-none'
       }`}
       data-leaving={leaving ? 'true' : undefined}
@@ -156,8 +180,8 @@ export const BrandCurtain: React.FC<{ kind: CurtainKind; ready?: boolean; onGone
       aria-hidden={kind === 'boot' ? undefined : true}
     >
       <div className="flex flex-col items-center gap-4">
-        <LogoMotion mode={kind === 'outro' ? 'outro' : looping ? 'loader' : 'intro'} size={72} />
-        {kind === 'boot' && <span className="brand-curtain-label text-xs font-semibold text-ink-3">Launching Mailloom...</span>}
+        <LogoMotion mode={kind === 'outro' ? 'outro' : looping ? 'loader' : 'intro'} size={84} tone="white" />
+        {kind === 'boot' && <span className="brand-curtain-label text-xs font-semibold">Launching Mailloom...</span>}
       </div>
     </div>
   );

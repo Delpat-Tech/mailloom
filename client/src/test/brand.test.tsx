@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Logo } from '../components/Logo.js';
 import { BrandCurtain, LogoMotion } from '../components/LogoMotion.js';
-import { DBAND, D_SWEEP, PBOWL, P_SWEEP, SLAB } from '../components/markPaths.js';
+import { BOWL, BOWL_SWEEP, COUNTER, LOWER, LOWER_SWEEP, SLAB } from '../components/markPaths.js';
+
+const pub = (name: string) => readFileSync(resolve(__dirname, '../../public', name), 'utf8');
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -13,31 +15,74 @@ afterEach(() => {
 });
 
 describe('the mark', () => {
-  it('Logo, LogoMotion and the icon file share one geometry', () => {
+  it('Logo, the icon and the favicon share one geometry', () => {
     const { container } = render(<Logo />);
-    const paths = [...container.querySelectorAll('path')].map((p) => p.getAttribute('d'));
-    expect(paths).toEqual([DBAND, SLAB, PBOWL]);
-    const icon = readFileSync(resolve(__dirname, '../../public/icon.svg'), 'utf8');
-    for (const d of [DBAND, SLAB, PBOWL]) expect(icon).toContain(d);
-    expect(icon).not.toMatch(/F2B01E/i);
+    const paths = [...container.querySelectorAll('svg > path')].map((p) => p.getAttribute('d'));
+    expect(paths).toEqual([BOWL, SLAB, COUNTER, LOWER]);
+    for (const file of ['icon.svg', 'mark.svg']) {
+      const svg = pub(file);
+      for (const d of [BOWL, SLAB, COUNTER, LOWER]) expect(svg).toContain(d);
+      expect(svg).not.toMatch(/F2B01E/i);
+    }
   });
 
-  it('LogoMotion draws the D and the bowl of the P as sweeps, and is hidden from screen readers', () => {
+  it('the Dusk colours in index.css match the ones make-icons.py put in the favicon', () => {
+    const css = readFileSync(resolve(__dirname, '../index.css'), 'utf8');
+    const favicon = pub('mark.svg');
+    const piece: Record<string, string> = { s: 'slab', c: 'counter', l: 'lower', b: 'bowl' };
+    const vars = [...css.matchAll(/--mk-([sclb])(\d):(#[0-9A-Fa-f]{6})/g)];
+    expect(vars.length).toBe(27); // 9 stops, in the light block and both dark blocks
+    for (const [, key, n, colour] of vars) expect(favicon).toContain(`.${piece[key]}${Number(n) - 1}{stop-color:${colour}}`);
+  });
+
+  it('two marks on one page do not share gradient ids', () => {
+    const { container } = render(
+      <>
+        <Logo />
+        <Logo />
+        <LogoMotion mode="still" />
+      </>
+    );
+    const ids = [...container.querySelectorAll('linearGradient')].map((g) => g.id);
+    expect(ids.length).toBe(12);
+    expect(new Set(ids).size).toBe(12);
+    // Every fill points at a gradient inside its own svg.
+    for (const svg of container.querySelectorAll('svg')) {
+      for (const path of svg.querySelectorAll('path[fill^="url("]')) {
+        const id = (path.getAttribute('fill') as string).slice(5, -1);
+        expect(svg.querySelector(`[id="${id}"]`)).not.toBeNull();
+      }
+    }
+  });
+
+  it('the white tone uses no gradients and frosts the bowl', () => {
+    const { container } = render(<Logo tone="white" />);
+    expect(container.querySelector('linearGradient')).toBeNull();
+    const [bowl, slab] = [...container.querySelectorAll('path')];
+    expect(bowl.getAttribute('fill-opacity')).toBe('0.58');
+    expect(slab.getAttribute('fill')).toBe('#FFFFFF');
+  });
+
+  it('LogoMotion masks only what the mode needs, and is hidden from screen readers', () => {
     const { container, rerender } = render(<LogoMotion mode="intro" />);
     const svg = container.querySelector('svg') as SVGElement;
     expect(svg.getAttribute('aria-hidden')).toBe('true');
     expect(svg.classList.contains('mk-intro')).toBe(true);
-    expect(container.querySelector('.mk-d')).not.toBeNull();
-    expect(container.querySelector('.mk-p')).not.toBeNull();
-    // Each sweep is long enough to show its whole piece, and short of a full turn.
-    for (const v of [D_SWEEP, P_SWEEP]) {
-      expect(v.sweep).toBeGreaterThan(180);
+    // Intro: the bowl and the lower piece are swept in, far enough to show each whole piece.
+    expect(container.querySelector('.mk-sweep-bowl')).not.toBeNull();
+    expect(container.querySelector('.mk-sweep-lower')).not.toBeNull();
+    for (const v of [BOWL_SWEEP, LOWER_SWEEP]) {
+      expect(v.sweep).toBeGreaterThan(90);
       expect(v.sweep).toBeLessThan(360);
     }
-    // The travelling arcs exist only while loading.
     expect(container.querySelector('.mk-orbit')).toBeNull();
+    // Loader: the travelling arcs, and no sweep masks.
     rerender(<LogoMotion mode="loader" />);
     expect(container.querySelector('.mk-orbit')).not.toBeNull();
+    expect(container.querySelector('.mk-sweep-bowl')).toBeNull();
+    // Outro and still: no masks at all.
+    rerender(<LogoMotion mode="outro" />);
+    expect(container.querySelector('mask')).toBeNull();
   });
 });
 

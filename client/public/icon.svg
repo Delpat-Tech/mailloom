@@ -1,8 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="120" fill="#FFFFFF"/>
-  <g transform="translate(111.08 96.82) scale(0.44522)">
-    <path d="M75.3 10.2A6 6 0 0 1 79.5 0L330 0A360 360 0 0 1 330 720L226 720A10 10 0 0 1 216 710L216 606A10 10 0 0 1 226 596L330 596A236 236 0 0 0 330 124L193.2 124A10 10 0 0 1 186.1 121.1Z" fill="#3F7CBD"/>
-    <path d="M0 24.1A10 10 0 0 1 17.1 17.1L170 170L170 710A10 10 0 0 1 160 720L10 720A10 10 0 0 1 0 710Z" fill="#28306E"/>
-    <path d="M164 170L330 170A160 160 0 0 1 330 490L164 490L164 386L330 386A56 56 0 0 0 330 274L164 274Z" fill="#28306E"/>
+  <defs><linearGradient id="t" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="512" y2="512"><stop offset="0.0" stop-color="#232A66"/><stop offset="0.45" stop-color="#2E4A9A"/><stop offset="1.0" stop-color="#4A8FD6"/></linearGradient></defs>
+  <rect width="512" height="512" rx="120" fill="url(#t)"/>
+  <g transform="translate(101.53 108.61) scale(0.39980)">
+    <path d="M294 14A14 14 0 0 1 308 0L434 0A360 360 0 0 1 670.1 631.8L571.6 385.6A140 140 0 0 0 434 220L308 220A14 14 0 0 1 294 206Z" fill="#FFFFFF" fill-opacity="0.58"/>
+    <path d="M0 31A14 14 0 0 1 23.2 20.5L245.2 215.8A14 14 0 0 1 250 226.3L250 706A14 14 0 0 1 236 720L14 720A14 14 0 0 1 0 706Z" fill="#FFFFFF"/>
+    <path d="M294 278A14 14 0 0 1 308 264L434 264A96 96 0 0 1 434 456L308 456A14 14 0 0 1 294 442Z" fill="#FFFFFF"/>
+    <path d="M294 514A14 14 0 0 1 308 500L434 500A140 140 0 0 0 573.3 373.7L674.9 627.5A360 360 0 0 1 434 720L308 720A14 14 0 0 1 294 706Z" fill="#FFFFFF"/>
   </g>
 </svg>

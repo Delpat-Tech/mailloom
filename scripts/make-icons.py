@@ -1,10 +1,15 @@
 """The Mailloom mark: one geometry, every asset.
 
-The mark is a D and a P for Delpat: a navy P, whose stem is the Delpat slab with its slanted top, standing
-inside a blue D (see mark() below). This script is its single source. It writes:
-  client/public/icon.svg, mark.svg                 vector icon (white tile) and the bare mark (favicon)
-  client/public/icon-*.png, apple-touch-icon.png,  raster icons
-  client/public/badge-96.png
+The mark is the Delpat logo redrawn on a clean grid (see mark() below): the navy slab with its slanted
+top, the blue bowl, the navy counter and the lower piece. It is shown two ways:
+  Aurora  the app icon: the mark in white, bowl in frosted white, on a navy-to-blue gradient tile
+  Dusk    the mark inside the app: each piece carries a quiet gradient (see client/src/index.css)
+
+This script is the single source. It writes:
+  client/public/icon.svg                           the Aurora icon as a vector
+  client/public/mark.svg                           the bare Dusk mark (favicon; goes light on dark tabs)
+  client/public/icon-*.png, apple-touch-icon.png   raster icons (Aurora)
+  client/public/badge-96.png                       notification badge: white, bowl half-clear
   client/src/components/markPaths.ts               the same paths for Logo.tsx and LogoMotion.tsx
 
 Run: python scripts/make-icons.py   (needs Pillow). Nothing else is required.
@@ -17,8 +22,20 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'client' / 'public'
 TS = ROOT / 'client' / 'src' / 'components' / 'markPaths.ts'
 
-NAVY, BLUE, WHITE = '#28306E', '#3F7CBD', '#FFFFFF'
-DARK_INK, DARK_BLUE = '#EAF1FB', '#5B9BE0'  # the mark on a dark surface
+WHITE = '#FFFFFF'
+NAVY = '#28306E'  # Delpat navy: the launch screen behind the icon
+# Aurora tile: top-left to bottom-right.
+TILE_STOPS = [(0.0, '#232A66'), (0.45, '#2E4A9A'), (1.0, '#4A8FD6')]
+FROST = 0.58  # opacity of the bowl on the Aurora tile and in the badge
+# Dusk: gradient stops per piece, for light surfaces and for dark ones. Kept in step with index.css by brand.test.tsx.
+DUSK = {
+    'slab': ('#3A46A0', '#222960'), 'counter': ('#364195', '#262E6B'), 'lower': ('#2F3984', '#1E2458'),
+    'bowl': ('#74B1F2', '#3F7CBD', '#2C63AC'),
+}
+DUSK_DARK = {
+    'slab': ('#FFFFFF', '#D5E1F5'), 'counter': ('#F4F8FF', '#DCE7F8'), 'lower': ('#E6EEFB', '#C4D3EE'),
+    'bowl': ('#8CC0F5', '#5B9BE0', '#3F7CBD'),
+}
 
 
 # ---------------------------------------------------------------- path building
@@ -30,7 +47,6 @@ def _arc_points(p0, r, sweep, p1, step=1.5):
     d = math.hypot(dx, dy)
     r = max(r, d)
     h = math.sqrt(max(0.0, r * r - d * d))
-    # centre lies to the left of travel for sweep=1 in SVG's y-down space
     sign = 1 if sweep else -1
     cx, cy = x1 + dx - sign * h * dy / d, y1 + dy + sign * h * dx / d
     a1, a2 = math.atan2(y1 - cy, x1 - cx), math.atan2(y2 - cy, x2 - cx)
@@ -53,7 +69,7 @@ def build(nodes):
     node (None = straight). Returns (svg path data, polygon points). Corners are rounded only where
     two straight edges meet."""
     n = len(nodes)
-    segs = []  # per node: (entry point, exit point, corner radius, corner sweep)
+    segs = []
     for i, (p, r, _arc) in enumerate(nodes):
         prev, nxt = nodes[i - 1][0], nodes[(i + 1) % n][0]
         if r:
@@ -91,96 +107,139 @@ def build(nodes):
     return ''.join(d), pts
 
 
+def _hit(p0, d, c, r):
+    """Furthest point along the ray p0 + t*d that lies on the circle (c, r)."""
+    fx, fy = p0[0] - c[0], p0[1] - c[1]
+    b = 2 * (fx * d[0] + fy * d[1])
+    cc = fx * fx + fy * fy - r * r
+    t = (-b + math.sqrt(b * b - 4 * cc)) / 2
+    return (p0[0] + t * d[0], p0[1] + t * d[1])
+
+
+def _reach(pts, o):
+    d = [math.hypot(x - o[0], y - o[1]) for x, y in pts]
+    return min(d), max(d)
+
+
+def _span(pts, o):
+    """Where a clockwise sweep about `o` must start, and how far it must go, to pass over every point:
+    it starts just after the widest empty angle."""
+    dense = []  # straight edges have a point only at each end, so walk along them
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+        n = max(1, int(math.hypot(x1 - x0, y1 - y0) / 3))
+        dense += [(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n) for k in range(n)]
+    angs = sorted(math.degrees(math.atan2(y - o[1], x - o[0])) % 360 for x, y in dense)
+    gaps = [((angs[(i + 1) % len(angs)] - a) % 360, i) for i, a in enumerate(angs)]
+    widest, i = max(gaps)
+    start = angs[(i + 1) % len(angs)] - 4
+    return (start + 180) % 360 - 180, 360 - widest + 8
+
+
 # ---------------------------------------------------------------- the mark
 
-def mark(gap=46, radius=10):
-    """A P inside a D, 690 x 720 units.
-
-      slab   the navy stem of the P: the Delpat slab, its top cut on a slant
-      pbowl  the navy bowl of the P; its top edge carries on from the foot of the slant
-      dband  the blue D: one band that starts as an arm lying over the slant (cut parallel to it),
-             runs round the P and comes back to the stem at the foot
-
-    The D keeps one gap width from the stem, from the slant and from the top of the P.
+def mark(gap=44, corner=14):
+    """The Delpat mark on a clean grid, 794 x 720 units: one centre for every curve, one gap width, one
+    corner radius.
+      slab     the upright, its top cut on a slant that lands level with the bowl's inner edge
+      bowl     the upper right of the D
+      counter  the half-round inside
+      lower    the lower right of the D, meeting the bowl on a diagonal
     """
-    H, SLAB_W = 720, 170
-    BAND, R_OUT = 124, 360          # the D: band thickness and outer radius
-    P_R, P_BAND = 160, 104          # the P bowl: outer radius and band thickness
-    c = (330, H / 2)                # centre of the D
-    r_in = R_OUT - BAND
-    left = SLAB_W + gap             # where the D band comes back to the stem
-    top = BAND + gap                # top of the P bowl = foot of the slant
-    pc = (c[0], top + P_R)          # centre of the P bowl
-    tuck = 6                        # the bowl tucks into the stem, so no hairline seam shows
-    # The arm of the D ends on a line parallel to the slant, one gap away from it.
-    slant_len = math.hypot(SLAB_W, top)
-    arm0 = gap * slant_len / top                      # at y = 0
-    arm1 = (gap * slant_len + SLAB_W * BAND) / top    # at y = BAND
+    H, SLAB_W, SLANT, STEM, R_RING = 720, 250, 220, 140, 140
+    R = H / 2
+    left = SLAB_W + gap
+    c = (left + STEM, R)
+    rc = R_RING - gap
+    top = c[1] - R_RING
+    # The diagonal between the bowl and the lower piece leaves the ring 5.6 degrees below centre.
+    n = math.hypot(0.4, 1)
+    d = (0.4 / n, 1 / n)
+    nrm = (d[1], -d[0])  # towards the bowl
+    phi = math.radians(5.6)
+    p_in = (c[0] + R_RING * math.cos(phi), c[1] + R_RING * math.sin(phi))
 
-    slab = build([((0, 0), radius, None), ((SLAB_W, top), 0, None),
-                  ((SLAB_W, H), radius, None), ((0, H), radius, None)])
-    pbowl = build([((SLAB_W - tuck, top), 0, None), ((pc[0], top), 0, (P_R, 1)),
-                   ((pc[0], top + 2 * P_R), 0, None), ((SLAB_W - tuck, top + 2 * P_R), 0, None),
-                   ((SLAB_W - tuck, pc[1] + P_R - P_BAND), 0, None), ((pc[0], pc[1] + P_R - P_BAND), 0, (P_R - P_BAND, 0)),
-                   ((pc[0], pc[1] - P_R + P_BAND), 0, None), ((SLAB_W - tuck, pc[1] - P_R + P_BAND), 0, None)])
-    dband = build([((arm0, 0), radius * 0.6, None), ((c[0], 0), 0, (R_OUT, 1)), ((c[0], H), 0, None),
-                   ((left, H), radius, None), ((left, H - BAND), radius, None), ((c[0], H - BAND), 0, (r_in, 0)),
-                   ((c[0], BAND), 0, None), ((arm1, BAND), radius, None)])
+    def ends(off):
+        p0 = (p_in[0] + nrm[0] * off - d[0] * 400, p_in[1] + nrm[1] * off - d[1] * 400)
+        return _hit(p0, d, c, R_RING), _hit(p0, d, c, R)
 
-    def reach(pts, o):
-        d = [math.hypot(x - o[0], y - o[1]) for x, y in pts]
-        return min(d), max(d)
+    bi, bo = ends(-6)  # the bowl tucks 6 units under the lower piece, so no hairline seam shows
+    li, lo = ends(0)
+    slab = build([((0, 0), corner, None), ((SLAB_W, SLANT), corner, None), ((SLAB_W, H), corner, None), ((0, H), corner, None)])
+    bowl = build([((left, 0), corner, None), ((c[0], 0), 0, (R, 1)), (bo, 0, None), (bi, 0, (R_RING, 0)),
+                  ((c[0], top), 0, None), ((left, top), corner, None)])
+    counter = build([((left, c[1] - rc), corner, None), ((c[0], c[1] - rc), 0, (rc, 1)),
+                     ((c[0], c[1] + rc), 0, None), ((left, c[1] + rc), corner, None)])
+    lower = build([((left, c[1] + R_RING), corner, None), ((c[0], c[1] + R_RING), 0, (R_RING, 0)), (li, 0, None),
+                   (lo, 0, (R, 1)), ((c[0], H), 0, None), ((left, H), corner, None)])
+    w = c[0] + R
 
-    def span(pts, o):
-        """Where a clockwise sweep about `o` must start, and how far it must go, to pass over every point:
-        it starts just after the widest empty angle."""
-        dense = []  # straight edges have a point only at each end, so walk along them
-        for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
-            n = max(1, int(math.hypot(x1 - x0, y1 - y0) / 3))
-            dense += [(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n) for k in range(n)]
-        angs = sorted(math.degrees(math.atan2(y - o[1], x - o[0])) % 360 for x, y in dense)
-        gaps = [((angs[(i + 1) % len(angs)] - a) % 360, i) for i, a in enumerate(angs)]
-        widest, i = max(gaps)
-        start = angs[(i + 1) % len(angs)] - 4
-        return (start + 180) % 360 - 180, 360 - widest + 8
+    def sweep(pts):
+        lo_r, hi_r = _reach(pts, c)
+        start, deg = _span(pts, c)
+        return {'r': (lo_r + hi_r) / 2, 'w': hi_r - lo_r + 24, 'from': start, 'sweep': deg}
 
-    # Sweeps (for the motion): a thick circle stroke, clipped to the piece, drawn clockwise from `from`.
-    d_lo, d_hi = reach(dband[1], c)
-    d_from, d_sweep = span(dband[1], c)
-    p_lo, p_hi = reach(pbowl[1], pc)
-    p_from, p_sweep = span(pbowl[1], pc)
     return {
-        'w': c[0] + R_OUT, 'h': H,
-        'd': {'c': c, 'r': (d_lo + d_hi) / 2, 'w': d_hi - d_lo + 24, 'from': d_from, 'sweep': d_sweep},
-        'p': {'c': pc, 'r': (p_hi + 12) / 2, 'w': p_hi + 12, 'from': p_from, 'sweep': p_sweep},
-        'parts': [('dband', 'b', dband), ('slab', 'a', slab), ('pbowl', 'a', pbowl)],
+        'w': w, 'h': H, 'c': c, 'split': d,
+        'sweeps': {'bowl': sweep(bowl[1]), 'lower': sweep(lower[1])},
+        'ring': {'r': (R_RING + R) / 2 + 20, 'w': R - R_RING + 90},
+        # Dusk gradient lines (x1, y1, x2, y2), in mark units
+        'grads': {'slab': (0, 0, 0, H), 'counter': (left, 250, c[0] + 90, 470), 'lower': (left, 480, w - 120, H),
+                  'bowl': (left, 0, w - 60, 600)},
+        # draw order: the bowl first, the lower piece covers its tucked edge
+        'parts': [('bowl', bowl), ('slab', slab), ('counter', counter), ('lower', lower)],
     }
 
 
 MARK = mark()
-BADGE_MARK = mark(gap=62)  # wider gaps: the badge is drawn at 24 px, in one colour
+BADGE_MARK = mark(gap=58)  # wider gaps: the badge is drawn at 24 px
 
 
 # ---------------------------------------------------------------- raster
 
-def _rgb(hex_):
-    return tuple(int(hex_[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
+def _rgb(hex_, a=255):
+    return tuple(int(hex_[i:i + 2], 16) for i in (1, 3, 5)) + (a,)
 
 
-def draw_mark(im, m, x, y, scale, a, b):
-    d = ImageDraw.Draw(im)
-    for _name, tone, (_d, pts) in m['parts']:
-        d.polygon([(x + px * scale, y + py * scale) for px, py in pts], fill=_rgb(a if tone == 'a' else b))
+def tile_gradient(size):
+    """The Aurora gradient, corner to corner. Drawn small and scaled up: it is smooth, so nothing is lost."""
+    n = 96
+    px = []
+    for y in range(n):
+        for x in range(n):
+            t = (x + y) / (2 * (n - 1))
+            for (o0, c0), (o1, c1) in zip(TILE_STOPS, TILE_STOPS[1:]):
+                if t <= o1:
+                    k = (t - o0) / (o1 - o0)
+                    a, b = _rgb(c0), _rgb(c1)
+                    px.append(tuple(round(a[i] + (b[i] - a[i]) * k) for i in range(3)) + (255,))
+                    break
+    im = Image.new('RGBA', (n, n))
+    im.putdata(px)
+    return im.resize((size, size), Image.BICUBIC)
+
+
+def white_mark(size, m, x, y, scale):
+    """The mark in white on a clear layer, the bowl frosted."""
+    layer = Image.new('RGBA', (size, size), (255, 255, 255, 0))
+    for name, (_d, pts) in m['parts']:
+        piece = Image.new('L', (size, size), 0)
+        ImageDraw.Draw(piece).polygon([(x + px * scale, y + py * scale) for px, py in pts], fill=255)
+        if name == 'bowl':
+            layer.putalpha(piece.point(lambda v: round(v * FROST)))
+        else:
+            layer.paste(_rgb(WHITE), (0, 0), piece)
+    return layer
 
 
 def optical_centre(m):
     """Centre of the mark's ink, so it sits balanced on a tile (the slab side is heavier)."""
     s = 0.25
-    im = Image.new('RGBA', (int(m['w'] * s) + 2, int(m['h'] * s) + 2), (0, 0, 0, 0))
-    draw_mark(im, m, 0, 0, s, WHITE, WHITE)
-    alpha = im.getchannel('A')
-    w, h = alpha.size
-    px = alpha.load()
+    im = Image.new('L', (int(m['w'] * s) + 2, int(m['h'] * s) + 2), 0)
+    d = ImageDraw.Draw(im)
+    for _n, (_d, pts) in m['parts']:
+        d.polygon([(px * s, py * s) for px, py in pts], fill=255)
+    w, h = im.size
+    px = im.load()
     sx = sy = n = 0
     for yy in range(h):
         for xx in range(w):
@@ -192,94 +251,99 @@ def optical_centre(m):
 
 
 def placement(m, size, width_frac):
-    """Scale and offset that put the mark on a size x size tile: `width_frac` of the tile wide,
+    """Offset and scale that put the mark on a size x size tile: `width_frac` of the tile wide,
     placed halfway between its box centre and its ink centre."""
     scale = size * width_frac / m['w']
     ox, oy = optical_centre(m)
     cx = (m['w'] / 2 + ox) / 2
     cy = (m['h'] / 2 + oy) / 2
-    return scale, size / 2 - cx * scale, size / 2 - cy * scale
+    return size / 2 - cx * scale, size / 2 - cy * scale, scale
 
 
-ANY_FRAC, MASK_FRAC, TILE_RX = 0.60, 0.52, 0.234  # mark width on the tile; tile corner radius
+ANY_FRAC, MASK_FRAC, TILE_RX = 0.62, 0.55, 0.234  # mark width on the tile; tile corner radius
 
 
 def render(size, mode):
     ss = 8 if size <= 192 else 4
     s = size * ss
-    if mode == 'any':  # white rounded tile, transparent corners
-        im = Image.new('RGBA', (s, s), (0, 0, 0, 0))
-        ImageDraw.Draw(im).rounded_rectangle([0, 0, s - 1, s - 1], radius=TILE_RX * s, fill=_rgb(WHITE))
-        draw_mark(im, MARK, *_place(MARK, s, ANY_FRAC), NAVY, BLUE)
-    elif mode == 'maskable':  # full bleed; the mark stays inside the 80% safe circle
-        im = Image.new('RGBA', (s, s), _rgb(WHITE))
-        draw_mark(im, MARK, *_place(MARK, s, MASK_FRAC), NAVY, BLUE)
-    elif mode == 'apple':  # opaque square; iOS rounds it
-        im = Image.new('RGBA', (s, s), _rgb(WHITE))
-        draw_mark(im, MARK, *_place(MARK, s, ANY_FRAC), NAVY, BLUE)
-    else:  # badge: white silhouette on transparent; Android tints it
-        im = Image.new('RGBA', (s, s), (0, 0, 0, 0))
-        draw_mark(im, BADGE_MARK, *_place(BADGE_MARK, s, 0.92), WHITE, WHITE)
+    if mode == 'badge':  # white on clear; Android tints it, and the frosted bowl keeps the two tones
+        im = white_mark(s, BADGE_MARK, *placement(BADGE_MARK, s, 0.94))
+    else:
+        im = tile_gradient(s)
+        im.alpha_composite(white_mark(s, MARK, *placement(MARK, s, MASK_FRAC if mode == 'maskable' else ANY_FRAC)))
+        if mode == 'any':  # rounded tile, clear corners
+            mask = Image.new('L', (s, s), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, s - 1, s - 1], radius=TILE_RX * s, fill=255)
+            im.putalpha(mask)
     return im.resize((size, size), Image.LANCZOS)
 
 
-def _place(m, size, frac):
-    scale, x, y = placement(m, size, frac)
-    return x, y, scale
-
-
-def safe_zone_ok():
+def safe_zone():
     """The maskable mark must sit inside a circle 80% of the icon wide."""
-    scale, x, y = placement(MARK, 512, MASK_FRAC)
-    far = max(math.hypot(x + px * scale - 256, y + py * scale - 256)
-              for _n, _t, (_d, pts) in MARK['parts'] for px, py in pts)
-    return far, far <= 0.4 * 512
+    x, y, scale = placement(MARK, 512, MASK_FRAC)
+    return max(math.hypot(x + px * scale - 256, y + py * scale - 256) for _n, (_d, pts) in MARK['parts'] for px, py in pts)
 
 
 # ---------------------------------------------------------------- vector
 
-def svg_paths(m, a, b, indent='  '):
-    return '\n'.join(f'{indent}<path class="{tone}" d="{d}" fill="{a if tone == "a" else b}"/>'
-                     for _name, tone, (d, _pts) in m['parts'])
-
-
 def write_svgs():
-    scale, x, y = placement(MARK, 512, ANY_FRAC)
-    icon = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">\n'
-            f'  <rect width="512" height="512" rx="{TILE_RX * 512:.0f}" fill="{WHITE}"/>\n'
-            f'  <g transform="translate({x:.2f} {y:.2f}) scale({scale:.5f})">\n'
-            f'{svg_paths(MARK, NAVY, BLUE, "    ")}\n  </g>\n</svg>\n')
-    (OUT / 'icon.svg').write_text(icon.replace(' class="a"', '').replace(' class="b"', ''), encoding='utf-8')
-    side = max(MARK['w'], MARK['h'])
-    bare = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{(MARK["w"] - side) / 2:.0f} {(MARK["h"] - side) / 2:.0f} {side:.0f} {side:.0f}">\n'
-            f'  <style>.a{{fill:{NAVY}}}.b{{fill:{BLUE}}}'
-            f'@media (prefers-color-scheme:dark){{.a{{fill:{DARK_INK}}}.b{{fill:{DARK_BLUE}}}}}</style>\n'
-            + '\n'.join(f'  <path class="{tone}" d="{d}"/>' for _n, tone, (d, _p) in MARK['parts'])
-            + '\n</svg>\n')
-    (OUT / 'mark.svg').write_text(bare, encoding='utf-8')
+    m = MARK
+    x, y, scale = placement(m, 512, ANY_FRAC)
+    stops = ''.join(f'<stop offset="{o}" stop-color="{c}"/>' for o, c in TILE_STOPS)
+    pieces = '\n'.join(f'    <path d="{d}" fill="{WHITE}"{f" fill-opacity=\"{FROST}\"" if name == "bowl" else ""}/>'
+                       for name, (d, _p) in m['parts'])
+    (OUT / 'icon.svg').write_text(
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">\n'
+        f'  <defs><linearGradient id="t" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="512" y2="512">{stops}</linearGradient></defs>\n'
+        f'  <rect width="512" height="512" rx="{TILE_RX * 512:.0f}" fill="url(#t)"/>\n'
+        f'  <g transform="translate({x:.2f} {y:.2f}) scale({scale:.5f})">\n{pieces}\n  </g>\n</svg>\n', encoding='utf-8')
+
+    # The bare Dusk mark. Stop colours are classes, so a dark tab gets the light variant.
+    side = max(m['w'], m['h'])
+    grads, css, dark = [], [], []
+    for name, _ in m['parts']:
+        x1, y1, x2, y2 = m['grads'][name]
+        cols = DUSK[name]
+        offs = (0, 1) if len(cols) == 2 else (0, 0.55, 1)
+        grads.append(f'<linearGradient id="{name}" gradientUnits="userSpaceOnUse" x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}">'
+                     + ''.join(f'<stop class="{name}{i}" offset="{o}"/>' for i, o in enumerate(offs)) + '</linearGradient>')
+        css += [f'.{name}{i}{{stop-color:{c}}}' for i, c in enumerate(cols)]
+        dark += [f'.{name}{i}{{stop-color:{c}}}' for i, c in enumerate(DUSK_DARK[name])]
+    (OUT / 'mark.svg').write_text(
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{(m["w"] - side) / 2:.0f} {(m["h"] - side) / 2:.0f} {side:.0f} {side:.0f}">\n'
+        f'  <style>{"".join(css)}@media (prefers-color-scheme:dark){{{"".join(dark)}}}</style>\n'
+        f'  <defs>{"".join(grads)}</defs>\n'
+        + '\n'.join(f'  <path d="{d}" fill="url(#{name})"/>' for name, (d, _p) in m['parts']) + '\n</svg>\n', encoding='utf-8')
 
 
 def write_ts():
     m = MARK
-    parts = {name: d for name, _t, (d, _p) in m['parts']}
     out = ['// Generated by scripts/make-icons.py from the mark geometry. Do not edit by hand.',
            f'export const MARK_W = {m["w"]:.0f};', f'export const MARK_H = {m["h"]:.0f};',
+           '/** The one centre every curve of the D shares. */',
+           f'export const MARK_CX = {m["c"][0]:.0f};', f'export const MARK_CY = {m["c"][1]:.0f};',
            '/**',
-           ' * How to sweep a piece in: a circle stroke (centre cx/cy, radius r, width w) clipped to the piece,',
-           ' * starting `from` degrees clockwise from 3 o\'clock and covering `sweep` degrees.',
+           ' * How to sweep a piece of the D in: a circle stroke about the centre (radius r, width w), starting',
+           " * `from` degrees clockwise from 3 o'clock and covering `sweep` degrees.",
            ' */']
-    for key, name in (('d', 'D_SWEEP'), ('p', 'P_SWEEP')):
-        v = m[key]
-        out.append(f'export const {name} = {{ cx: {v["c"][0]:.0f}, cy: {v["c"][1]:.0f}, r: {v["r"]:.0f}, w: {v["w"]:.0f}, '
-                   f'from: {v["from"]:.1f}, sweep: {math.ceil(v["sweep"])} }};')
-    out += [f"export const {k.upper()} =\n  '{v}';" for k, v in parts.items()]
+    for name, v in m['sweeps'].items():
+        out.append(f'export const {name.upper()}_SWEEP = {{ r: {v["r"]:.0f}, w: {v["w"]:.0f}, from: {v["from"]:.1f}, sweep: {math.ceil(v["sweep"])} }};')
+    out += ['/** A circle stroke that covers the whole ring of the D (bowl and lower piece). */',
+            f'export const RING = {{ r: {m["ring"]["r"]:.0f}, w: {m["ring"]["w"]:.0f} }};',
+            '/** Unit direction of the diagonal between the bowl and the lower piece (pointing down and right). */',
+            f'export const SPLIT = {{ x: {m["split"][0]:.3f}, y: {m["split"][1]:.3f} }};',
+            '/** Gradient lines for the Dusk fills, in mark units. */',
+            'export const GRADS = {']
+    out += [f'  {name}: {{ x1: {g[0]:.0f}, y1: {g[1]:.0f}, x2: {g[2]:.0f}, y2: {g[3]:.0f} }},' for name, g in m['grads'].items()]
+    out.append('} as const;')
+    out += [f"export const {name.upper()} =\n  '{d}';" for name, (d, _p) in m['parts']]
     TS.write_text('\n'.join(out) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':
-    far, ok = safe_zone_ok()
-    print(f'maskable: furthest ink {far:.1f}px from centre (limit 204.8) -> {"ok" if ok else "TOO BIG"}')
-    assert ok
+    far = safe_zone()
+    print(f'maskable: furthest ink {far:.1f}px from centre (limit 204.8)')
+    assert far <= 0.4 * 512
     write_svgs()
     write_ts()
     for name, size, mode in [
