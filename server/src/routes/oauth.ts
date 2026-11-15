@@ -31,7 +31,8 @@ const P = '/api/agent/v1';
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
-const STATE_RE = /^[!-~]{1,512}$/;
+// 256 keeps the signed request (and so the consent link) far below its 4000 character limit.
+const STATE_RE = /^[!-~]{1,256}$/;
 
 /** Allow N hits per window per key (an address). Uses the app clock, so tests can move it. */
 export class WindowLimiter {

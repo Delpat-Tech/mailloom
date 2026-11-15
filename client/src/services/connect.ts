@@ -15,7 +15,7 @@ export interface ConnectRequest {
 
 /** The signed request (a long token: payload.signature) from a location hash, or null when it is not a connect link. */
 export function parseConnectHash(hash: string): string | null {
-  const m = /^#\/connect\/([A-Za-z0-9_.-]{10,2000})\/?$/.exec(hash);
+  const m = /^#\/connect\/([A-Za-z0-9_.-]{10,4000})\/?$/.exec(hash);
   return m ? m[1]! : null;
 }
 

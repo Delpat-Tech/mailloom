@@ -215,12 +215,46 @@ describe('Connect Mailloom', () => {
     assert.equal((await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${a.id}`, headers: t.headers })).statusCode, 200);
   });
 
+  test('a non-canonical spelling of a signed request is refused, so one request gives one code', async () => {
+    const a = await authorize(app, pkce());
+    const [payload, sig] = a.id!.split('.');
+    const variants = [`${a.id}=`, `${a.id}==`, `${a.id}
+`, `${a.id} `, `${payload}.${sig!.slice(0, 10)}!${sig!.slice(10)}`, `${payload}=.${sig}`, `${payload}.${sig}%0A`];
+    for (const v of variants) {
+      const got = await app.inject({ method: 'GET', url: `/api/oauth/requests?request=${encodeURIComponent(v)}`, headers: t.headers });
+      assert.equal(got.statusCode, 404, JSON.stringify(v.slice(-12)));
+    }
+    const ok = await consent(app, t, { request_id: a.id, allow: true, scopes: ['read'], password: TEST_PASSWORD });
+    assert.equal(ok.statusCode, 200);
+    for (const v of variants) {
+      for (const body of [{ allow: true, scopes: ['read'], password: TEST_PASSWORD }, { allow: false }]) {
+        const again = await consent(app, t, { request_id: v, ...body });
+        assert.ok([400, 404].includes(again.statusCode), `${JSON.stringify(v.slice(-12))} -> ${again.statusCode}`);
+      }
+    }
+    // The original, answered once, is used up too.
+    assert.equal((await consent(app, t, { request_id: a.id, allow: false })).statusCode, 404);
+    assert.equal(Number((app.mailloom.sessions.database.prepare('SELECT COUNT(*) AS n FROM agent_auth_codes').get() as { n: number }).n) >= 1, true);
+  });
+
+  test('the longest allowed state still fits and works; a longer one is refused', async () => {
+    const long = 's'.repeat(256);
+    const a = await authorize(app, pkce(), { state: long });
+    assert.equal(a.res.statusCode, 302);
+    assert.ok(a.id!.length < 4000, `signed request is ${a.id!.length} characters`);
+    const ok = await consent(app, t, { request_id: a.id, allow: true, scopes: ['read'], password: TEST_PASSWORD });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(new URL(ok.json().redirect).searchParams.get('state'), long);
+    const tooLong = await app.inject({ method: 'GET', url: `/oauth/authorize?${authorizeQuery(pkce(), { state: 's'.repeat(257) })}` });
+    assert.equal(tooLong.statusCode, 400);
+  });
+
   test('an answered request is remembered by hash until it would have expired, then forgotten', async () => {
     const a = await authorize(app, pkce());
     assert.equal((await consent(app, t, { request_id: a.id, allow: false })).statusCode, 200);
     const db = app.mailloom.sessions.database;
     const rows = db.prepare('SELECT blob_hash FROM agent_auth_used').all() as Array<{ blob_hash: string }>;
-    assert.ok(rows.some((r) => r.blob_hash === crypto.createHash('sha256').update(a.id!).digest('hex')));
+    assert.ok(rows.some((r) => r.blob_hash === crypto.createHash('sha256').update(a.id!.split('.')[0]!).digest('hex')));
     assert.ok(!JSON.stringify(rows).includes(a.id!.slice(0, 20)), 'only a hash is kept');
     advance(11 * 60_000);
     app.mailloomConnect.prune();

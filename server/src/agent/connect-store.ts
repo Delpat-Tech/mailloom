@@ -43,6 +43,7 @@ export interface GrantedCode {
 
 export type TakeCode = { status: 'ok'; grant: GrantedCode } | { status: 'unknown' } | { status: 'reused'; keyId: string };
 
+/** Answered requests are keyed by the hash of the signed payload (the signature part is not part of the identity). */
 function hashBlob(blob: string): string {
   return crypto.createHash('sha256').update(blob, 'utf8').digest('hex');
 }
@@ -105,10 +106,12 @@ export class ConnectStore {
   /** The request when the blob is genuine, not expired and not yet answered. */
   getRequest(blob: string): AuthRequest | null {
     if (typeof blob !== 'string' || blob.length > 4000) return null;
-    const dot = blob.indexOf('.');
-    if (dot < 1 || dot !== blob.lastIndexOf('.')) return null;
-    const payload = blob.slice(0, dot);
-    const given = Buffer.from(blob.slice(dot + 1), 'base64url');
+    // Only the exact form this server makes: payload.signature, both strict base64url. Anything else (a trailing
+    // "=", a newline, a stray character) would still decode to the same bytes, so it is refused outright.
+    const m = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/.exec(blob);
+    if (!m) return null;
+    const payload = m[1]!;
+    const given = Buffer.from(m[2]!, 'base64url');
     const want = Buffer.from(this.mac(payload), 'base64url');
     if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) return null;
     let v: unknown;
@@ -118,9 +121,21 @@ export class ConnectStore {
       return null;
     }
     if (!Array.isArray(v) || v.length !== 8) return null;
-    const [clientId, redirectUri, scopes, state, codeChallenge, label, createdAt, expiresAt] = v as [string, string, string, string, string, string | null, number, number];
-    if (typeof expiresAt !== 'number' || expiresAt <= this.now()) return null;
-    if (this.db.prepare('SELECT 1 FROM agent_auth_used WHERE blob_hash = ?').get(hashBlob(blob))) return null;
+    const [clientId, redirectUri, scopes, state, codeChallenge, label, createdAt, expiresAt] = v as unknown[];
+    if (
+      typeof clientId !== 'string' ||
+      typeof redirectUri !== 'string' ||
+      typeof scopes !== 'string' ||
+      typeof state !== 'string' ||
+      typeof codeChallenge !== 'string' ||
+      (label !== null && typeof label !== 'string') ||
+      typeof createdAt !== 'number' ||
+      typeof expiresAt !== 'number'
+    ) {
+      return null;
+    }
+    if (expiresAt <= this.now()) return null;
+    if (this.db.prepare('SELECT 1 FROM agent_auth_used WHERE blob_hash = ?').get(hashBlob(payload))) return null;
     return {
       id: blob,
       clientId,
@@ -138,7 +153,7 @@ export class ConnectStore {
   consumeRequest(blob: string): boolean {
     const req = this.getRequest(blob);
     if (!req) return false;
-    return Number(this.db.prepare('INSERT OR IGNORE INTO agent_auth_used (blob_hash, expires_at) VALUES (?, ?)').run(hashBlob(blob), req.expiresAt).changes) === 1;
+    return Number(this.db.prepare('INSERT OR IGNORE INTO agent_auth_used (blob_hash, expires_at) VALUES (?, ?)').run(hashBlob(blob.slice(0, blob.indexOf('.'))), req.expiresAt).changes) === 1;
   }
 
   // ---------------------------------------------------------------- codes

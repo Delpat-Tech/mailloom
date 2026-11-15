@@ -81,9 +81,9 @@ describe('connect links', () => {
     expect(parseConnectHash(`#/connect/${ID}/`)).toBe(ID);
     expect(parseConnectHash('#/connect/')).toBeNull();
     expect(parseConnectHash('#/connect/short')).toBeNull();
-    const blob = `${'a'.repeat(300)}.${'b'.repeat(43)}`;
+    const blob = `${'a'.repeat(3900)}.${'b'.repeat(43)}`;
     expect(parseConnectHash(`#/connect/${blob}`)).toBe(blob);
-    expect(parseConnectHash(`#/connect/${'a'.repeat(2500)}`)).toBeNull();
+    expect(parseConnectHash(`#/connect/${'a'.repeat(4100)}`)).toBeNull();
     expect(parseConnectHash(`#/m/${ID}`)).toBeNull();
     expect(parseConnectHash(`#/connect/${ID}?x=1`)).toBeNull();
   });

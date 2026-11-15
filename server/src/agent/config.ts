@@ -116,6 +116,7 @@ function parseConnect(env: Env): ConnectClient | null {
     if (u.hash || u.username || u.password) {
       throw new ConfigError(`AGENT_CLIENT_REDIRECT_URIS entry "${raw}" must not have a # part or a login.`);
     }
+    if (raw.length > 500) throw new ConfigError('AGENT_CLIENT_REDIRECT_URIS entries may be at most 500 characters.');
     return raw;
   });
   const name = (env.AGENT_CLIENT_NAME || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60) || 'Work OS';
