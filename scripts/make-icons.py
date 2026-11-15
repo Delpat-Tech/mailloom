@@ -1,7 +1,7 @@
 """The Mailloom mark: one geometry, every asset.
 
-The mark is the Delpat 'D' redrawn on a clean grid (see mark() below). This script is its single
-source. It writes:
+The mark is a D and a P for Delpat: a navy P, whose stem is the Delpat slab with its slanted top, standing
+inside a blue D (see mark() below). This script is its single source. It writes:
   client/public/icon.svg, mark.svg                 vector icon (white tile) and the bare mark (favicon)
   client/public/icon-*.png, apple-touch-icon.png,  raster icons
   client/public/badge-96.png
@@ -91,68 +91,74 @@ def build(nodes):
     return ''.join(d), pts
 
 
-def _line_circle(p, slope, c, r, lower):
-    """Where the line x = p.x + slope * (y - p.y) meets the circle; `lower` picks the larger y."""
-    # substitute x(y); solve the quadratic in y
-    a = slope * slope + 1
-    k = p[0] - slope * p[1] - c[0]
-    b = 2 * (slope * k - c[1])
-    cc = k * k + c[1] * c[1] - r * r
-    disc = math.sqrt(b * b - 4 * a * cc)
-    y = (-b + disc) / (2 * a) if lower else (-b - disc) / (2 * a)
-    return (p[0] + slope * (y - p[1]), y)
-
-
 # ---------------------------------------------------------------- the mark
 
-def mark(gap=48, radius=16, split=0):
-    """The Delpat 'D' on a clean grid, 790 x 720 units.
+def mark(gap=46, radius=10):
+    """A P inside a D, 690 x 720 units.
 
-    One centre for every curve, one gap width between every piece, one corner radius.
-      slab     the navy upright, its top cut on a slant that lands level with the bowl's inner edge
-      bowl     the blue upper-right of the D
-      counter  the navy half-round inside
-      lower    the navy lower-right of the D, meeting the bowl on a diagonal
-    `split` opens a gap along that diagonal too (used for the one-colour badge, where the two tones
-    cannot tell the pieces apart).
+      slab   the navy stem of the P: the Delpat slab, its top cut on a slant
+      pbowl  the navy bowl of the P; its top edge carries on from the foot of the slant
+      dband  the blue D: one band that starts as an arm lying over the slant (cut parallel to it),
+             runs round the P and comes back to the stem at the foot
+
+    The D keeps one gap width from the stem, from the slant and from the top of the P.
     """
-    H, SLAB_W, STEM = 720, 250, 140
-    R_OUT, R_RING = 360, 140
-    left = SLAB_W + gap
-    c = (left + STEM, H / 2)
-    r_counter = R_RING - gap
-    # The diagonal: same lean as the original, ending 48 degrees round the outer edge.
-    slope = 0.4
-    end = (c[0] + R_OUT * math.cos(math.radians(48)), c[1] + R_OUT * math.sin(math.radians(48)))
+    H, SLAB_W = 720, 170
+    BAND, R_OUT = 124, 360          # the D: band thickness and outer radius
+    P_R, P_BAND = 160, 104          # the P bowl: outer radius and band thickness
+    c = (330, H / 2)                # centre of the D
+    r_in = R_OUT - BAND
+    left = SLAB_W + gap             # where the D band comes back to the stem
+    top = BAND + gap                # top of the P bowl = foot of the slant
+    pc = (c[0], top + P_R)          # centre of the P bowl
+    tuck = 6                        # the bowl tucks into the stem, so no hairline seam shows
+    # The arm of the D ends on a line parallel to the slant, one gap away from it.
+    slant_len = math.hypot(SLAB_W, top)
+    arm0 = gap * slant_len / top                      # at y = 0
+    arm1 = (gap * slant_len + SLAB_W * BAND) / top    # at y = BAND
 
-    def diag(offset):
-        """Inner and outer ends of the diagonal, moved `offset` units towards the bowl."""
-        k = offset * math.hypot(1, slope)
-        p = (end[0] + k, end[1])
-        return _line_circle(p, slope, c, R_RING, True), _line_circle(p, slope, c, R_OUT, True)
-
-    # No split: the bowl tucks 6 units under the lower piece, so no hairline seam shows between them.
-    # Split: the gap is taken out of the lower piece (the bowl's end cannot move outwards past the ring).
-    bi, bo = diag(0 if split else -6)
-    li, lo = diag(-split)
-    slab = build([((0, 0), radius, None), ((SLAB_W, R_OUT - R_RING), radius, None),
+    slab = build([((0, 0), radius, None), ((SLAB_W, top), 0, None),
                   ((SLAB_W, H), radius, None), ((0, H), radius, None)])
-    bowl = build([((left, 0), radius, None), ((c[0], 0), 0, (R_OUT, 1)), (bo, 0, None),
-                  (bi, 0, (R_RING, 0)), ((c[0], c[1] - R_RING), 0, None), ((left, c[1] - R_RING), radius, None)])
-    counter = build([((left, c[1] - r_counter), radius, None), ((c[0], c[1] - r_counter), 0, (r_counter, 1)),
-                     ((c[0], c[1] + r_counter), 0, None), ((left, c[1] + r_counter), radius, None)])
-    lower = build([((left, c[1] + R_RING), radius, None), ((c[0], c[1] + R_RING), 0, (R_RING, 0)),
-                   (li, 0, None), (lo, 0, (R_OUT, 1)), ((c[0], H), 0, None), ((left, H), radius, None)])
+    pbowl = build([((SLAB_W - tuck, top), 0, None), ((pc[0], top), 0, (P_R, 1)),
+                   ((pc[0], top + 2 * P_R), 0, None), ((SLAB_W - tuck, top + 2 * P_R), 0, None),
+                   ((SLAB_W - tuck, pc[1] + P_R - P_BAND), 0, None), ((pc[0], pc[1] + P_R - P_BAND), 0, (P_R - P_BAND, 0)),
+                   ((pc[0], pc[1] - P_R + P_BAND), 0, None), ((SLAB_W - tuck, pc[1] - P_R + P_BAND), 0, None)])
+    dband = build([((arm0, 0), radius * 0.6, None), ((c[0], 0), 0, (R_OUT, 1)), ((c[0], H), 0, None),
+                   ((left, H), radius, None), ((left, H - BAND), radius, None), ((c[0], H - BAND), 0, (r_in, 0)),
+                   ((c[0], BAND), 0, None), ((arm1, BAND), radius, None)])
+
+    def reach(pts, o):
+        d = [math.hypot(x - o[0], y - o[1]) for x, y in pts]
+        return min(d), max(d)
+
+    def span(pts, o):
+        """Where a clockwise sweep about `o` must start, and how far it must go, to pass over every point:
+        it starts just after the widest empty angle."""
+        dense = []  # straight edges have a point only at each end, so walk along them
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+            n = max(1, int(math.hypot(x1 - x0, y1 - y0) / 3))
+            dense += [(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n) for k in range(n)]
+        angs = sorted(math.degrees(math.atan2(y - o[1], x - o[0])) % 360 for x, y in dense)
+        gaps = [((angs[(i + 1) % len(angs)] - a) % 360, i) for i, a in enumerate(angs)]
+        widest, i = max(gaps)
+        start = angs[(i + 1) % len(angs)] - 4
+        return (start + 180) % 360 - 180, 360 - widest + 8
+
+    # Sweeps (for the motion): a thick circle stroke, clipped to the piece, drawn clockwise from `from`.
+    d_lo, d_hi = reach(dband[1], c)
+    d_from, d_sweep = span(dband[1], c)
+    p_lo, p_hi = reach(pbowl[1], pc)
+    p_from, p_sweep = span(pbowl[1], pc)
     return {
-        'w': c[0] + R_OUT, 'h': H, 'c': c, 'r_out': R_OUT, 'r_ring': R_RING, 'r_counter': r_counter,
-        'bowl_end': math.degrees(math.atan2(bo[1] - c[1], bo[0] - c[0])),
-        'lower_start': math.degrees(math.atan2(li[1] - c[1], li[0] - c[0])),
-        'parts': [('slab', 'a', slab), ('bowl', 'b', bowl), ('counter', 'a', counter), ('lower', 'a', lower)],
+        'w': c[0] + R_OUT, 'h': H,
+        'd': {'c': c, 'r': (d_lo + d_hi) / 2, 'w': d_hi - d_lo + 24, 'from': d_from, 'sweep': d_sweep},
+        'p': {'c': pc, 'r': (p_hi + 12) / 2, 'w': p_hi + 12, 'from': p_from, 'sweep': p_sweep},
+        'parts': [('dband', 'b', dband), ('slab', 'a', slab), ('pbowl', 'a', pbowl)],
     }
 
 
 MARK = mark()
-BADGE_MARK = mark(gap=56, radius=16, split=56)  # wider gaps: the badge is drawn at 24 px
+BADGE_MARK = mark(gap=62)  # wider gaps: the badge is drawn at 24 px, in one colour
 
 
 # ---------------------------------------------------------------- raster
@@ -195,7 +201,7 @@ def placement(m, size, width_frac):
     return scale, size / 2 - cx * scale, size / 2 - cy * scale
 
 
-ANY_FRAC, MASK_FRAC, TILE_RX = 0.62, 0.56, 0.234  # mark width on the tile; tile corner radius
+ANY_FRAC, MASK_FRAC, TILE_RX = 0.60, 0.52, 0.234  # mark width on the tile; tile corner radius
 
 
 def render(size, mode):
@@ -244,8 +250,8 @@ def write_svgs():
             f'  <g transform="translate({x:.2f} {y:.2f}) scale({scale:.5f})">\n'
             f'{svg_paths(MARK, NAVY, BLUE, "    ")}\n  </g>\n</svg>\n')
     (OUT / 'icon.svg').write_text(icon.replace(' class="a"', '').replace(' class="b"', ''), encoding='utf-8')
-    pad = (MARK['w'] - MARK['h']) / 2
-    bare = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 {-pad:.0f} {MARK["w"]:.0f} {MARK["w"]:.0f}">\n'
+    side = max(MARK['w'], MARK['h'])
+    bare = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{(MARK["w"] - side) / 2:.0f} {(MARK["h"] - side) / 2:.0f} {side:.0f} {side:.0f}">\n'
             f'  <style>.a{{fill:{NAVY}}}.b{{fill:{BLUE}}}'
             f'@media (prefers-color-scheme:dark){{.a{{fill:{DARK_INK}}}.b{{fill:{DARK_BLUE}}}}}</style>\n'
             + '\n'.join(f'  <path class="{tone}" d="{d}"/>' for _n, tone, (d, _p) in MARK['parts'])
@@ -256,21 +262,18 @@ def write_svgs():
 def write_ts():
     m = MARK
     parts = {name: d for name, _t, (d, _p) in m['parts']}
-    TS.write_text(
-        '// Generated by scripts/make-icons.py from the mark geometry. Do not edit by hand.\n'
-        f'export const MARK_W = {m["w"]:.0f};\n'
-        f'export const MARK_H = {m["h"]:.0f};\n'
-        f'/** The one centre every curve of the D shares, and the middle of its counter. */\n'
-        f'export const MARK_CX = {m["c"][0]:.0f};\n'
-        f'export const MARK_CY = {m["c"][1]:.0f};\n'
-        f'/** Radius and width of a stroke that covers the D\'s ring (used to sweep it in). */\n'
-        f'export const RING_R = {(m["r_out"] + m["r_ring"]) / 2:.0f};\n'
-        f'export const RING_W = {m["r_out"] - m["r_ring"] + 90:.0f};\n'
-        f'/** Degrees clockwise from 3 o\'clock where the bowl ends and the lower piece starts. */\n'
-        f'export const BOWL_END = {m["bowl_end"]:.1f};\n'
-        f'export const LOWER_START = {m["lower_start"]:.1f};\n'
-        + ''.join(f"export const {k.upper()} =\n  '{v}';\n" for k, v in parts.items()),
-        encoding='utf-8')
+    out = ['// Generated by scripts/make-icons.py from the mark geometry. Do not edit by hand.',
+           f'export const MARK_W = {m["w"]:.0f};', f'export const MARK_H = {m["h"]:.0f};',
+           '/**',
+           ' * How to sweep a piece in: a circle stroke (centre cx/cy, radius r, width w) clipped to the piece,',
+           ' * starting `from` degrees clockwise from 3 o\'clock and covering `sweep` degrees.',
+           ' */']
+    for key, name in (('d', 'D_SWEEP'), ('p', 'P_SWEEP')):
+        v = m[key]
+        out.append(f'export const {name} = {{ cx: {v["c"][0]:.0f}, cy: {v["c"][1]:.0f}, r: {v["r"]:.0f}, w: {v["w"]:.0f}, '
+                   f'from: {v["from"]:.1f}, sweep: {math.ceil(v["sweep"])} }};')
+    out += [f"export const {k.upper()} =\n  '{v}';" for k, v in parts.items()]
+    TS.write_text('\n'.join(out) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

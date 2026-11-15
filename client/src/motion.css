@@ -149,72 +149,71 @@
 
 /*
  * The mark (LogoMotion, BrandCurtain). The one deliberate exception to "nothing longer than 240 ms":
- * the brand intro runs 1 s, on a cold start and after signing in, and never holds the user up.
- * The slab and counter move with transform and opacity; the ring is a dashed stroke that sweeps round.
+ * the brand intro runs 1.1 s, on a cold start and after signing in, and never holds the user up.
+ * The slab moves with transform and opacity; the P's bowl and the D are dashed strokes drawn round
+ * (--mk-p / --mk-d: fully drawn; --mk-p-off / --mk-d-off: run off the far end).
  */
-.mk-slab, .mk-counter { transform-box: fill-box; }
-.mk-slab { transform-origin: 50% 100%; }
-.mk-counter { transform-origin: 0% 50%; }
+.mk-slab { transform-box: fill-box; transform-origin: 50% 100%; }
+.mk { transform-origin: 50% 50%; }
+.mk-orbit { opacity: 0; }
 
+/* Intro: the P first (slab, then its bowl), then the D draws round it. */
+@keyframes mk-push {
+  from { transform: scale(0.92); }
+  to { transform: none; }
+}
 @keyframes mk-slab-in {
-  from { opacity: 0; transform: translateY(22%); }
+  from { opacity: 0; transform: translateY(26%); }
+  45% { opacity: 1; }
   to { opacity: 1; transform: none; }
 }
-@keyframes mk-bowl-in {
+@keyframes mk-p-in {
   from { stroke-dashoffset: 360; }
-  to { stroke-dashoffset: var(--mk-bowl); }
+  to { stroke-dashoffset: var(--mk-p); }
 }
-@keyframes mk-lower-in {
+@keyframes mk-d-in {
   from { stroke-dashoffset: 360; }
-  to { stroke-dashoffset: var(--mk-lower); }
+  to { stroke-dashoffset: var(--mk-d); }
 }
-@keyframes mk-counter-in {
-  from { opacity: 0; transform: scale(0.5); }
-  60% { opacity: 1; }
-  to { opacity: 1; transform: none; }
-}
-.mk-intro .mk-slab { animation: mk-slab-in 460ms cubic-bezier(0.2, 0.7, 0.2, 1) var(--mk-wait, 0ms) both; }
-.mk-intro .mk-bowl { animation: mk-bowl-in 440ms cubic-bezier(0.5, 0, 0.7, 0.6) calc(var(--mk-wait, 0ms) + 180ms) both; }
-.mk-intro .mk-lower { animation: mk-lower-in 300ms cubic-bezier(0.2, 0.5, 0.2, 1) calc(var(--mk-wait, 0ms) + 600ms) both; }
-.mk-intro .mk-counter { animation: mk-counter-in 360ms cubic-bezier(0.2, 0.9, 0.3, 1.25) calc(var(--mk-wait, 0ms) + 640ms) both; }
+.mk-intro { animation: mk-push 1100ms cubic-bezier(0.2, 0.6, 0.2, 1) var(--mk-wait, 0ms) both; }
+.mk-intro .mk-slab { animation: mk-slab-in 440ms cubic-bezier(0.2, 0.8, 0.2, 1) var(--mk-wait, 0ms) both; }
+.mk-intro .mk-p { animation: mk-p-in 400ms cubic-bezier(0.4, 0, 0.2, 1) calc(var(--mk-wait, 0ms) + 260ms) both; }
+.mk-intro .mk-d { animation: mk-d-in 560ms cubic-bezier(0.5, 0, 0.15, 1) calc(var(--mk-wait, 0ms) + 520ms) both; }
 
+/* Outro: nothing rewinds. The D runs on round and off its far end, the bowl follows, the slab drops away. */
+@keyframes mk-pull {
+  from { transform: none; }
+  to { transform: scale(0.94); }
+}
+@keyframes mk-d-out {
+  from { stroke-dashoffset: var(--mk-d); }
+  to { stroke-dashoffset: var(--mk-d-off); }
+}
+@keyframes mk-p-out {
+  from { stroke-dashoffset: var(--mk-p); }
+  to { stroke-dashoffset: var(--mk-p-off); }
+}
 @keyframes mk-slab-out {
   from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(22%); }
+  to { opacity: 0; transform: translateY(26%); }
 }
-@keyframes mk-bowl-out {
-  from { stroke-dashoffset: var(--mk-bowl); }
-  to { stroke-dashoffset: 360; }
-}
-@keyframes mk-lower-out {
-  from { stroke-dashoffset: var(--mk-lower); }
-  to { stroke-dashoffset: 360; }
-}
-@keyframes mk-counter-out {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: scale(0.5); }
-}
-.mk-outro .mk-counter { animation: mk-counter-out 160ms var(--ease-in) var(--mk-wait, 0ms) both; }
-.mk-outro .mk-lower { animation: mk-lower-out 170ms cubic-bezier(0.5, 0, 0.8, 0.5) calc(var(--mk-wait, 0ms) + 40ms) both; }
-.mk-outro .mk-bowl { animation: mk-bowl-out 230ms cubic-bezier(0.2, 0.5, 0.4, 1) calc(var(--mk-wait, 0ms) + 200ms) both; }
-.mk-outro .mk-slab { animation: mk-slab-out 240ms var(--ease-in) calc(var(--mk-wait, 0ms) + 200ms) both; }
+.mk-outro { animation: mk-pull 460ms var(--ease-in) var(--mk-wait, 0ms) both; }
+.mk-outro .mk-d { animation: mk-d-out 280ms cubic-bezier(0.5, 0, 0.9, 0.6) var(--mk-wait, 0ms) both; }
+.mk-outro .mk-p { animation: mk-p-out 220ms cubic-bezier(0.5, 0, 0.9, 0.6) calc(var(--mk-wait, 0ms) + 110ms) both; }
+.mk-outro .mk-slab { animation: mk-slab-out 220ms var(--ease-in) calc(var(--mk-wait, 0ms) + 240ms) both; }
 
-/* Loader: starts whole (so it follows the intro without a jump), the ring clears from where it began, then draws
-   round again. The slab and counter stay put. */
-@keyframes mk-bowl-loop {
-  0%, 10% { stroke-dashoffset: var(--mk-bowl); }
-  38% { stroke-dashoffset: calc(var(--mk-bowl) - 360); }
-  38.01%, 48% { stroke-dashoffset: 360; }
-  76%, 100% { stroke-dashoffset: var(--mk-bowl); }
+/* Loader: the P holds still. The D dims to a track and two arcs of it travel round (transform and opacity only). */
+@keyframes mk-track {
+  from { opacity: 1; }
+  to { opacity: 0.2; }
 }
-@keyframes mk-lower-loop {
-  0%, 30% { stroke-dashoffset: var(--mk-lower); }
-  48% { stroke-dashoffset: calc(var(--mk-lower) - 360); }
-  48.01%, 72% { stroke-dashoffset: 360; }
-  92%, 100% { stroke-dashoffset: var(--mk-lower); }
+@keyframes mk-turn {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(180deg); }
 }
-.mk-loader .mk-bowl { animation: mk-bowl-loop 1500ms linear infinite; }
-.mk-loader .mk-lower { animation: mk-lower-loop 1500ms linear infinite; }
+.mk-loader .mk-d { animation: mk-track 260ms var(--ease-out) both; }
+.mk-loader .mk-orbit { animation: ml-fade 260ms var(--ease-out) both; }
+.mk-loader .mk-orbit-turn { animation: mk-turn 1250ms linear infinite; }
 
 /* The full-screen curtain. Boot waits 150 ms before showing anything, so a fast start shows nothing. */
 .brand-curtain-boot { --mk-wait: 150ms; animation: ml-fade 120ms var(--ease-out) 150ms both; }
@@ -223,5 +222,5 @@
 .brand-curtain-label { animation: ml-fade 300ms var(--ease-out) 900ms both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .mk * { animation: none !important; }
+  .mk, .mk * { animation: none !important; }
 }

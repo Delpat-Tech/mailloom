@@ -1,24 +1,19 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { MARK_VIEWBOX, markTones } from './Logo.js';
-import { BOWL, BOWL_END, COUNTER, LOWER, LOWER_START, MARK_CX, MARK_CY, RING_R, RING_W, SLAB } from './markPaths.js';
+import { DBAND, D_SWEEP, PBOWL, P_SWEEP, SLAB } from './markPaths.js';
 
 export type MarkMode = 'still' | 'intro' | 'outro' | 'loader';
 
-// The ring of the D is drawn as two thick circle strokes, each clipped to its piece, so it can sweep round.
-// Both circles use pathLength 360, so dash values are degrees. Each sweep starts just before its piece.
-const BOWL_FROM = -138;
-const LOWER_FROM = LOWER_START - 3;
-/** Degrees each sweep must cover to show its whole piece (the keyframes in motion.css use 360 minus these). */
-export const BOWL_SWEEP = Math.ceil(BOWL_END - BOWL_FROM) + 3;
-export const LOWER_SWEEP = Math.ceil(135 - LOWER_FROM) + 3;
-
 /**
- * The mark in motion (keyframes in motion.css, under "The mark").
- *   intro   the slab rises, the bowl sweeps round, the lower piece follows, the counter settles (1 s)
- *   outro   the same in reverse, shorter (0.45 s)
- *   loader  the ring draws round and clears, on a loop
+ * The mark in motion (keyframes in motion.css, under "The mark"). It tells the name: the P first, then the D.
+ *   intro   the slab rises, the bowl of the P is written from it, then the D draws round the P (1.1 s)
+ *   loader  the P holds still; the D dims to a track and two arcs of it travel round
+ *   outro   the D runs on round and off, the P follows it, the slab drops away (0.46 s)
  *   still   no motion
  * With "reduce motion" on, every mode shows the still mark.
+ *
+ * The bowl and the D are each a thick circle stroke clipped to the piece, so they can be drawn round.
+ * Both circles use pathLength 360, so dash values are degrees.
  */
 export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: string; tone?: 'rail' | 'page' }> = ({
   mode,
@@ -28,26 +23,30 @@ export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: s
 }) => {
   const { a, b } = markTones(tone);
   const id = useId().replace(/:/g, '');
-  const sweep = (piece: 'bowl' | 'lower') => (
-    <g clipPath={`url(#${id}${piece})`}>
-      <circle
-        className={`mk-${piece}`}
-        cx={MARK_CX}
-        cy={MARK_CY}
-        r={RING_R}
-        fill="none"
-        stroke={piece === 'bowl' ? b : a}
-        strokeWidth={RING_W}
-        pathLength={360}
-        strokeDasharray="360 360"
-        transform={`rotate(${piece === 'bowl' ? BOWL_FROM : LOWER_FROM} ${MARK_CX} ${MARK_CY})`}
-      />
-    </g>
+  const ring = (cls: string, v: typeof D_SWEEP, stroke: string, dash = '360 360') => (
+    <circle
+      className={cls}
+      cx={v.cx}
+      cy={v.cy}
+      r={v.r}
+      fill="none"
+      stroke={stroke}
+      strokeWidth={v.w}
+      pathLength={360}
+      strokeDasharray={dash}
+      transform={`rotate(${v.from} ${v.cx} ${v.cy})`}
+    />
   );
+  const vars = {
+    '--mk-d': 360 - D_SWEEP.sweep,
+    '--mk-d-off': -D_SWEEP.sweep,
+    '--mk-p': 360 - P_SWEEP.sweep,
+    '--mk-p-off': -P_SWEEP.sweep
+  } as React.CSSProperties;
   return (
     <svg
       className={`mk mk-${mode}${className ? ` ${className}` : ''}`}
-      style={{ '--mk-bowl': 360 - BOWL_SWEEP, '--mk-lower': 360 - LOWER_SWEEP } as React.CSSProperties}
+      style={vars}
       width={size}
       height={size}
       viewBox={MARK_VIEWBOX}
@@ -55,17 +54,24 @@ export const LogoMotion: React.FC<{ mode: MarkMode; size?: number; className?: s
       focusable="false"
     >
       <defs>
-        <clipPath id={`${id}bowl`}>
-          <path d={BOWL} />
+        <clipPath id={`${id}d`}>
+          <path d={DBAND} />
         </clipPath>
-        <clipPath id={`${id}lower`}>
-          <path d={LOWER} />
+        <clipPath id={`${id}p`}>
+          <path d={PBOWL} />
         </clipPath>
       </defs>
+      <g clipPath={`url(#${id}d)`}>{ring('mk-d', D_SWEEP, b)}</g>
+      {mode === 'loader' && (
+        <g clipPath={`url(#${id}d)`} className="mk-orbit">
+          {/* The rotation is a CSS transform, so the arcs sit in a group that carries the centre. */}
+          <g style={{ transformOrigin: `${D_SWEEP.cx}px ${D_SWEEP.cy}px` }} className="mk-orbit-turn">
+            {ring('', D_SWEEP, b, '100 80')}
+          </g>
+        </g>
+      )}
       <path className="mk-slab" d={SLAB} fill={a} />
-      {sweep('bowl')}
-      <path className="mk-counter" d={COUNTER} fill={a} />
-      {sweep('lower')}
+      <g clipPath={`url(#${id}p)`}>{ring('mk-p', P_SWEEP, a)}</g>
     </svg>
   );
 };
@@ -84,8 +90,8 @@ export const MarkLoader: React.FC<{ size?: number; label?: string; className?: s
 
 export type CurtainKind = 'boot' | 'intro' | 'outro';
 
-const INTRO_MS = 1000;
-const OUTRO_MS = 440;
+const INTRO_MS = 1100;
+const OUTRO_MS = 460;
 const FADE_MS = 180;
 /** A boot faster than this shows no curtain at all. */
 const BOOT_GRACE_MS = 150;
