@@ -317,9 +317,15 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({ email, onClo
                         </div>
                         <div className="text-[11px] text-ink-3 mt-0.5">{k.scopes.join(', ')}</div>
                         <div className="text-[11px] text-ink-3">
-                          {k.client_id
-                            ? `${k.name}${k.label ? ` (${k.label})` : ''}, connected ${shortDate(k.created_at)}`
-                            : `Created ${when(k.created_at)}`}{' '}
+                          {k.client_id ? (
+                            <>
+                              <span className="text-ink-2 font-semibold">{k.name}</span>
+                              {k.label && <span>{` (${k.label.slice(0, 80)})`}</span>}
+                              {`, connected ${shortDate(k.created_at)}`}
+                            </>
+                          ) : (
+                            `Created ${when(k.created_at)}`
+                          )}{' '}
                           · Last used {when(k.last_used_at)}
                         </div>
                         {k.status === 'broken' && (

@@ -40,7 +40,7 @@ function server(
       signedIn = [opts.signIn ?? A1];
       return json({ account: opts.signIn ?? A1 });
     }
-    if (url.includes('/oauth/requests/')) {
+    if (url.includes('/oauth/requests?')) {
       if (opts.request === 404) return json({ code: 'REQUEST_NOT_FOUND', error: 'gone' }, 404);
       return json(
         opts.request ?? {
@@ -81,6 +81,9 @@ describe('connect links', () => {
     expect(parseConnectHash(`#/connect/${ID}/`)).toBe(ID);
     expect(parseConnectHash('#/connect/')).toBeNull();
     expect(parseConnectHash('#/connect/short')).toBeNull();
+    const blob = `${'a'.repeat(300)}.${'b'.repeat(43)}`;
+    expect(parseConnectHash(`#/connect/${blob}`)).toBe(blob);
+    expect(parseConnectHash(`#/connect/${'a'.repeat(2500)}`)).toBeNull();
     expect(parseConnectHash(`#/m/${ID}`)).toBeNull();
     expect(parseConnectHash(`#/connect/${ID}?x=1`)).toBeNull();
   });
@@ -98,7 +101,10 @@ describe('ConnectConsent', () => {
     server();
     render(<ConnectConsent requestId={ID} navigate={vi.fn()} />);
     await screen.findByText(/wants to read, move and send mail as/);
-    expect(screen.getByText('Work OS (Delpat)')).toBeTruthy();
+    expect(screen.getByText('Work OS', { selector: 'strong' })).toBeTruthy();
+    expect(screen.getByText('Delpat')).toBeTruthy();
+    expect(screen.getByText(/Organisation:/).className).toMatch(/text-ink-3/);
+    expect(screen.getByText(/Only allow this if you just clicked Connect in Work OS yourself/)).toBeTruthy();
     expect(screen.getByText('om@delpat.in')).toBeTruthy();
     const read = screen.getByLabelText(/Read and search mail/) as HTMLInputElement;
     const organise = screen.getByLabelText(/Move, flag/) as HTMLInputElement;
@@ -179,7 +185,7 @@ describe('ConnectConsent', () => {
     await user.click(screen.getByRole('button', { name: 'Allow' }));
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect(calls.find((c) => c.url.endsWith('/oauth/consent'))!.account).toBe(A2.handle);
-    expect(calls.filter((c) => c.url.includes('/oauth/requests/')).map((c) => c.account)).toEqual([A1.handle, A2.handle]);
+    expect(calls.filter((c) => c.url.includes('/oauth/requests?')).map((c) => c.account)).toEqual([A1.handle, A2.handle]);
   });
 
   it('signs in first when nobody is signed in, then shows the consent screen', async () => {
@@ -236,7 +242,7 @@ describe('Connections list', () => {
       })
     );
     render(<ConnectionsPanel embedded email="om@delpat.in" onClose={() => undefined} />);
-    await screen.findByText(/Work OS \(Delpat\), connected 16 Nov/);
+    await screen.findByText((_, el) => el?.tagName === 'DIV' && /^Work OS \(Delpat\), connected 16 Nov/.test(el.textContent ?? ''));
     expect(screen.getByText(/^Created /)).toBeTruthy();
   });
 });

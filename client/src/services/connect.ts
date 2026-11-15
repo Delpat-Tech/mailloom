@@ -13,9 +13,9 @@ export interface ConnectRequest {
   expires_at: string;
 }
 
-/** The request id from a location hash, or null when it is not a connect link. */
+/** The signed request (a long token: payload.signature) from a location hash, or null when it is not a connect link. */
 export function parseConnectHash(hash: string): string | null {
-  const m = /^#\/connect\/([A-Za-z0-9_-]{10,64})\/?$/.exec(hash);
+  const m = /^#\/connect\/([A-Za-z0-9_.-]{10,2000})\/?$/.exec(hash);
   return m ? m[1]! : null;
 }
 
@@ -32,7 +32,7 @@ export function isSafeReturnUrl(raw: string): boolean {
 
 export const connectApi = {
   getRequest: (id: string, handle: string) =>
-    request<ConnectRequest>(`/oauth/requests/${encodeURIComponent(id)}`, { account: handle }),
+    request<ConnectRequest>(`/oauth/requests?request=${encodeURIComponent(id)}`, { account: handle }),
   /** Allow (with the mailbox password and ticked scopes) or Cancel. Answers where to send the browser next. */
   answer: (handle: string, data: { request_id: string; allow: boolean; scopes?: AgentScope[]; password?: string }) =>
     request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: JSON.stringify(data), account: handle })

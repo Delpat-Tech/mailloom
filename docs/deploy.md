@@ -106,12 +106,12 @@ refuses to start, and lists every problem at once, if a required value is missin
 | `COOKIE_SECURE` | `true` | Always. Sign-in cookies become `__Host-` Secure cookies and sign-in over plain http is refused. |
 | `TRUST_PROXY` | `127.0.0.1` | The Nginx address. Gives the server the real visitor address (sign-in throttling, agent API check). Never `true`, never a hop count when the agent API is on. |
 | `CORS_ORIGINS` | empty | Other web origins allowed to call the API from a browser. Same origin needs nothing; leave empty. |
-| `MAILLOOM_PUBLIC_URL` | `https://webmail.delpat.in` | Optional. The public address; agent API responses then carry a `web_url` for each message. Must be https. |
+| `MAILLOOM_PUBLIC_URL` | `https://mail.delpat.in/mail` | The public address; agent API responses carry a `web_url` for each message. Must be https. **Required when Connect is on**: it is the `iss` of the authorisation reply and where the consent screen opens. |
 | `AGENT_ALLOWED_IPS` | the Work OS server's public IP | Comma list of IPs or CIDR ranges allowed to call `/api/agent/v1/*`. Empty = agent API off. Ranges wider than /8 are refused. |
-| `AGENT_CLIENT_ID` | `work-os` | Connect Mailloom ("one click" link from Work OS). Not secret. Connect is on only when this, the secret and the redirect list are all set, and `AGENT_ALLOWED_IPS` is set too. |
+| `AGENT_CLIENT_ID` | `work-os` | Connect Mailloom ("one click" link from Work OS). Not secret. Connect is on only when this, the secret and the redirect list are all set, and `AGENT_ALLOWED_IPS` is set too. With these set, `MAILLOOM_PUBLIC_URL` is **required** (Mailloom refuses to start without it). |
 | `AGENT_CLIENT_SECRET` | 32+ random characters | Same value as Work OS's `MAILLOOM_CLIENT_SECRET`. Mailloom refuses to start with a shorter one. Never logged. |
-| `AGENT_CLIENT_REDIRECT_URIS` | `https://<work os>/api/mail/callback` | Comma list, matched exactly. https only (http only for `localhost` or `127.0.0.1`). Anything else is refused and the browser is never sent there. |
-| `AGENT_CLIENT_NAME` | `Work OS` | Optional. The name people see on the consent screen and in Connections. |
+| `AGENT_CLIENT_REDIRECT_URIS` | `https://<work os>/api/mail/callback` | Comma list, matched exactly. https only (http only for `localhost` or `127.0.0.1`). Anything else is refused and the browser is never sent there. `localhost` and `127.0.0.1` entries are refused when `NODE_ENV=production`. |
+| `AGENT_CLIENT_NAME` | `Work OS` | Optional. The name people see as the headline of the consent screen and in Connections. |
 | `AGENT_SENDS_PER_HOUR`, `AGENT_MAX_RECIPIENTS`, `AGENT_MAX_TEXT_CHARS`, `AGENT_MAX_ATTACHMENT_BYTES` | defaults | Optional guard rails, see `docs/agent-api.md`. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | key pair + `mailto:it@delpat.in` | Phone/desktop notifications while the app is closed. All three or none. Generate the pair once, on your computer, in the repo: `pnpm --filter mailloom-server exec web-push generate-vapid-keys`. Keep the private key secret. |
 | `DEMO_MODE` | `0` | Leave off on the real server. |

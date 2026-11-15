@@ -27,10 +27,10 @@ client set in Mailloom's environment (`AGENT_CLIENT_ID`, `AGENT_CLIENT_SECRET`, 
 
 | Step | Address | Who |
 |---|---|---|
-| Authorise | `GET /oauth/authorize?response_type=code&client_id&redirect_uri&scope=read organise send&state&code_challenge&code_challenge_method=S256[&label]` | the person's browser. A wrong client or redirect shows an error page and never redirects. Good: 302 to the consent screen (`#/connect/<id>`, valid 10 minutes) |
-| Consent | `GET /api/oauth/requests/:id`, `POST /api/oauth/consent` | the consent screen (session + `X-Mailloom-Account`). Allow needs the mailbox password. Answers `{redirect}`: `redirect_uri?code&state&iss`, or `?error=access_denied&state&iss` on Cancel |
+| Authorise | `GET /oauth/authorize?response_type=code&client_id&redirect_uri&scope=read organise send&state&code_challenge&code_challenge_method=S256[&label]` | the person's browser. A wrong client or redirect shows an error page and never redirects. Good: 302 to `<MAILLOOM_PUBLIC_URL>/#/connect/<request>`. Nothing is stored: `<request>` is a signed token (HMAC, key derived from `SESSION_SECRET`) holding the validated request, valid 10 minutes, single use (its hash is recorded when Allow or Cancel completes) |
+| Consent | `GET /api/oauth/requests?request=<request>`, `POST /api/oauth/consent` (`request_id` = that token) | the consent screen (session + `X-Mailloom-Account`). Allow needs the mailbox password. Answers `{redirect}`: `redirect_uri?code&state&iss`, or `?error=access_denied&state&iss` on Cancel. `iss` is `MAILLOOM_PUBLIC_URL`, never the Host header. The screen's headline is the configured client name; the `label` is shown only as a muted "Organisation" line |
 | Token | `POST /api/agent/v1/oauth/token` | the Work OS server. Form or JSON body: `grant_type=authorization_code`, `code`, `redirect_uri`, `code_verifier`, `client_id`, `client_secret`. Answers `{key, key_id, prefix, email, scopes}` (`Cache-Control: no-store`) |
-| Self-revoke | `POST /api/agent/v1/key/revoke` | the Work OS server, `Bearer <key>`. The key revokes itself (answers `{revoked: true, key_id, revoked_at}`); a second call answers 401 `KEY_REVOKED` |
+| Self-revoke | `POST /api/agent/v1/key/revoke` | the Work OS server, `Bearer <key>`. The key revokes itself (answers `{revoked: true, key_id, revoked_at}`); a second call answers 401 `KEY_REVOKED`; a key whose mailbox password stopped working (`KEY_BROKEN`) can still call it |
 
 - The code lives 60 seconds and works once. Using it a second time fails and revokes the key the first use minted
   (remembered for 10 minutes). The key is minted at the token step, never at Allow, so an abandoned flow leaves no key.
