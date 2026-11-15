@@ -108,6 +108,10 @@ refuses to start, and lists every problem at once, if a required value is missin
 | `CORS_ORIGINS` | empty | Other web origins allowed to call the API from a browser. Same origin needs nothing; leave empty. |
 | `MAILLOOM_PUBLIC_URL` | `https://webmail.delpat.in` | Optional. The public address; agent API responses then carry a `web_url` for each message. Must be https. |
 | `AGENT_ALLOWED_IPS` | the Work OS server's public IP | Comma list of IPs or CIDR ranges allowed to call `/api/agent/v1/*`. Empty = agent API off. Ranges wider than /8 are refused. |
+| `AGENT_CLIENT_ID` | `work-os` | Connect Mailloom ("one click" link from Work OS). Not secret. Connect is on only when this, the secret and the redirect list are all set, and `AGENT_ALLOWED_IPS` is set too. |
+| `AGENT_CLIENT_SECRET` | 32+ random characters | Same value as Work OS's `MAILLOOM_CLIENT_SECRET`. Mailloom refuses to start with a shorter one. Never logged. |
+| `AGENT_CLIENT_REDIRECT_URIS` | `https://<work os>/api/mail/callback` | Comma list, matched exactly. https only (http only for `localhost` or `127.0.0.1`). Anything else is refused and the browser is never sent there. |
+| `AGENT_CLIENT_NAME` | `Work OS` | Optional. The name people see on the consent screen and in Connections. |
 | `AGENT_SENDS_PER_HOUR`, `AGENT_MAX_RECIPIENTS`, `AGENT_MAX_TEXT_CHARS`, `AGENT_MAX_ATTACHMENT_BYTES` | defaults | Optional guard rails, see `docs/agent-api.md`. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | key pair + `mailto:it@delpat.in` | Phone/desktop notifications while the app is closed. All three or none. Generate the pair once, on your computer, in the repo: `pnpm --filter mailloom-server exec web-push generate-vapid-keys`. Keep the private key secret. |
 | `DEMO_MODE` | `0` | Leave off on the real server. |
@@ -287,6 +291,7 @@ Edit `/etc/mailloom/mailloom.env`, then `sudo -u mailloom -H pm2 restart mailloo
 | `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | `web-push generate-vapid-keys` | Every device's notifications stop until turned on again. Only rotate if the private key leaked. |
 | Agent key (one person) | Mailloom > Connections > rotate | The old key stops at once; paste the new one into Work OS. |
 | A person's mail password | iRedAdmin | Their Mailloom sessions, push and agent key are refused by the mail server; they sign in again and rotate the key. |
+| `AGENT_CLIENT_SECRET` | edit | Change it together with Work OS's `MAILLOOM_CLIENT_SECRET`; until both match, Connect fails at the token step. Keys already minted keep working. |
 | `AGENT_ALLOWED_IPS` | edit | Only the listed callers get in. Empty turns the agent API off. |
 
 After the old committed secrets (section 0): generate a new `SESSION_SECRET` for the real server, and if the real

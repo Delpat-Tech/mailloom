@@ -18,6 +18,30 @@ Base URL: `https://<mailloom host>/api/agent/v1` (also served under `/mail/api/a
 - Scopes per key: `read`, `organise`, `send` (all on by default). Missing scope: 403 `SCOPE_MISSING`.
 - Responses carry `Cache-Control: no-store`.
 
+## Connect Mailloom (one click instead of pasting a key)
+
+Work OS can get a key without anyone copying it: OAuth 2.0 authorization code with PKCE (S256 only), one registered
+client set in Mailloom's environment (`AGENT_CLIENT_ID`, `AGENT_CLIENT_SECRET`, `AGENT_CLIENT_REDIRECT_URIS`, see
+`docs/deploy.md`). Connect is off unless all three are set. Behind the live Nginx the public addresses are under
+`https://mail.delpat.in/mail/`; the server itself sees the same paths without `/mail` (both work).
+
+| Step | Address | Who |
+|---|---|---|
+| Authorise | `GET /oauth/authorize?response_type=code&client_id&redirect_uri&scope=read organise send&state&code_challenge&code_challenge_method=S256[&label]` | the person's browser. A wrong client or redirect shows an error page and never redirects. Good: 302 to the consent screen (`#/connect/<id>`, valid 10 minutes) |
+| Consent | `GET /api/oauth/requests/:id`, `POST /api/oauth/consent` | the consent screen (session + `X-Mailloom-Account`). Allow needs the mailbox password. Answers `{redirect}`: `redirect_uri?code&state&iss`, or `?error=access_denied&state&iss` on Cancel |
+| Token | `POST /api/agent/v1/oauth/token` | the Work OS server. Form or JSON body: `grant_type=authorization_code`, `code`, `redirect_uri`, `code_verifier`, `client_id`, `client_secret`. Answers `{key, key_id, prefix, email, scopes}` (`Cache-Control: no-store`) |
+| Self-revoke | `POST /api/agent/v1/key/revoke` | the Work OS server, `Bearer <key>`. The key revokes itself (answers `{revoked: true, key_id, revoked_at}`); a second call answers 401 `KEY_REVOKED` |
+
+- The code lives 60 seconds and works once. Using it a second time fails and revokes the key the first use minted
+  (remembered for 10 minutes). The key is minted at the token step, never at Allow, so an abandoned flow leaves no key.
+- Token errors are OAuth style `{error, error_description}`: `invalid_client` (401, wrong id or secret),
+  `invalid_grant` (400: unknown, expired, reused, wrong verifier or redirect), `invalid_request`,
+  `unsupported_grant_type`, `rate_limited` (429, 20 calls a minute per address). The token endpoint sits under the same
+  `AGENT_ALLOWED_IPS` check and Origin refusal as the rest of the agent API.
+- The key is listed in Settings > Connections with the client and label ("Work OS (Delpat), connected 16 Nov") and can be
+  revoked there like any key. Calls that mint a key are in the Activity list as `oauth_connect`.
+- Request and reply bodies of these endpoints are never logged.
+
 ## Errors
 
 Every error is JSON `{ "code": "...", "error": "plain sentence" }`.
