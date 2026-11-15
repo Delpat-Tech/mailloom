@@ -146,3 +146,109 @@
 /* Swiped row: the action behind it shows only the part for the side being revealed. */
 .row-reveal .row-reveal-archive, .row-reveal .row-reveal-read { display: none; }
 .row-reveal[data-side='left'] .row-reveal-archive, .row-reveal[data-side='right'] .row-reveal-read { display: inline-flex; }
+
+/*
+ * The mark (LogoMotion, BrandCurtain). The one deliberate exception to "nothing longer than 240 ms":
+ * the brand intro runs 1.1 s, on a cold start and after signing in, and never holds the user up.
+ * The slab and the counter move by transform; the bowl and the lower piece are swept along their own arc
+ * (a dashed stroke inside a mask). Only the intro uses opacity.
+ */
+.mk { transform-origin: 50% 50%; }
+.mk-slab, .mk-counter { transform-box: fill-box; }
+.mk-slab { transform-origin: 50% 100%; }
+.mk-counter { transform-origin: 0% 50%; }
+
+/* Intro: drawn. The slab rises, the D is swept round in one stroke (bowl, then lower piece), the counter settles. */
+@keyframes mk-push {
+  from { transform: scale(0.92); }
+  to { transform: none; }
+}
+@keyframes mk-slab-in {
+  from { opacity: 0; transform: translateY(24%); }
+  45% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+@keyframes mk-bowl-in {
+  from { stroke-dashoffset: 360; }
+  to { stroke-dashoffset: var(--mk-bowl); }
+}
+@keyframes mk-lower-in {
+  from { stroke-dashoffset: 360; }
+  to { stroke-dashoffset: var(--mk-lower); }
+}
+@keyframes mk-counter-in {
+  from { opacity: 0; transform: scale(0.6); }
+  55% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+.mk-intro { animation: mk-push 1100ms cubic-bezier(0.2, 0.6, 0.2, 1) var(--mk-wait, 0ms) both; }
+.mk-intro .mk-slab { animation: mk-slab-in 440ms cubic-bezier(0.2, 0.8, 0.2, 1) var(--mk-wait, 0ms) both; }
+.mk-intro .mk-sweep-bowl { animation: mk-bowl-in 420ms cubic-bezier(0.45, 0, 0.75, 0.7) calc(var(--mk-wait, 0ms) + 260ms) both; }
+.mk-intro .mk-sweep-lower { animation: mk-lower-in 300ms cubic-bezier(0.2, 0.5, 0.2, 1) calc(var(--mk-wait, 0ms) + 660ms) both; }
+.mk-intro .mk-counter { animation: mk-counter-in 340ms cubic-bezier(0.2, 0.9, 0.3, 1.2) calc(var(--mk-wait, 0ms) + 760ms) both; }
+
+/* Outro: it runs off. The counter slips into the stem, the bowl runs on round and off, the lower piece follows
+   it off its foot, and the slab sinks through the baseline (LogoMotion clips it there). 620 ms, no fades. */
+@keyframes mk-counter-out {
+  from { transform: none; }
+  to { transform: scaleX(0); }
+}
+@keyframes mk-bowl-out {
+  from { stroke-dashoffset: var(--mk-bowl); }
+  to { stroke-dashoffset: var(--mk-bowl-off); }
+}
+@keyframes mk-lower-out {
+  from { stroke-dashoffset: var(--mk-lower); }
+  to { stroke-dashoffset: var(--mk-lower-off); }
+}
+@keyframes mk-slab-out {
+  from { transform: none; }
+  to { transform: translateY(740px); }
+}
+.mk-outro .mk-counter { animation: mk-counter-out 200ms cubic-bezier(0.5, 0, 0.9, 0.6) var(--mk-wait, 0ms) both; }
+.mk-outro .mk-sweep-bowl { animation: mk-bowl-out 300ms cubic-bezier(0.45, 0, 0.8, 0.7) calc(var(--mk-wait, 0ms) + 40ms) both; }
+.mk-outro .mk-sweep-lower { animation: mk-lower-out 220ms cubic-bezier(0.3, 0.3, 0.6, 1) calc(var(--mk-wait, 0ms) + 300ms) both; }
+.mk-outro .mk-slab { transform-box: view-box; animation: mk-slab-out 260ms cubic-bezier(0.5, 0, 0.9, 0.5) calc(var(--mk-wait, 0ms) + 360ms) both; }
+
+/* Loader: steps. Each piece arrives in place (280 ms), 190 ms after the one before: slab, bowl, lower piece,
+   counter. The whole mark holds a beat, then they leave in the same order. One loop is 1600 ms, so the slab is
+   already returning (from 80 ms after the counter starts to leave) while the counter goes: there is no
+   seam and never an empty frame. All four pieces share one timeline, shifted by a negative delay; the delays
+   start the loop on the whole mark, so it follows the intro without a jump. It runs until it is removed. */
+@keyframes mk-step-slab {
+  0% { transform: translateY(760px); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { transform: none; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { transform: translateY(-760px); }
+}
+@keyframes mk-step-bowl {
+  0% { stroke-dashoffset: 360; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { stroke-dashoffset: var(--mk-bowl); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { stroke-dashoffset: var(--mk-bowl-off); }
+}
+@keyframes mk-step-lower {
+  0% { stroke-dashoffset: 360; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { stroke-dashoffset: var(--mk-lower); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { stroke-dashoffset: var(--mk-lower-off); }
+}
+@keyframes mk-step-counter {
+  0% { transform: translateX(-260px); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  17.50%, 59.38% { transform: none; animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+  76.88%, 100% { transform: translateX(260px); }
+}
+.mk-loader .mk-win-slab { animation: mk-step-slab 1600ms linear -850ms infinite; }
+.mk-loader .mk-sweep-bowl { animation: mk-step-bowl 1600ms linear -660ms infinite; }
+.mk-loader .mk-sweep-lower { animation: mk-step-lower 1600ms linear -470ms infinite; }
+.mk-loader .mk-win-counter { animation: mk-step-counter 1600ms linear -280ms infinite; }
+
+/* The full-screen curtain: the app icon's ground, in both themes. Boot waits 150 ms before showing anything,
+   so a fast start shows nothing. */
+.brand-curtain { background: linear-gradient(135deg, #232A66 0%, #2E4A9A 45%, #4A8FD6 100%); color: #FFFFFF; }
+.brand-curtain-boot { --mk-wait: 150ms; animation: ml-fade 120ms var(--ease-out) 150ms both; }
+.brand-curtain-intro { animation: ml-fade 120ms var(--ease-out) both; }
+.brand-curtain-outro { --mk-wait: 60ms; animation: ml-fade 90ms var(--ease-out) both; }
+.brand-curtain[data-leaving='true'] { animation: ml-leave-fade 180ms var(--ease-in) both; }
+.brand-curtain-label { opacity: 0.85; animation: ml-fade 300ms var(--ease-out) 900ms both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mk, .mk * { animation: none !important; }
+}

@@ -1,24 +1,73 @@
-import React from 'react';
+import React, { useId } from 'react';
+import { BOWL, COUNTER, GRADS, LOWER, MARK_H, MARK_W, SLAB } from './markPaths.js';
+
+const SIDE = Math.max(MARK_W, MARK_H);
+/** A square box around the mark. */
+export const MARK_VIEWBOX = `${(MARK_W - SIDE) / 2} ${(MARK_H - SIDE) / 2} ${SIDE} ${SIDE}`;
 
 /**
- * The Mailloom mark. On the sky rail it uses the rail colours (--rm-a/--rm-b); on a plain page
- * ("page") it uses --mk-a/--mk-b. Both pairs are set per theme in index.css.
+ * How the mark is coloured.
+ *   theme  "Dusk": each piece carries a quiet gradient. The stops are --mk-* in index.css: navy and blue on
+ *          light surfaces, near-white pieces with a blue bowl on dark ones.
+ *   white  "Aurora", as on the app icon: white pieces and a frosted bowl, for the navy brand curtain.
  */
-export const Logo: React.FC<{ size?: number; className?: string; tone?: 'rail' | 'page' }> = ({
+export type MarkTone = 'theme' | 'white';
+export type MarkPiece = keyof typeof GRADS;
+
+const STOPS: Record<MarkPiece, [number, string][]> = {
+  slab: [[0, 's1'], [1, 's2']],
+  counter: [[0, 'c1'], [1, 'c2']],
+  lower: [[0, 'l1'], [1, 'l2']],
+  bowl: [[0, 'b1'], [0.55, 'b2'], [1, 'b3']]
+};
+/** Opacity of the bowl in the white tone (the same frost as the app icon). */
+export const FROST = 0.58;
+
+/** The Dusk gradients. `id` must be unique per mark on the page (useId), or several marks would share one set. */
+export const MarkGradients: React.FC<{ id: string }> = ({ id }) => (
+  <>
+    {(Object.keys(GRADS) as MarkPiece[]).map((piece) => (
+      <linearGradient key={piece} id={`${id}${piece}`} gradientUnits="userSpaceOnUse" {...GRADS[piece]}>
+        {STOPS[piece].map(([offset, name]) => (
+          <stop key={name} offset={offset} style={{ stopColor: `var(--mk-${name})` }} />
+        ))}
+      </linearGradient>
+    ))}
+  </>
+);
+
+/** Fill attributes for one piece. */
+export function markFill(id: string, tone: MarkTone, piece: MarkPiece): { fill: string; fillOpacity?: number } {
+  if (tone === 'white') return piece === 'bowl' ? { fill: '#FFFFFF', fillOpacity: FROST } : { fill: '#FFFFFF' };
+  return { fill: `url(#${id}${piece})` };
+}
+
+/** An id that is safe inside url(#...). */
+export function useMarkId(): string {
+  return `mk${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+}
+
+/**
+ * The Mailloom mark: the Delpat logo. Its geometry comes from scripts/make-icons.py (markPaths.ts), the same
+ * source as the app icons. For the moving version see LogoMotion.
+ */
+export const Logo: React.FC<{ size?: number; className?: string; tone?: MarkTone }> = ({
   size = 28,
   className,
-  tone = 'rail'
+  tone = 'theme'
 }) => {
-  const a = tone === 'rail' ? 'var(--rm-a)' : 'var(--mk-a)';
-  const b = tone === 'rail' ? 'var(--rm-b)' : 'var(--mk-b)';
+  const id = useMarkId();
   return (
-    <svg className={className} width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-      <path d="M3 2.5l8 7V30H3z" fill={a} />
-      <path d="M13 2.5h5a13.5 13.5 0 0 1 9.6 23l-4.2-10.3A7.6 7.6 0 0 0 18 8.6h-5z" fill={b} />
-      <path
-        d="M13 10.6h5a4.7 4.7 0 0 1 0 9.4h-5zM13 22h5a9.5 9.5 0 0 0 5.6-1.9l3.2 7.7A13.4 13.4 0 0 1 18 30h-5z"
-        fill={a}
-      />
+    <svg className={className} width={size} height={size} viewBox={MARK_VIEWBOX} aria-hidden="true" focusable="false">
+      {tone === 'theme' && (
+        <defs>
+          <MarkGradients id={id} />
+        </defs>
+      )}
+      <path d={BOWL} {...markFill(id, tone, 'bowl')} />
+      <path d={SLAB} {...markFill(id, tone, 'slab')} />
+      <path d={COUNTER} {...markFill(id, tone, 'counter')} />
+      <path d={LOWER} {...markFill(id, tone, 'lower')} />
     </svg>
   );
 };
