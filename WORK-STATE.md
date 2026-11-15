@@ -43,7 +43,6 @@ users tester@ and colleague@delpat.test). Never the live mail server.
   an "Open in new tab" link), real iPhone behaviour, the manifest protocol handler on a real install.
 
 ## Later
-- Server test 'push configuration' failed once in the full suite (passes alone; suite-order interference, builder-a c82be40 run).
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
 - Earlier note: Om first said local only; Mail server is 43.205.158.10; its Dovecot/Postfix use iRedMail's self-signed certificate (MAIL_TLS_CA_FILE, merged, covers it) (waits on Om deciding to deploy).
 - ydco.in mail is on Google (MX), so it cannot sign in to Mailloom; dropped from MAIL_DOMAINS examples (builder-a).
