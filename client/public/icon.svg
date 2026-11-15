@@ -1,8 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="112" fill="#2F6CB5"/>
-  <g transform="translate(96 96) scale(10)">
-    <path d="M3 2.5l8 7V30H3z" fill="#FFFFFF"/>
-    <path d="M13 2.5h5a13.5 13.5 0 0 1 9.6 23l-4.2-10.3A7.6 7.6 0 0 0 18 8.6h-5z" fill="#F2B01E"/>
-    <path d="M13 10.6h5a4.7 4.7 0 0 1 0 9.4h-5zM13 22h5a9.5 9.5 0 0 0 5.6-1.9l3.2 7.7A13.4 13.4 0 0 1 18 30h-5z" fill="#FFFFFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="120" fill="#FFFFFF"/>
+  <g transform="translate(101.49 109.38) scale(0.39779)">
+    <path d="M0 35.4A16 16 0 0 1 26.6 23.4L244.6 215.2A16 16 0 0 1 250 227.2L250 704A16 16 0 0 1 234 720L16 720A16 16 0 0 1 0 704Z" fill="#28306E"/>
+    <path d="M298 16A16 16 0 0 1 314 0L438 0A360 360 0 0 1 674.1 631.8L575.6 385.6A140 140 0 0 0 438 220L314 220A16 16 0 0 1 298 204Z" fill="#3F7CBD"/>
+    <path d="M298 284A16 16 0 0 1 314 268L438 268A92 92 0 0 1 438 452L314 452A16 16 0 0 1 298 436Z" fill="#28306E"/>
+    <path d="M298 516A16 16 0 0 1 314 500L438 500A140 140 0 0 0 577.3 373.6L678.9 627.5A360 360 0 0 1 438 720L314 720A16 16 0 0 1 298 704Z" fill="#28306E"/>
   </g>
 </svg>

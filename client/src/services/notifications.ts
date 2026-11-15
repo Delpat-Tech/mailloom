@@ -68,8 +68,8 @@ export function showDesktopNotification(options: ShowNotificationOptions): void 
   try {
     const notification = new Notification(options.title, {
       body: options.body,
-      icon: options.icon || './icon.svg',
-      badge: './icon.svg',
+      icon: options.icon || './icon-192.png',
+      badge: './badge-96.png',
       tag: 'mailloom-unread'
     });
 

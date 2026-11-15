@@ -1,24 +1,30 @@
 import React from 'react';
+import { BOWL, COUNTER, LOWER, MARK_H, MARK_W, SLAB } from './markPaths.js';
+
+/** A square box around the mark (it is a little wider than tall). */
+export const MARK_VIEWBOX = `0 ${(MARK_H - MARK_W) / 2} ${MARK_W} ${MARK_W}`;
+
+/** The two fills of the mark. On the rail it uses --rm-a/--rm-b, on a plain page --mk-a/--mk-b (set per theme in index.css). */
+export function markTones(tone: 'rail' | 'page'): { a: string; b: string } {
+  return tone === 'rail' ? { a: 'var(--rm-a)', b: 'var(--rm-b)' } : { a: 'var(--mk-a)', b: 'var(--mk-b)' };
+}
 
 /**
- * The Mailloom mark. On the sky rail it uses the rail colours (--rm-a/--rm-b); on a plain page
- * ("page") it uses --mk-a/--mk-b. Both pairs are set per theme in index.css.
+ * The Mailloom mark: the Delpat 'D'. Its geometry comes from scripts/make-icons.py (markPaths.ts), the same
+ * source as the app icons. For the moving version see LogoMotion.
  */
 export const Logo: React.FC<{ size?: number; className?: string; tone?: 'rail' | 'page' }> = ({
   size = 28,
   className,
   tone = 'rail'
 }) => {
-  const a = tone === 'rail' ? 'var(--rm-a)' : 'var(--mk-a)';
-  const b = tone === 'rail' ? 'var(--rm-b)' : 'var(--mk-b)';
+  const { a, b } = markTones(tone);
   return (
-    <svg className={className} width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-      <path d="M3 2.5l8 7V30H3z" fill={a} />
-      <path d="M13 2.5h5a13.5 13.5 0 0 1 9.6 23l-4.2-10.3A7.6 7.6 0 0 0 18 8.6h-5z" fill={b} />
-      <path
-        d="M13 10.6h5a4.7 4.7 0 0 1 0 9.4h-5zM13 22h5a9.5 9.5 0 0 0 5.6-1.9l3.2 7.7A13.4 13.4 0 0 1 18 30h-5z"
-        fill={a}
-      />
+    <svg className={className} width={size} height={size} viewBox={MARK_VIEWBOX} aria-hidden="true" focusable="false">
+      <path d={SLAB} fill={a} />
+      <path d={BOWL} fill={b} />
+      <path d={COUNTER} fill={a} />
+      <path d={LOWER} fill={a} />
     </svg>
   );
 };

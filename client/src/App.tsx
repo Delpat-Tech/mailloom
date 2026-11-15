@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Check, AlertTriangle } from 'lucide-react';
 import { Sidebar } from './components/Sidebar.js';
-import { Logo } from './components/Logo.js';
+import { BrandCurtain, type CurtainKind } from './components/LogoMotion.js';
 import { MobileTabBar, type PhoneTab } from './components/MobileTabBar.js';
 import { ShortcutsSheet } from './components/ShortcutsSheet.js';
 import { SettingsPage } from './components/settings/SettingsPage.js';
@@ -88,6 +88,8 @@ export const App: React.FC = () => {
   // Authentication & Multi-Account State
   const [account, setAccount] = useState<UserAccount | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
+  // Full-screen brand moment: 'boot' on a cold start, 'intro' after signing in, 'outro' after signing out.
+  const [curtain, setCurtain] = useState<CurtainKind | null>('boot');
   const [savedAccounts, setSavedAccounts] = useState<StoredAccountProfile[]>([]);
   const [isAddingAccount, setIsAddingAccount] = useState(false);
   // Set when an account's server session ended: shows a sign-in prompt over the app
@@ -1318,6 +1320,7 @@ export const App: React.FC = () => {
     const wasReauth = reauth !== null;
     const sameAccount = account?.email.toLowerCase() === acc.email.toLowerCase();
     if (!sameAccount) resetMailView();
+    if (!account && !wasReauth) setCurtain('intro');
     setAccount(acc);
     setSavedAccounts(getStoredAccounts());
     setIsAddingAccount(false);
@@ -1366,6 +1369,7 @@ export const App: React.FC = () => {
       setActiveHandle(null);
       setAccount(null);
       resetMailView();
+      setCurtain('outro');
     }
   };
 
@@ -1707,18 +1711,21 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
-  if (isAuthChecking) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-rail text-rail-ink">
-        <div className="flex flex-col items-center gap-3">
-          <Logo size={40} />
-          <span className="text-xs font-semibold text-rail-2">Launching Mailloom...</span>
-        </div>
-      </div>
-    );
-  }
+  // The brand curtain keeps its place in the tree across the boot and the app, so it can fade out over either.
+  const curtainEl = curtain && (
+    <BrandCurtain
+      key={curtain}
+      kind={curtain}
+      ready={curtain === 'boot' ? !isAuthChecking : curtain === 'intro' ? listReady : false}
+      onGone={() => setCurtain(null)}
+    />
+  );
+
+  if (isAuthChecking) return <>{curtainEl}</>;
 
   return (
+    <>
+    {curtainEl}
     <div
       className="h-screen w-screen flex flex-col overflow-hidden bg-surface text-ink font-sans"
       style={{ height: '100dvh' }}
@@ -2079,5 +2086,6 @@ export const App: React.FC = () => {
         )}
       </div>
     </div>
+    </>
   );
 };

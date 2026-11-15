@@ -1,10 +1,11 @@
 // Mailloom Lightweight Service Worker for Instant Cold Startup & App Shell Caching
-const CACHE_NAME = 'mailloom-shell-v3';
+const CACHE_NAME = 'mailloom-shell-v4';
 const STATIC_ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './icon.svg'
+  './icon.svg',
+  './mark.svg'
 ];
 
 self.addEventListener('install', (event) => {

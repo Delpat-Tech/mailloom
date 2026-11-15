@@ -146,3 +146,82 @@
 /* Swiped row: the action behind it shows only the part for the side being revealed. */
 .row-reveal .row-reveal-archive, .row-reveal .row-reveal-read { display: none; }
 .row-reveal[data-side='left'] .row-reveal-archive, .row-reveal[data-side='right'] .row-reveal-read { display: inline-flex; }
+
+/*
+ * The mark (LogoMotion, BrandCurtain). The one deliberate exception to "nothing longer than 240 ms":
+ * the brand intro runs 1 s, on a cold start and after signing in, and never holds the user up.
+ * The slab and counter move with transform and opacity; the ring is a dashed stroke that sweeps round.
+ */
+.mk-slab, .mk-counter { transform-box: fill-box; }
+.mk-slab { transform-origin: 50% 100%; }
+.mk-counter { transform-origin: 0% 50%; }
+
+@keyframes mk-slab-in {
+  from { opacity: 0; transform: translateY(22%); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes mk-bowl-in {
+  from { stroke-dashoffset: 360; }
+  to { stroke-dashoffset: var(--mk-bowl); }
+}
+@keyframes mk-lower-in {
+  from { stroke-dashoffset: 360; }
+  to { stroke-dashoffset: var(--mk-lower); }
+}
+@keyframes mk-counter-in {
+  from { opacity: 0; transform: scale(0.5); }
+  60% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+.mk-intro .mk-slab { animation: mk-slab-in 460ms cubic-bezier(0.2, 0.7, 0.2, 1) var(--mk-wait, 0ms) both; }
+.mk-intro .mk-bowl { animation: mk-bowl-in 440ms cubic-bezier(0.5, 0, 0.7, 0.6) calc(var(--mk-wait, 0ms) + 180ms) both; }
+.mk-intro .mk-lower { animation: mk-lower-in 300ms cubic-bezier(0.2, 0.5, 0.2, 1) calc(var(--mk-wait, 0ms) + 600ms) both; }
+.mk-intro .mk-counter { animation: mk-counter-in 360ms cubic-bezier(0.2, 0.9, 0.3, 1.25) calc(var(--mk-wait, 0ms) + 640ms) both; }
+
+@keyframes mk-slab-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(22%); }
+}
+@keyframes mk-bowl-out {
+  from { stroke-dashoffset: var(--mk-bowl); }
+  to { stroke-dashoffset: 360; }
+}
+@keyframes mk-lower-out {
+  from { stroke-dashoffset: var(--mk-lower); }
+  to { stroke-dashoffset: 360; }
+}
+@keyframes mk-counter-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: scale(0.5); }
+}
+.mk-outro .mk-counter { animation: mk-counter-out 160ms var(--ease-in) var(--mk-wait, 0ms) both; }
+.mk-outro .mk-lower { animation: mk-lower-out 170ms cubic-bezier(0.5, 0, 0.8, 0.5) calc(var(--mk-wait, 0ms) + 40ms) both; }
+.mk-outro .mk-bowl { animation: mk-bowl-out 230ms cubic-bezier(0.2, 0.5, 0.4, 1) calc(var(--mk-wait, 0ms) + 200ms) both; }
+.mk-outro .mk-slab { animation: mk-slab-out 240ms var(--ease-in) calc(var(--mk-wait, 0ms) + 200ms) both; }
+
+/* Loader: starts whole (so it follows the intro without a jump), the ring clears from where it began, then draws
+   round again. The slab and counter stay put. */
+@keyframes mk-bowl-loop {
+  0%, 10% { stroke-dashoffset: var(--mk-bowl); }
+  38% { stroke-dashoffset: calc(var(--mk-bowl) - 360); }
+  38.01%, 48% { stroke-dashoffset: 360; }
+  76%, 100% { stroke-dashoffset: var(--mk-bowl); }
+}
+@keyframes mk-lower-loop {
+  0%, 30% { stroke-dashoffset: var(--mk-lower); }
+  48% { stroke-dashoffset: calc(var(--mk-lower) - 360); }
+  48.01%, 72% { stroke-dashoffset: 360; }
+  92%, 100% { stroke-dashoffset: var(--mk-lower); }
+}
+.mk-loader .mk-bowl { animation: mk-bowl-loop 1500ms linear infinite; }
+.mk-loader .mk-lower { animation: mk-lower-loop 1500ms linear infinite; }
+
+/* The full-screen curtain. Boot waits 150 ms before showing anything, so a fast start shows nothing. */
+.brand-curtain-boot { --mk-wait: 150ms; animation: ml-fade 120ms var(--ease-out) 150ms both; }
+.brand-curtain-outro { --mk-wait: 90ms; animation: ml-fade 90ms var(--ease-out) both; }
+.brand-curtain[data-leaving='true'] { animation: ml-leave-fade 180ms var(--ease-in) both; }
+.brand-curtain-label { animation: ml-fade 300ms var(--ease-out) 900ms both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mk * { animation: none !important; }
+}

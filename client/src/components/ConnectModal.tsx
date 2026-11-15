@@ -13,6 +13,7 @@ import { friendlyError } from '../services/errors.js';
 import { useDialog } from '../hooks/useDialog.js';
 import type { UserAccount } from '../types.js';
 import { Logo } from './Logo.js';
+import { LogoMotion } from './LogoMotion.js';
 import { PasswordInput } from './PasswordInput.js';
 
 interface ConnectModalProps {
@@ -112,7 +113,8 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
           )}
 
           <div className="flex items-center gap-3 pr-10">
-            <Logo size={36} className="shrink-0" />
+            {/* The sign-in screen proper assembles its mark once; the add-account and sign-in-again dialogs do not. */}
+            {isAddingAccount ? <Logo size={36} className="shrink-0" /> : <LogoMotion mode="intro" size={36} tone="rail" className="shrink-0" />}
             <h2 id="connect-title" className="text-xl font-extrabold tracking-tight">
               {reauthEmail !== undefined ? 'Sign In Again' : isAddingAccount ? 'Connect Another Mailbox' : 'Mailloom Webmail'}
             </h2>
