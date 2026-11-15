@@ -621,7 +621,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     return () => window.removeEventListener(SEARCH_EVENT, open);
   }, []);
   const scrollerRef = useRef<HTMLUListElement>(null);
-  const pull = usePullToRefresh(scrollerRef as React.RefObject<HTMLElement>, { enabled: isVisible, refreshing: isLoading, onRefresh });
+  const pull = usePullToRefresh({ enabled: isVisible, refreshing: isLoading, onRefresh });
   const savedScroll = useRef(0);
   // Roving focus: one row is in the Tab order; arrow keys move between rows.
   const [activeUid, setActiveUid] = useState<number | null>(null);
@@ -1092,7 +1092,24 @@ export const MessageList: React.FC<MessageListProps> = ({
         </div>
       )}
 
-      {/* Message List Stream */}
+      {/* Message List Stream. The pull-to-refresh area is the same in every state, so it works on an empty list too. */}
+      <div ref={pull.ref} className="flex-1 min-h-0 flex flex-col">
+        <div
+          aria-hidden="true"
+          data-testid="pull-indicator"
+          className="lg:hidden shrink-0 overflow-hidden flex items-end justify-center bg-surface"
+          style={{
+            height: pull.offset,
+            transition: pull.dragging ? 'none' : 'height var(--dur-3) var(--ease-out)'
+          }}
+        >
+          {pull.offset > 0 && (
+            <RotateCw
+              className={`w-5 h-5 mb-2 text-ink-2 ${pull.holding ? 'animate-spin motion-reduce:animate-none' : ''}`}
+              style={pull.holding ? undefined : { opacity: pull.progress, transform: `rotate(${pull.progress * 270}deg)` }}
+            />
+          )}
+        </div>
       {(isLoading || !countReady) && messages.length === 0 ? (
         showSkeleton ? <SkeletonRows /> : <div className="flex-1" />
       ) : messages.length === 0 ? (
@@ -1112,24 +1129,9 @@ export const MessageList: React.FC<MessageListProps> = ({
         </div>
       ) : (
         <>
-        <div
-          aria-hidden="true"
-          data-testid="pull-indicator"
-          className="lg:hidden shrink-0 overflow-hidden flex items-end justify-center bg-surface"
-          style={{
-            height: pull.offset,
-            transition: pull.dragging ? 'none' : 'height var(--dur-3) var(--ease-out)'
-          }}
-        >
-          {pull.offset > 0 && (
-            <RotateCw
-              className={`w-5 h-5 mb-2 text-ink-2 ${pull.holding ? 'animate-spin motion-reduce:animate-none' : ''}`}
-              style={pull.holding ? undefined : { opacity: pull.progress, transform: `rotate(${pull.progress * 270}deg)` }}
-            />
-          )}
-        </div>
         <ul
           ref={scrollerRef}
+          data-pull-scroller
           aria-label={`${folderName} messages`}
           onKeyDown={onRowKeyDown}
           onScroll={(e) => {
@@ -1188,6 +1190,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         </ul>
         </>
       )}
+      </div>
 
       {/* New Message: always reachable on small screens (the sidebar is hidden there) */}
       {onCompose && (

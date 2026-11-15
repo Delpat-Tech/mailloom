@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** Drag distance (px) past which letting go refreshes. */
 export const PULL_THRESHOLD = 64;
@@ -30,8 +30,15 @@ interface Options {
   onRefresh: () => void;
 }
 
-/** Touch pull-to-refresh for a scroller that is at its very top. Touch events only, so mouse and keyboard are untouched. */
-export function usePullToRefresh(ref: RefObject<HTMLElement>, { enabled, refreshing, onRefresh }: Options) {
+/**
+ * Touch pull-to-refresh for a list that is at its very top. Touch events only, so mouse and keyboard are untouched.
+ * Give the returned `ref` to an element that is there in every state of the list (loading, empty, full). It is
+ * kept in state, so listeners attach whenever the element mounts. The scroll position read is that of the
+ * descendant marked data-pull-scroller (when there is none, as in an empty list, the list counts as at its top).
+ */
+export function usePullToRefresh({ enabled, refreshing, onRefresh }: Options) {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  const ref = useCallback((node: HTMLElement | null) => setEl(node), []);
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [holding, setHolding] = useState(false);
@@ -59,15 +66,15 @@ export function usePullToRefresh(ref: RefObject<HTMLElement>, { enabled, refresh
   }, [holding]);
 
   useEffect(() => {
-    const el = ref.current;
     if (!el || !enabled) return;
+    const top = () => el.querySelector<HTMLElement>('[data-pull-scroller]')?.scrollTop ?? 0;
     let startX = 0;
     let startY = 0;
     let state: 'idle' | 'pending' | 'pulling' | 'ignored' = 'idle';
     let dyNow = 0;
 
     const onStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1 || el.scrollTop > 0 || cb.current.refreshing) {
+      if (e.touches.length !== 1 || top() > 0 || cb.current.refreshing) {
         state = 'ignored';
         return;
       }
@@ -86,7 +93,7 @@ export function usePullToRefresh(ref: RefObject<HTMLElement>, { enabled, refresh
           state = 'ignored'; // a sideways swipe (swipe back): leave it alone
           return;
         }
-        if (dy < -PULL_SLOP || el.scrollTop > 0) {
+        if (dy < -PULL_SLOP || top() > 0) {
           state = 'ignored'; // an ordinary scroll up
           return;
         }
@@ -123,7 +130,7 @@ export function usePullToRefresh(ref: RefObject<HTMLElement>, { enabled, refresh
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onCancel);
     };
-  }, [ref, enabled]);
+  }, [el, enabled]);
 
-  return { offset, dragging, holding, progress: Math.min(1, offset / (PULL_THRESHOLD * 0.75)) };
+  return { ref, offset, dragging, holding, progress: Math.min(1, offset / (PULL_THRESHOLD * 0.75)) };
 }
