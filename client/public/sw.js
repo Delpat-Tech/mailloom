@@ -1,12 +1,13 @@
 // Mailloom Lightweight Service Worker for Instant Cold Startup & App Shell Caching
-const CACHE_NAME = 'mailloom-shell-v5';
+const CACHE_NAME = 'mailloom-shell-v6';
 const STATIC_ASSETS = [
   './',
-  './index.html',
-  './manifest.webmanifest',
-  './icon.svg',
-  './mark.svg'
+  './index.html'
 ];
+
+// The manifest and every icon are never served from the cache while the network answers, so a changed
+// icon reaches installed apps at once. (Their URLs also carry ?v=<hash>; see scripts/make-icons.py.)
+const FRESH_ASSET = /\/(manifest\.webmanifest|icon[^/]*\.(png|svg)|apple-touch-icon\.png|badge-96\.png|mark\.svg)$/;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -43,6 +44,14 @@ self.addEventListener('fetch', (event) => {
       fetch(event.request).catch(async () => {
         return (await caches.match('./index.html')) || (await caches.match('./')) || Response.error();
       })
+    );
+    return;
+  }
+
+  // Network first for the manifest and icons; the cache only answers when offline.
+  if (FRESH_ASSET.test(url.pathname)) {
+    event.respondWith(
+      fetch(event.request).catch(async () => (await caches.match(event.request)) || Response.error())
     );
     return;
   }
@@ -85,8 +94,8 @@ self.addEventListener('push', (event) => {
   const title = typeof data.title === 'string' && data.title ? data.title : 'New mail';
   const options = {
     body: typeof data.body === 'string' ? data.body : '',
-    icon: './icon-192.png',
-    badge: './badge-96.png',
+    icon: './icon-192.png?v=e75761cb',
+    badge: './badge-96.png?v=e75761cb',
     tag: typeof data.tag === 'string' ? data.tag : 'mailloom',
     // Replacing an older notification for the same mailbox still alerts, unless quiet.
     renotify: kind === 'new-mail' && !data.silent,

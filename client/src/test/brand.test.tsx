@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { Logo } from '../components/Logo.js';
 import { BrandCurtain, LogoMotion } from '../components/LogoMotion.js';
@@ -167,5 +168,41 @@ describe('BrandCurtain', () => {
     rerender(<BrandCurtain kind="intro" ready onGone={gone} />);
     act(() => void vi.advanceTimersByTime(200));
     expect(gone).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('icon versioning', () => {
+  // The same hash scripts/make-icons.py computes: name and bytes of every icon file, in name order.
+  const files = ['apple-touch-icon.png', 'badge-96.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-192.png', 'icon-maskable-512.png', 'icon.svg', 'mark.svg'];
+  const hash = createHash('sha256');
+  for (const f of [...files].sort()) hash.update(Buffer.concat([Buffer.from(f), Buffer.from([0]), readFileSync(resolve(__dirname, '../../public', f)), Buffer.from([0])]));
+  const v = hash.digest('hex').slice(0, 8);
+
+  it('every icon URL in the manifest carries the hash of the icon files', () => {
+    const m = JSON.parse(pub('manifest.webmanifest')) as { icons: { src: string }[]; shortcuts: { icons: { src: string }[] }[] };
+    const srcs = [...m.icons, ...m.shortcuts.flatMap((s) => s.icons)].map((i) => i.src);
+    expect(srcs.length).toBeGreaterThan(4);
+    for (const src of srcs) expect(src).toMatch(new RegExp('^\\./[\\w.-]+\\?v=' + v + '$'));
+  });
+
+  it('the page, the notifications and the service worker use the same version', () => {
+    const html = readFileSync(resolve(__dirname, '../../index.html'), 'utf8');
+    expect(html).toContain(`href="./manifest.webmanifest?v=${v}"`);
+    expect(html).toContain(`href="./mark.svg?v=${v}"`);
+    expect(html).toContain(`href="./apple-touch-icon.png?v=${v}"`);
+    const note = readFileSync(resolve(__dirname, '../services/notifications.ts'), 'utf8');
+    expect(note).toContain(`./icon-192.png?v=${v}`);
+    expect(note).toContain(`./badge-96.png?v=${v}`);
+    const sw = pub('sw.js');
+    expect(sw).toContain(`./icon-192.png?v=${v}`);
+    expect(sw).toContain(`./badge-96.png?v=${v}`);
+    expect(sw).not.toMatch(/\.(png|svg)(?!\?v=)['"]/);
+  });
+
+  it('the service worker never precaches the manifest or icons', () => {
+    const sw = pub('sw.js');
+    const precache = sw.slice(sw.indexOf('STATIC_ASSETS = ['), sw.indexOf('];'));
+    expect(precache).not.toMatch(/manifest|icon|mark/);
+    expect(sw).toContain('mailloom-shell-v6');
   });
 });

@@ -11,10 +11,15 @@ This script is the single source. It writes:
   client/public/icon-*.png, apple-touch-icon.png   raster icons (Aurora)
   client/public/badge-96.png                       notification badge: white, bowl half-clear
   client/src/components/markPaths.ts               the same paths for Logo.tsx and LogoMotion.tsx
+  icon version                                     a short hash of the icon files, written as ?v=<hash> into
+                                                   manifest.webmanifest, index.html, sw.js and notifications.ts so a
+                                                   changed icon is always fetched afresh (the server caches them a day)
 
 Run: python scripts/make-icons.py   (needs Pillow). Nothing else is required.
 """
+import hashlib
 import math
+import re
 from pathlib import Path
 from PIL import Image, ImageDraw
 
@@ -340,6 +345,35 @@ def write_ts():
     TS.write_text('\n'.join(out) + '\n', encoding='utf-8')
 
 
+ICON_FILES = ['apple-touch-icon.png', 'badge-96.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-192.png',
+              'icon-maskable-512.png', 'icon.svg', 'mark.svg']
+# Files that name icons by URL. Each ?v= after an icon name is rewritten in place.
+STAMPED = [OUT / 'manifest.webmanifest', ROOT / 'client' / 'index.html', OUT / 'sw.js',
+           ROOT / 'client' / 'src' / 'services' / 'notifications.ts']
+
+
+def icon_version():
+    """8 hex digits over the name and bytes of every icon file, in name order. brand.test.tsx recomputes it."""
+    h = hashlib.sha256()
+    for name in sorted(ICON_FILES):
+        h.update(name.encode() + b'\x00' + (OUT / name).read_bytes() + b'\x00')
+    return h.hexdigest()[:8]
+
+
+def stamp_version():
+    v = icon_version()
+    names = '|'.join(re.escape(n) for n in ICON_FILES)
+    pat = re.compile(r'(\./(?:%s))(\?v=[0-9a-f]+)?' % names)
+    for f in STAMPED:
+        text = f.read_bytes().decode('utf-8')
+        out = pat.sub(lambda m: f'{m.group(1)}?v={v}', text)
+        if f.suffix == '.html':
+            out = re.sub(r'(manifest\.webmanifest)(\?v=[0-9a-f]+)?(?=")', lambda m: f'{m.group(1)}?v={v}', out)
+        if out != text:
+            f.write_bytes(out.encode('utf-8'))
+    print('icon version', v)
+
+
 if __name__ == '__main__':
     far = safe_zone()
     print(f'maskable: furthest ink {far:.1f}px from centre (limit 204.8)')
@@ -356,3 +390,4 @@ if __name__ == '__main__':
             img = img.convert('RGB')
         img.save(OUT / name, optimize=True)
         print('wrote', name)
+    stamp_version()
