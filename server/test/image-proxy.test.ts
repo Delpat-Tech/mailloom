@@ -256,13 +256,30 @@ describe('GET /api/image-proxy and detail rewriting', () => {
     assert.deepEqual(res.rawPayload, PNG);
   });
 
-  test('absent or blocked keeps images blocked', async () => {
+  test('explicit blocked keeps images blocked; absent follows the stored loadPictures setting', async () => {
     const t = await signIn(app, TESTER);
     const uid = await appendRaw(TESTER, 'INBOX', htmlMail(local('/ok.png')));
-    for (const mode of [undefined, 'blocked']) {
-      const d = await detail(t, 'INBOX', uid, mode);
+    const settings = () => app.inject({ method: 'GET', url: '/api/settings', headers: t.headers });
+    const setPictures = async (on: boolean) => {
+      const cur = (await settings()).json() as { version: number };
+      const r = await app.inject({ method: 'PATCH', url: '/api/settings', headers: t.headers, payload: { version: cur.version, loadPictures: on } });
+      assert.equal(r.statusCode, 200);
+    };
+    const blocked = await detail(t, 'INBOX', uid, 'blocked');
+    assert.equal(blocked.blockedImages, 1);
+    assert.ok(!blocked.html.includes('image-proxy'));
+    // default (loadPictures true): through the proxy
+    const auto = await detail(t, 'INBOX', uid);
+    assert.equal(auto.blockedImages, 0);
+    assert.ok(auto.html.includes('image-proxy'));
+    // switched off: blocked
+    await setPictures(false);
+    try {
+      const d = await detail(t, 'INBOX', uid);
       assert.equal(d.blockedImages, 1);
       assert.ok(!d.html.includes('image-proxy'));
+    } finally {
+      await setPictures(true);
     }
   });
 

@@ -22,6 +22,8 @@ import { createPushSender, type PushSendFn } from './push/sender.js';
 import { DEFAULT_TIMING, PushWatcher, type WatcherTiming } from './push/watcher.js';
 import { organiseRoutes } from './routes/organise.js';
 import { OrganiseStore } from './services/organise-store.js';
+import { SettingsStore } from './services/settings-store.js';
+import { settingsRoutes } from './routes/settings.js';
 import { Snoozer } from './services/snoozer.js';
 import { ConversationIndexer, type IndexerOptions } from './services/conv-index.js';
 import { ContactIndexer, ContactStore, type ContactIndexerOptions } from './services/contacts.js';
@@ -183,6 +185,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const snoozer = new Snoozer(organiseStore, pushStore, config, fastify.log, now, opts.organise?.snoozeIntervalMs);
   const indexer = new ConversationIndexer(organiseStore, { ...opts.organise, log: fastify.log, now });
   fastify.decorate('mailloomOrganise', { store: organiseStore, snoozer, indexer, now });
+  fastify.decorate('mailloomSettings', new SettingsStore(sessions.database, now));
   const contactStore = new ContactStore(sessions.database);
   const contactIndexer = new ContactIndexer(contactStore, { ...opts.contacts, log: fastify.log, now });
   fastify.decorate('mailloomContacts', { store: contactStore, indexer: contactIndexer, now });
@@ -283,6 +286,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await fastify.register(agentRoutes, { prefix });
     await fastify.register(pushRoutes, { prefix });
     await fastify.register(organiseRoutes, { prefix });
+    await fastify.register(settingsRoutes, { prefix });
     await fastify.register(contactRoutes, { prefix });
   }
 

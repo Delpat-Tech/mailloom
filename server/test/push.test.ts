@@ -202,9 +202,11 @@ describe('push configuration', () => {
   test('stored secrets only open for the same row, mailbox and device', () => {
     const secret = crypto.randomBytes(32).toString('hex');
     const ep = endpointHash('https://web.push.apple.com/x');
-    const enc = encryptDeviceSecrets(secret, 'row1', TESTER, ep, { password: 'pw', p256dh: 'k', auth: 'a' });
-    assert.ok(!enc.includes('pw'));
-    assert.deepEqual(decryptDeviceSecrets(secret, 'row1', TESTER, ep, enc), { password: 'pw', p256dh: 'k', auth: 'a' });
+    // A distinctive password: a two-letter one shows up by chance in base64 text about 1 run in 30.
+    const pw = 'correct-horse-battery-staple-4821';
+    const enc = encryptDeviceSecrets(secret, 'row1', TESTER, ep, { password: pw, p256dh: 'k', auth: 'a' });
+    assert.ok(!enc.includes(pw));
+    assert.deepEqual(decryptDeviceSecrets(secret, 'row1', TESTER, ep, enc), { password: pw, p256dh: 'k', auth: 'a' });
     assert.equal(decryptDeviceSecrets(secret, 'row2', TESTER, ep, enc), null);
     assert.equal(decryptDeviceSecrets(secret, 'row1', COLLEAGUE, ep, enc), null);
     assert.equal(decryptDeviceSecrets(secret, 'row1', TESTER, endpointHash('https://web.push.apple.com/y'), enc), null);

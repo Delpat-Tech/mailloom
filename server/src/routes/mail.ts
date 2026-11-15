@@ -253,7 +253,9 @@ export async function mailRoutes(
       if (!messageUid) return reply.status(400).send({ error: 'Invalid message id' });
       // images=1: the reader chose "show images" (direct https). images=auto: through the signed proxy
       // (never in Junk). Anything else, or nothing: blocked.
-      const imagesParam = String((req.query as { images?: string }).images || '');
+      const explicitImages = String((req.query as { images?: string }).images || '');
+      // No explicit choice: the mailbox's stored "load pictures" setting decides (proxied when on).
+      const imagesParam = explicitImages || (fastify.mailloomSettings.get(config.email).loadPictures ? 'auto' : '');
       const images = ['1', 'true'].includes(imagesParam);
       const proxyImage =
         imagesParam === 'auto' && opts.sessionSecret
