@@ -20,6 +20,8 @@ interface ConnectModalProps {
   onConnected: (account: UserAccount, rememberMe: boolean) => void;
   /** Set when an account's session ended: the form is prefilled and explains why. */
   reauthEmail?: string;
+  /** A short line above the form saying why the person is here (e.g. a pending Connect request). */
+  hint?: string;
   isAddingAccount?: boolean;
   onCancel?: () => void;
   canInstall?: boolean;
@@ -36,7 +38,8 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
   onInstallApp,
   notificationPermission = 'default',
   onRequestNotifications,
-  reauthEmail
+  reauthEmail,
+  hint
 }) => {
   // Unticked by default: a short session that ends when idle. Ticked keeps this browser signed in for 30 days.
   // On by default in the installed app (a phone or computer of one's own); off in a browser tab, which may be shared.
@@ -125,6 +128,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
         {/* Error notification */}
         {/* Direct Mailbox Login Form */}
         <form onSubmit={handleConnectCustom} className="p-6 space-y-4 text-xs">
+          {hint && <p className="text-[13px] font-semibold text-ink">{hint}</p>}
           {errorMsg && (
             <div id="connect-error" role="alert" className="flex items-start gap-2 rounded border border-warn-line border-l-4 border-l-warn-ink bg-warn-bg px-3 py-2.5 text-xs text-warn-ink">
               <AlertCircle className="w-4 h-4 shrink-0 mt-px" aria-hidden="true" />

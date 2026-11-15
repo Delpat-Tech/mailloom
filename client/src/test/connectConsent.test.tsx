@@ -111,6 +111,9 @@ describe('ConnectConsent', () => {
     const send = screen.getByLabelText(/Send, reply/) as HTMLInputElement;
     expect([read.checked, organise.checked, send.checked]).toEqual([true, true, true]);
     expect(read.disabled).toBe(true);
+    expect(screen.getByRole('checkbox', { name: /read and search mail, always on/i })).toBe(read);
+    expect(screen.getByRole('checkbox', { name: /move, flag/i })).toBe(organise);
+    expect(screen.getByRole('checkbox', { name: /send/i })).toBe(send);
     expect(organise.disabled).toBe(false);
     expect(screen.getByLabelText(/Your mailbox password/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Allow' })).toBeTruthy();
@@ -192,6 +195,7 @@ describe('ConnectConsent', () => {
     const user = userEvent.setup();
     server({ accounts: [] });
     render(<ConnectConsent requestId={ID} navigate={vi.fn()} />);
+    await screen.findByText('Sign in to continue connecting.');
     await user.type(await screen.findByLabelText(/Email Address/), A1.email);
     await user.type(screen.getByLabelText(/^Password/), 'pw');
     await user.click(screen.getByRole('button', { name: /Sign In to Mailbox/ }));
