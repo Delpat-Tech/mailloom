@@ -5,21 +5,26 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- 18 Nov: live v2026.11.18 at https://mail.delpat.in/mail/ (Connect Mailloom on; Work OS connected 18 Nov). Om's session ended 18 Nov;
-  status note in Work OS (Mailloom > "Status and handover (18 Nov 2026)").
+- 18 Nov: live v2026.11.18. Local main f1bc1a6 (not pushed) holds: open-app self-update, preview fix (second 128 KB pass,
+  capped 20 msgs / 1 MB, negative cache), Report a problem (text only, to Work OS intake), nightly server self-updater
+  (main-only, notices via Work OS /api/intake/mailloom/notice). All reviewed; tests 399 + 254 + 34, e2e 121, built-app check OK.
+  Waiting on Om's go to push main and publish the release.
 
 ## Next
-1. Release main (3436564 open-app self-update, c65e979 preview without CSS) once builder-b's second-pass preview fetch
-   (big <style> newsletters showed "No text content available") is merged; built-app check, then `sudo mailloom-update` (Om).
-2. Server self-update (builder-a, b8f2388..d184757 + uncommitted WSL e2e harness in mailloom-A): finish scripts/test/update-e2e.sh
-   in WSL, one more security review, merge, release, then Om pastes the pinned install block (docs/deploy.md 8b) and sets
-   MAILLOOM_UPDATE_NOTIFY. Nightly 03:00 IST, main-only (Om's rule, 18 Nov).
+1. On Om's go: push main, `pnpm release`, publish the release (full SHA as --target), give Om: `sudo mailloom-update`,
+   the intake env block (WORKOS_INTAKE_URL, WORKOS_INTAKE_TOKEN generated on the server, WORKOS_NOTICE_URL), and the pinned
+   install block (docs/deploy.md 8b) with REF and the four digests from the release output.
+2. Om: give the Work OS bot View Channel + Send Messages in #mailloom; Work OS side sets MAILLOOM_INTAKE_TOKEN (same value)
+   and MAILLOOM_NOTICE_CHANNEL. Tell the Work OS session when the release is live.
 3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, icon reinstall, pull-to-refresh) wait on Om.
 4. Server OS: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
 5. Live server: Nginx /etc/nginx/templates/roundcube.tmpl (/mail/ and /api/ locations), systemd mailloom (www-data,
    /opt/www/mailloom + .env), intern build in /opt/www/mailloom.intern, Nginx backup /root/roundcube.tmpl.bak.
 
 ## Later
+- Updater nits from review: curl reads root's ~/.curlrc (add -q); a timed-out notice is retried and may post twice (next updater touch).
+- Report a problem: no "Report this" link on individual error states yet; ask Om whether new reports also post in #mailloom (Work OS side only).
+- In-app browser logs "unknown error fetching the script" on service-worker registration; /sw.js serves fine (check on a real browser).
 - Signed releases (minisign/cosign key on Om's machine) for the self-updater; CI-built release with attestation (waits on Om).
 - Connect: no Nginx rate limit on /oauth/authorize (in-app per-IP limiter only) (waits on real use).
 - Brand: MarkLoader (inline loader) exists but is unused; button spinners unchanged. index.html theme-color is #2F6CB5 while the launch screen is navy; first paint is white before JS (needs index.html/CSP touch) (waits on Om's view after phone use).
