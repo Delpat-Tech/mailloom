@@ -187,6 +187,14 @@ test('release file name needs a 10 to 40 digit hex hash', async () => {
   }
 });
 
+test('installed commit unknown to GitHub (404) -> refuse, not error', async () => {
+  const get = stub({ ...good, '/compare/': (p) => { if (p.includes(`/compare/${OLD}...`)) { const e = new GithubError('GitHub answered 404.'); e.status = 404; throw e; } return { status: 'ahead' }; } });
+  const d = await decide({ ...base, mode: 'auto', get });
+  assert.equal(d.action, 'refuse');
+  assert.equal(d.code, 'installed_unknown');
+  assert.match(d.message, /installed commit unknown/);
+});
+
 // Script hygiene: no noisy expected errors, and the health poll stays silent.
 const script = fs.readFileSync(new URL('../../deploy/mailloom-update.sh', import.meta.url), 'utf8');
 test('health-poll curl is silent: -fs without -S, stderr to /dev/null', () => {

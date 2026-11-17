@@ -16,6 +16,12 @@ set -Eeuo pipefail
 REPO="Delpat-Tech/mailloom"
 # MAILLOOM_UPDATE_ROOT moves every path under a test folder (scripts/test/update-e2e.sh). It is empty on the server.
 R="${MAILLOOM_UPDATE_ROOT:-}"
+# The test overrides are refused anywhere but the harness: not "/", not under systemd, and only in a folder the harness marked.
+if [ -n "$R" ] || [ -n "${MAILLOOM_UPDATE_DECIDE:-}" ] || [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ] || [ -n "${MAILLOOM_UPDATE_TEST_API:-}" ]; then
+  if [ -z "$R" ] || [ "$R" = "/" ] || [ -n "${INVOCATION_ID:-}" ] || [ ! -f "$R/.mailloom-e2e" ]; then
+    echo "Test overrides (MAILLOOM_UPDATE_*) are only accepted by the test harness. Nothing changed."; exit 1
+  fi
+fi
 APP="$R/opt/www/mailloom"
 PREV="$R/opt/www/mailloom.prev"
 NEXT="$R/opt/www/mailloom.next"
@@ -104,7 +110,7 @@ restore_previous() {
 }
 
 CUR="$(head -1 "$APP/VERSION" 2>/dev/null || echo unknown)"
-RTAG="-"; NAME=""; WORK=""; STAGE=pre   # STAGE: pre -> stopping -> swapping -> swapped
+RTAG="-"; NAME=""; WORK=""; STAGE=pre   # STAGE: pre -> stopping -> swapping -> swapped -> restoring; rollback for --rollback
 
 on_exit() { [ -z "$WORK" ] || rm -rf "$WORK"; }
 trap on_exit EXIT
@@ -118,7 +124,18 @@ on_err() {
   what="The update stopped by an unexpected error at line $line. Release: $RTAG. Running before: $CUR."
   case "$STAGE" in
     stopping) systemctl start mailloom || true ;;
+    restoring)
+      # The restore itself failed part-way: do not run it twice.
+      what="$what The automatic restore failed part-way. Check the server now: ls /opt/www and journalctl -u mailloom -n 30." ;;
+    rollback)
+      if [ ! -e "$APP" ] && [ -d "$APP.bad" ]; then
+        mv "$APP.bad" "$APP" && what="$what The version that was running was put back from $APP.bad."
+      fi
+      systemctl start mailloom || true
+      if healthy; then what="$what The service is answering."; else what="$what The service is NOT answering: check the server now."; fi
+      ;;
     swapping | swapped)
+      STAGE=restoring
       restore_previous
       if healthy; then what="$what The previous version is running again."; else what="$what The service is NOT answering: check the server now."; fi
       [ -z "$NAME" ] || skip_set "$NAME"
@@ -133,7 +150,7 @@ trap 'on_err $LINENO' ERR
 if [ "$ROLLBACK" = 1 ]; then
   [ -d "$PREV" ] || { echo "No previous version in $PREV."; exit 1; }
   if [ "$CHECK" = 1 ]; then echo "Would put back: $(head -1 "$PREV/VERSION" 2>/dev/null) (running now: $CUR). Nothing changed."; exit 0; fi
-  STAGE=stopping
+  STAGE=rollback
   systemctl stop mailloom || true
   rm -rf "$APP.bad"; mv "$APP" "$APP.bad"; mv "$PREV" "$APP"
   systemctl start mailloom || true
@@ -209,8 +226,6 @@ if [ "$CHECK" = 1 ]; then
   exit 0
 fi
 
-# A release installed by hand is wanted: it clears any "do not retry" mark.
-[ "$AUTO" = 1 ] || skip_clear
 echo "Installing $RTAG ($NAME). Running now: $CUR"
 
 # ---- download and verify -----------------------------------------------------------------------
@@ -256,8 +271,9 @@ install -m 640 -o root -g www-data "$APP/.env" "$NEXT/.env"
 
 STAGE=stopping
 systemctl stop mailloom
+rm -rf "$PREV"   # still "stopping": if this fails, the old version is untouched and is simply started again
 STAGE=swapping
-rm -rf "$PREV"; mv "$APP" "$PREV"; mv "$NEXT" "$APP"
+mv "$APP" "$PREV"; mv "$NEXT" "$APP"
 STAGE=swapped
 systemctl start mailloom || true
 
@@ -269,6 +285,7 @@ if healthy; then
 else
   echo "New version did not start; putting the previous one back."
   journalctl -u mailloom -n 15 --no-pager 2>/dev/null | redact || true
+  STAGE=restoring
   restore_previous
   STAGE=pre
   skip_set "$NAME"

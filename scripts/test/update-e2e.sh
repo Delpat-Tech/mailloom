@@ -83,8 +83,14 @@ cat >"$STUB_DIR/mail/$(date +%s%N).eml"
 EOF
 cat >"$STUB_DIR/bin/mv" <<'EOF'
 #!/bin/bash
-if [ -f "$STUB_DIR/failmv" ]; then case "${@: -2:1}" in *.next) exit 1 ;; esac; fi
+# failmv holds the suffix of the source path whose move must fail (.next = the swap, .prev = the rollback)
+if [ -f "$STUB_DIR/failmv" ]; then case "${@: -2:1}" in *"$(cat "$STUB_DIR/failmv")") exit 1 ;; esac; fi
 exec /bin/mv "$@"
+EOF
+cat >"$STUB_DIR/bin/rm" <<'EOF'
+#!/bin/bash
+if [ -f "$STUB_DIR/failrm" ]; then case "${@: -1}" in *.prev) exit 1 ;; esac; fi
+exec /bin/rm "$@"
 EOF
 cat >"$STUB_DIR/bin/cp" <<'EOF'
 #!/bin/bash
@@ -121,8 +127,8 @@ run() { RUNID=$((RUNID + 1)); OUT="$(bash "$SCRIPT" "$@" 2>&1)"; RC=$?; }
 section() { echo; echo "== $1"; }
 
 reset() {
-  systemctl stop mailloom; rm -f "$STUB_DIR"/{badbuild,failmv,failcp,slowstop}
-  rm -rf "$R" "$MAIL"; mkdir -p "$APP" "$R/usr/sbin" "$MAIL"
+  systemctl stop mailloom; rm -f "$STUB_DIR"/{badbuild,failmv,failcp,failrm,slowstop}
+  rm -rf "$R" "$MAIL"; mkdir -p "$APP" "$R/usr/sbin" "$MAIL"; : >"$R/.mailloom-e2e"
   printf 'mailloom-%s\nbuilt test\n' "$OLD" >"$APP/VERSION"
   echo "// old" >"$APP/server.mjs"
   printf 'PORT=%s\nMAILLOOM_UPDATE_NOTIFY=ops@example.com\nSESSION_SECRET=zzz\n' "$PORT" >"$APP/.env"
@@ -257,7 +263,7 @@ done
 
 # ---- (g) failures during the install -----------------------------------------------------------
 section "(g) an error in the middle of the swap restores the previous version"
-reset; touch "$STUB_DIR/failmv"
+reset; echo .next >"$STUB_DIR/failmv"
 MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
 echo "$OUT" | sed 's/^/        | /'
 rm -f "$STUB_DIR/failmv"
@@ -276,6 +282,51 @@ check "exit 1" test "$RC" = 1
 check "old version still in place" test "$(version)" = "mailloom-$OLD" -a ! -e "$PREV"
 check "service answers" healthy
 check "email: aborted" bash -c 'grep -q "^Subject: Mailloom update aborted at line" "$0"/*.eml' "$MAIL"
+
+# ---- (i) S1: the old copy cannot be deleted ----------------------------------------------------
+section "(i) a failure while clearing the old backup leaves the running version untouched"
+reset; mkdir -p "$PREV"; echo older >"$PREV/VERSION"; touch "$STUB_DIR/failrm"
+MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+rm -f "$STUB_DIR/failrm"
+check "exit 1" test "$RC" = 1
+check "running version never moved" test "$(version)" = "mailloom-$OLD" -a ! -e "$APP.bad"
+check "service answers" healthy
+check "old backup still there" test "$(cat "$PREV/VERSION")" = older
+check "email: aborted" bash -c 'grep -q "^Subject: Mailloom update aborted at line" "$0"/*.eml' "$MAIL"
+check "no skip written (nothing was tried)" test ! -e "$STATE/skip"
+
+# ---- (j) S2: a failed manual install keeps the do-not-retry mark ---------------------------------
+section "(j) the skip mark is only cleared by a healthy install"
+reset; mkdir -p "$STATE"; echo mailloom-0000000000.tar.gz >"$STATE/skip"; touch "$STUB_DIR/failcp"
+MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run
+rm -f "$STUB_DIR/failcp"
+check "manual install failed" test "$RC" = 1
+check "skip mark still there" test "$(cat "$STATE/skip")" = mailloom-0000000000.tar.gz
+MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run
+check "healthy manual install clears it" test "$RC" = 0 -a ! -e "$STATE/skip"
+
+# ---- (k) S3: --rollback fails half-way ------------------------------------------------------------
+section "(k) a failed --rollback puts the running version back"
+reset; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run
+echo .prev >"$STUB_DIR/failmv"; run --rollback
+rm -f "$STUB_DIR/failmv"
+check "exit 1" test "$RC" = 1
+check "the version that was running is back" test "$(version)" = "$LVER" -a ! -e "$APP.bad"
+check "service answers" healthy
+check "email says aborted and put back" bash -c 'grep -q "^Subject: Mailloom update aborted at line" "$0"/*.eml && grep -q "put back from" "$0"/*.eml' "$MAIL"
+
+# ---- (l) the test overrides are refused outside the harness ---------------------------------------
+section "(l) test overrides are refused outside the harness"
+mkdir -p "$SB/nomarker"
+refused() { [ "$RC" = 1 ] && has "only accepted by the test harness"; }
+OUT="$(MAILLOOM_UPDATE_ROOT="$SB/nomarker" bash "$SCRIPT" --check 2>&1)"; RC=$?
+check "folder without marker refused" refused
+OUT="$(MAILLOOM_UPDATE_ROOT=/ bash "$SCRIPT" --check 2>&1)"; RC=$?
+check "root / refused" refused
+OUT="$(INVOCATION_ID=abc bash "$SCRIPT" --check 2>&1)"; RC=$?
+check "refused under systemd" refused
+OUT="$(env -u MAILLOOM_UPDATE_ROOT bash "$SCRIPT" --check 2>&1)"; RC=$?
+check "helper override without a root refused" refused
 
 # ---- (h) lock ----------------------------------------------------------------------------------
 section "(h) two runs at once"

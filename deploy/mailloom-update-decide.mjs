@@ -28,7 +28,11 @@ export async function fetchJson(path, fetchImpl = fetch) {
   } catch (e) {
     throw new GithubError(`Could not reach GitHub (${e && e.message ? e.message : e}).`);
   }
-  if (!res.ok) throw new GithubError(`GitHub answered ${res.status} for ${path}.`);
+  if (!res.ok) {
+    const e = new GithubError(`GitHub answered ${res.status} for ${path}.`);
+    e.status = res.status;
+    throw e;
+  }
   try {
     return await res.json();
   } catch {
@@ -106,7 +110,15 @@ export async function decide({ repo, mode, tag, installed, skip, get }) {
       // The nightly run only ever moves forward: the candidate must be strictly ahead of what is installed.
       const m = /^mailloom-([0-9a-f]{10,40})$/.exec(installed || '');
       if (!m) return out({ code: 'installed_unknown', tag: t, commit, asset, message: `Cannot tell which commit is installed (${installed || 'unknown'}), so ${t} is not installed automatically. Install it by hand.` });
-      const fwd = await get(`/repos/${repo}/compare/${m[1]}...${commit}?per_page=1`);
+      let fwd;
+      try {
+        fwd = await get(`/repos/${repo}/compare/${m[1]}...${commit}?per_page=1`);
+      } catch (e) {
+        if (e instanceof GithubError && e.status === 404) {
+          return out({ code: 'installed_unknown', tag: t, commit, asset, message: `installed commit unknown to GitHub (${installed}), so ${t} is not installed automatically. Install it by hand.` });
+        }
+        throw e;
+      }
       if (fwd && fwd.status === 'identical') return out({ action: 'noop', code: 'same', tag: t, commit, asset, message: `already running ${t}` });
       if (!fwd || fwd.status !== 'ahead') {
         return out({ code: 'not_newer', tag: t, commit, asset, message: `${t} is not newer than the installed ${installed} (GitHub says: ${fwd && fwd.status ? fwd.status : 'unknown'}), so the nightly run will not install it. Nothing changed.` });
