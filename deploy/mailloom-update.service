@@ -1,0 +1,9 @@
+[Unit]
+Description=Update Mailloom to the latest release on main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mailloom-update --auto
+TimeoutStartSec=15min

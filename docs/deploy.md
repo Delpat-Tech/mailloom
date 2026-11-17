@@ -258,6 +258,66 @@ sudo -u mailloom -H pm2 restart mailloom --update-env
 The sessions database is shared by all releases. A new release may add tables; an older one ignores them, so
 rolling back keeps everyone signed in. Delete release folders older than the last three once a month.
 
+## 8b. Automatic nightly updates (systemd server)
+
+The live server runs Mailloom as the systemd unit `mailloom` and updates itself every night at 03:00 India time.
+It installs only a release whose commit is on `main`; anything else is refused and Om gets an email.
+A pre-release or draft is never installed by the timer. If nothing new was released, nothing happens and no email is sent.
+
+**Step 1: install (the first step, because the old `mailloom-update` on the server has no main-only check).**
+Paste on the server. `v2026.11.18` is a placeholder: use the newest release tag that contains these files.
+
+```bash
+TAG=v2026.11.18                      # a release tag that includes deploy/mailloom-update-decide.mjs
+RAW=https://raw.githubusercontent.com/Delpat-Tech/mailloom/$TAG/deploy
+sudo mkdir -p /usr/local/lib/mailloom
+sudo curl -fsSL $RAW/mailloom-update.sh          -o /usr/local/bin/mailloom-update
+sudo curl -fsSL $RAW/mailloom-update-decide.mjs  -o /usr/local/lib/mailloom/update-decide.mjs
+sudo curl -fsSL $RAW/mailloom-update.service     -o /etc/systemd/system/mailloom-update.service
+sudo curl -fsSL $RAW/mailloom-update.timer       -o /etc/systemd/system/mailloom-update.timer
+sudo chmod 755 /usr/local/bin/mailloom-update
+sudo chmod 644 /usr/local/lib/mailloom/update-decide.mjs /etc/systemd/system/mailloom-update.*
+```
+
+Who gets the emails (once; replace the address):
+
+```bash
+grep -q '^MAILLOOM_UPDATE_NOTIFY=' /opt/www/mailloom/.env \
+  && sudo sed -i 's|^MAILLOOM_UPDATE_NOTIFY=.*|MAILLOOM_UPDATE_NOTIFY=om@example.com|' /opt/www/mailloom/.env \
+  || echo 'MAILLOOM_UPDATE_NOTIFY=om@example.com' | sudo tee -a /opt/www/mailloom/.env >/dev/null
+```
+
+(The next update copies `.env` across, so the setting stays.) Then switch the timer on and look at it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now mailloom-update.timer
+systemctl list-timers mailloom-update.timer
+```
+
+The NEXT column should show 03:00 (the LEFT column counts down to it). If `systemd-analyze calendar "*-*-* 03:00:00 Asia/Kolkata"`
+complains, edit the timer and use the UTC line in its comment (21:30 UTC).
+
+**Dry run** (reports what it would do; installs nothing, sends no email):
+
+```bash
+sudo mailloom-update --check
+sudo mailloom-update --check v2026.11.18     # a specific tag
+```
+
+**Other commands**
+
+```bash
+sudo mailloom-update                         # update now (same checks as the nightly run)
+sudo mailloom-update --allow-prerelease TAG  # a release marked pre-release; its commit must still be on main
+sudo mailloom-update --rollback              # previous version
+sudo systemctl start mailloom-update.service # run the nightly job now
+journalctl -u mailloom-update -n 50          # what the nightly job did
+```
+
+There is deliberately no switch to install a commit that is not on main. To test an unmerged change, merge it
+to main first (or run it on a test server).
+
 ## 9. Trial checklist (test mailbox, before staff)
 
 Create a test mailbox (for example `mailloom-test@delpat.in`) in iRedAdmin. Tick each item:
