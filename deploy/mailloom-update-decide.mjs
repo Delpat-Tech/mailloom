@@ -10,7 +10,8 @@
 //   ACTION: install | noop | refuse | error
 import { fileURLToPath } from 'node:url';
 
-const API = 'https://api.github.com';
+// Tests only: a local stand-in for the API, honoured only together with MAILLOOM_UPDATE_ROOT (never set on the server).
+const API = (process.env.MAILLOOM_UPDATE_ROOT && process.env.MAILLOOM_UPDATE_TEST_API) || 'https://api.github.com';
 const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const ASSET_RE = /^mailloom-[0-9a-f]{10,40}\.tar\.gz$/;
 const SHA_RE = /^[0-9a-f]{40}$/;

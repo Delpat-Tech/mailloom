@@ -14,12 +14,15 @@
 set -Eeuo pipefail
 
 REPO="Delpat-Tech/mailloom"
-APP="/opt/www/mailloom"
-PREV="/opt/www/mailloom.prev"
-NEXT="/opt/www/mailloom.next"
-STATE="/var/lib/mailloom-update"
-DECIDE="${MAILLOOM_UPDATE_DECIDE:-/usr/local/lib/mailloom/update-decide.mjs}"
-LOCK="/run/mailloom-update.lock"
+# MAILLOOM_UPDATE_ROOT moves every path under a test folder (scripts/test/update-e2e.sh). It is empty on the server.
+R="${MAILLOOM_UPDATE_ROOT:-}"
+APP="$R/opt/www/mailloom"
+PREV="$R/opt/www/mailloom.prev"
+NEXT="$R/opt/www/mailloom.next"
+STATE="$R/var/lib/mailloom-update"
+DECIDE="${MAILLOOM_UPDATE_DECIDE:-$R/usr/local/lib/mailloom/update-decide.mjs}"
+LOCK="$R/run/mailloom-update.lock"
+SENDMAIL="$R/usr/sbin/sendmail"
 PORT="$(grep -E '^PORT=' "$APP/.env" 2>/dev/null | cut -d= -f2 || true)"; PORT="${PORT:-3000}"
 
 [ "$(id -u)" = 0 ] || { echo "Run with sudo."; exit 1; }
@@ -43,6 +46,7 @@ if [ "$PRE" = 1 ] && [ -z "$TAG" ]; then echo "--allow-prerelease needs a tag, f
 if [ "$AUTO" = 1 ] && { [ -n "$TAG" ] || [ "$ROLLBACK" = 1 ] || [ "$PRE" = 1 ]; }; then echo "--auto takes no tag and no other mode."; exit 1; fi
 
 install -d -m 0700 -o root -g root "$STATE"
+[ -z "$R" ] || mkdir -p "$(dirname "$LOCK")"
 
 # ---- one update at a time (the timer and a manual run never overlap) ---------------------------
 exec 9>"$LOCK"
@@ -61,14 +65,14 @@ NOTIFY="$(grep -E '^MAILLOOM_UPDATE_NOTIFY=' "$APP/.env" 2>/dev/null | head -1 |
 
 # notify "subject" "body text". Never fails the update.
 notify() {
-  [ "$CHECK" = 0 ] && [ -n "$NOTIFY" ] && [ -x /usr/sbin/sendmail ] || return 0
+  [ "$CHECK" = 0 ] && [ -n "$NOTIFY" ] && [ -x "$SENDMAIL" ] || return 0
   {
     printf 'To: %s\nFrom: Mailloom updater <root@%s>\nSubject: %s\nDate: %s\nMIME-Version: 1.0\n' \
       "$NOTIFY" "$(hostname -f 2>/dev/null || hostname)" "$1" "$(date -R)"
     printf 'Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 8bit\n\n'
     printf '%s\n' "$2" | redact
     printf '\nTime: %s\nServer: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$(hostname)"
-  } | /usr/sbin/sendmail -oi -t >/dev/null 2>&1 || true
+  } | "$SENDMAIL" -oi -t >/dev/null 2>&1 || true
 }
 
 # State kept between runs (root only): the release not to retry, the failed-check count, the last refusal mailed.
@@ -212,8 +216,14 @@ echo "Installing $RTAG ($NAME). Running now: $CUR"
 # ---- download and verify -----------------------------------------------------------------------
 WORK="$(mktemp -d)"
 fail_early() { echo "$1 Nothing changed."; notify "Mailloom update to $RTAG failed before installing" "$1 Nothing was changed. Running now: $CUR"; exit 1; }
-curl -fsSL --max-time 300 -H "Accept: application/octet-stream" -o "$WORK/$NAME" "https://api.github.com/repos/$REPO/releases/assets/$ID" \
-  || fail_early "Could not download the release file."
+if [ -n "$R" ] && [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ]; then
+  # Tests only (needs MAILLOOM_UPDATE_ROOT): use a prepared file instead of the download.
+  cp "$MAILLOOM_UPDATE_ASSET_FILE" "$WORK/$NAME"
+  DIGEST="$(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
+else
+  curl -fsSL --max-time 300 -H "Accept: application/octet-stream" -o "$WORK/$NAME" "https://api.github.com/repos/$REPO/releases/assets/$ID" \
+    || fail_early "Could not download the release file."
+fi
 GOT="$(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
 if [ "$GOT" != "$DIGEST" ]; then
   echo "Checksum does not match GitHub's. Nothing changed."

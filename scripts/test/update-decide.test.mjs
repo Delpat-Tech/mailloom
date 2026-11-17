@@ -201,8 +201,8 @@ test('health-poll curl is silent: -fs without -S, stderr to /dev/null', () => {
 
 test('script safety pieces are present', () => {
   assert.match(script, /trap 'on_err \$LINENO' ERR/);
-  assert.match(script, /LOCK="\/run\/mailloom-update\.lock"/);
-  assert.match(script, /sendmail -oi -t/);
+  assert.match(script, /LOCK="\$R\/run\/mailloom-update\.lock"/);
+  assert.match(script, /-oi -t/);
   assert.match(script, /MIME-Version: 1\.0/);
   assert.match(script, /--no-same-owner --no-same-permissions/);
 });
