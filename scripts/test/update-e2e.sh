@@ -2,7 +2,7 @@
 # End-to-end test of deploy/mailloom-update.sh in a sandbox. Linux only (run it in WSL or CI), as root.
 #   bash scripts/test/update-e2e.sh
 # Needs: node 22, curl, flock, tar, internet (reads the real GitHub API and downloads the latest release file, about 2 MB).
-# Everything lives in a temp folder (MAILLOOM_UPDATE_ROOT); systemctl, journalctl, a fake Discord webhook server, and (for failure
+# Everything lives in a temp folder (MAILLOOM_UPDATE_ROOT); systemctl, journalctl, a fake Work OS notice endpoint, and (for failure
 # injection) cp and mv are stubs found through PATH. The real /opt, /var and /etc are never touched.
 set -uo pipefail
 
@@ -78,21 +78,35 @@ cat >"$STUB_DIR/bin/journalctl" <<'EOF'
 #!/bin/bash
 printf 'mailloom[1]: starting\nmailloom[1]: SESSION_SECRET=hunter2\nmailloom[1]: Error: boom\n'
 EOF
-# A fake Discord webhook: stores each post's text; anything that breaks the rules (mentions on, over 1900 characters) is stored as .bad.
-cat >"$STUB_DIR/webhook.js" <<'EOF'
+# A fake Work OS notice endpoint. It checks method, path, bearer token, content type, body size and text length, records every
+# request as .req, and stores accepted text as .msg (anything that breaks the contract is .bad). $STUB_DIR/mode picks the answer:
+# ok (204, default) | 429once (429 with Retry-After: 1 on the first request, then 204) | 401 | 500
+cat >"$STUB_DIR/workos.js" <<'EOF'
 const http = require('http'), fs = require('fs');
-let n = 0;
+const [port, dir, token, mode] = process.argv.slice(2, 6);
+let n = 0, last = '', first = true;
 http.createServer((q, r) => {
   let b = '';
   q.on('data', (d) => (b += d));
   q.on('end', () => {
+    let m = 'ok'; try { m = fs.readFileSync(mode, 'utf8').trim() || 'ok'; } catch (e) {}
+    if (m !== last) { last = m; first = true; }
     let j = {}; try { j = JSON.parse(b); } catch (e) {}
-    const ok = q.method === 'POST' && q.url === '/api/webhooks/123/abc_DEF-9' && typeof j.content === 'string' && j.content.length <= 1900
-      && j.allowed_mentions && Array.isArray(j.allowed_mentions.parse) && j.allowed_mentions.parse.length === 0;
-    fs.writeFileSync(process.argv[3] + '/' + Date.now() + '-' + (n++) + (ok ? '.msg' : '.bad'), ok ? j.content : b);
-    r.statusCode = ok ? 204 : 400; r.end();
+    const ok = q.method === 'POST' && q.url === '/api/intake/mailloom/notice'
+      && q.headers.authorization === 'Bearer ' + token && /^application\/json/.test(q.headers['content-type'] || '')
+      && Buffer.byteLength(b) <= 4096 && typeof j.text === 'string' && j.text.length >= 1 && j.text.length <= 1900;
+    const id = Date.now() + '-' + (n++);
+    fs.writeFileSync(dir + '/' + id + '.req', q.method + ' ' + q.url + ' ' + m);
+    let code = ok ? 204 : 400;
+    if (ok && m === '401') code = 401;
+    else if (ok && m === '500') code = 500;
+    else if (ok && m === '429once' && first) { code = 429; r.setHeader('Retry-After', '1'); }
+    first = false;
+    if (code === 204) fs.writeFileSync(dir + '/' + id + '.msg', j.text);
+    if (!ok) fs.writeFileSync(dir + '/' + id + '.bad', b);
+    r.statusCode = code; r.end();
   });
-}).listen(+process.argv[2], '127.0.0.1');
+}).listen(+port, '127.0.0.1');
 EOF
 cat >"$STUB_DIR/bin/mv" <<'EOF'
 #!/bin/bash
@@ -115,9 +129,11 @@ export OLD_VERSION="$OLD"
 
 WHPORT="$(node -e 'const s=require("net").createServer().listen(0,()=>{console.log(s.address().port);s.close()})')"
 mkdir -p "$STUB_DIR/mail"
-node "$STUB_DIR/webhook.js" "$WHPORT" "$STUB_DIR/mail" & WH_PID=$!
-WEBHOOK_URL="http://127.0.0.1:$WHPORT/api/webhooks/123/abc_DEF-9"
-export MAILLOOM_UPDATE_WEBHOOK_RE="^http://127[.]0[.]0[.]1:[0-9]+/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$"
+TOKEN="e2eTok3n0123456789abcdefghijklmnopqrstuvwxyz"
+start_workos() { node "$STUB_DIR/workos.js" "$WHPORT" "$STUB_DIR/mail" "$TOKEN" "$STUB_DIR/mode" & WH_PID=$!; sleep 0.5; }
+start_workos
+NOTICE_URL="http://127.0.0.1:$WHPORT/api/intake/mailloom/notice"
+export MAILLOOM_UPDATE_NOTICE_URL_RE="^http://127[.]0[.]0[.]1:[0-9]+/api/intake/mailloom/notice$"
 GPPORT="$(node -e 'const s=require("net").createServer().listen(0,()=>{console.log(s.address().port);s.close()})')"
 mkdir -p "$STUB_DIR/ghcache"
 node "$STUB_DIR/ghproxy.js" "$GPPORT" "$STUB_DIR/ghcache" & GP_PID=$!
@@ -142,16 +158,16 @@ version() { head -1 "$APP/VERSION"; }
 healthy() { curl -fs -o /dev/null "http://127.0.0.1:$PORT/api/auth/accounts"; }
 run() {
   RUNID=$((RUNID + 1)); OUT="$(bash "$SCRIPT" "$@" 2>&1)"; RC=$?
-  case "$OUT" in *api/webhooks*|*abc_DEF*) check "the webhook address is never printed" false ;; esac
+  case "$OUT" in *"$TOKEN"*|*"/api/intake/"*|*"Bearer"*) check "the notice token and address are never printed" false ;; esac
 }
 section() { echo; echo "== $1"; }
 
 reset() {
-  systemctl stop mailloom; rm -f "$STUB_DIR"/{badbuild,failmv,failcp,failrm,slowstop}
+  systemctl stop mailloom; rm -f "$STUB_DIR"/{badbuild,failmv,failcp,failrm,slowstop,mode}
   rm -rf "$R" "$MAIL"; mkdir -p "$APP" "$R/usr/sbin" "$MAIL"; : >"$R/.mailloom-e2e"
   printf 'mailloom-%s\nbuilt test\n' "$OLD" >"$APP/VERSION"
   echo "// old" >"$APP/server.mjs"
-  printf 'PORT=%s\nMAILLOOM_UPDATE_DISCORD_WEBHOOK=%s\nSESSION_SECRET=zzz\n' "$PORT" "$WEBHOOK_URL" >"$APP/.env"
+  printf 'PORT=%s\nWORKOS_NOTICE_URL=%s\nWORKOS_INTAKE_TOKEN=%s\nSESSION_SECRET=zzz\n' "$PORT" "$NOTICE_URL" "$TOKEN" >"$APP/.env"
   chmod 640 "$APP/.env"
   systemctl start mailloom
 }
@@ -347,22 +363,36 @@ check "refused under systemd" refused
 OUT="$(env -u MAILLOOM_UPDATE_ROOT bash "$SCRIPT" --check 2>&1)"; RC=$?
 check "helper override without a root refused" refused
 
-# ---- (m) webhook rules -----------------------------------------------------------------------------
-section "(m) an invalid webhook is refused and never printed; posts follow the rules"
-reset; sed -i 's#^MAILLOOM_UPDATE_DISCORD_WEBHOOK=.*#MAILLOOM_UPDATE_DISCORD_WEBHOOK=https://evil.example/api/webhooks/1/secrettoken#' "$APP/.env"
-MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
-check "says webhook not valid" has "webhook not valid"
-check "does not print the bad value" hasnt "evil.example"
-check "update still happened" test "$RC" = 0 -a "$(version)" = "$LVER"
-check "nothing posted" test "$(mails)" = 0
+# ---- (m) Work OS notices ------------------------------------------------------------------------
+reqs() { find "$MAIL" -name '*.req' | wc -l; }
+section "(m) notices: contract, retry rules, bad config, unreachable endpoint"
 reset; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
-check "all posts accepted by the fake Discord (no mentions, short)" test -z "$(find "$MAIL" -name '*.bad')"
-check "a post carries the prefix" bash -c 'grep -q "^Mailloom update: updated to" "$0"/*.msg' "$MAIL"
+check "one request, accepted (right header, body, size)" test "$(reqs)" = 1 -a -z "$(find "$MAIL" -name '*.bad')"
+check "the post is plain text with the prefix" bash -c 'grep -q "^Mailloom update: updated to" "$0"/*.msg' "$MAIL"
+check "the post has no token or .env contents" bash -c '! grep -q "e2eTok3n\|zzz\|SESSION_SECRET" "$0"/*.msg' "$MAIL"
+reset; echo 429once >"$STUB_DIR/mode"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "429 is retried once and then posted" test "$(reqs)" = 2 -a "$(mails)" = 1
+check "update fine" test "$RC" = 0 -a "$(version)" = "$LVER"
+reset; echo 401 >"$STUB_DIR/mode"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "401 is not retried" test "$(reqs)" = 1 -a "$(mails)" = 0
+check "401 does not fail the update" test "$RC" = 0 -a "$(version)" = "$LVER"
+check "it says so, with the status only" has "HTTP 401"
+reset; echo 500 >"$STUB_DIR/mode"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "500 is retried once, not more" test "$(reqs)" = 2
+check "500 does not fail the update" test "$RC" = 0 -a "$(version)" = "$LVER"
+reset; sed -i '/^WORKOS_INTAKE_TOKEN=/d' "$APP/.env"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "missing token: notices off, update still done, nothing sent" test "$RC" = 0 -a "$(version)" = "$LVER" -a "$(reqs)" = 0
+check "says notices off" has "notices off"
+reset; sed -i 's#^WORKOS_INTAKE_TOKEN=.*#WORKOS_INTAKE_TOKEN=tooshort#' "$APP/.env"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "short token: notices off" has "notices off"
+check "short token never printed" hasnt "tooshort"
+reset; sed -i 's#^WORKOS_NOTICE_URL=.*#WORKOS_NOTICE_URL=http://evil.example/notice#' "$APP/.env"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "bad address: notices off, nothing sent" test "$(reqs)" = 0 -a "$RC" = 0
+check "bad address never printed" hasnt "evil.example"
 kill "$WH_PID" 2>/dev/null; wait "$WH_PID" 2>/dev/null
 reset; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
-check "an unreachable Discord does not break the update" test "$RC" = 0 -a "$(version)" = "$LVER"
-node "$STUB_DIR/webhook.js" "$WHPORT" "$STUB_DIR/mail" & WH_PID=$!
-sleep 0.5
+check "an unreachable endpoint does not break the update" test "$RC" = 0 -a "$(version)" = "$LVER"
+start_workos
 
 # ---- (h) lock ----------------------------------------------------------------------------------
 section "(h) two runs at once"

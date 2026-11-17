@@ -135,17 +135,18 @@ export function toLine(d) {
   return [d.action, d.code, d.tag, d.commit, d.asset && d.asset.name, d.asset && d.asset.id, d.asset && d.asset.digest, d.message].map(f).join('\t');
 }
 
-// Discord post body for a plain-text note: markdown and @ characters escaped, mentions switched off, at most 1900 characters.
-export function discordPayload(text) {
-  const content = String(text).replace(/([\\*_~`|>#@[\]<])/g, '\\$1').slice(0, 1900);
-  return JSON.stringify({ content, allowed_mentions: { parse: [] } });
+// Work OS notice body: plain text, 1 to 1900 characters, whole request at most 4 KB. Mentions are handled by Work OS.
+export function noticePayload(text) {
+  let t = String(text).slice(0, 1900) || '-';
+  while (Buffer.byteLength(JSON.stringify({ text: t })) > 4000) t = t.slice(0, -50) || '-';
+  return JSON.stringify({ text: t });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   if (process.argv[2] === '--payload') {
     let s = '';
     for await (const c of process.stdin) s += c;
-    console.log(discordPayload(s));
+    console.log(noticePayload(s));
     process.exit(0);
   }
   const [repo, mode, installed, tag, skip] = process.argv.slice(2);

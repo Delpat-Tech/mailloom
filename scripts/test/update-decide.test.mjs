@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { decide, resolveTagToCommit, toLine, GithubError, discordPayload } from '../../deploy/mailloom-update-decide.mjs';
+import { decide, resolveTagToCommit, toLine, GithubError, noticePayload } from '../../deploy/mailloom-update-decide.mjs';
 
 const SHA = 'a'.repeat(10) + 'b'.repeat(30);
 const asset = { name: `mailloom-${SHA.slice(0, 10)}.tar.gz`, id: 7, digest: 'sha256:' + 'c'.repeat(64) };
@@ -213,17 +213,21 @@ test('script safety pieces are present', () => {
   assert.match(script, /--no-same-owner --no-same-permissions/);
 });
 
-test('Discord payload: markdown and @ escaped, mentions off, at most 1900 characters', () => {
-  const bs = String.fromCharCode(92);
-  const p = JSON.parse(discordPayload('hi @everyone *bold* [a](b) _x_'));
-  assert.deepEqual(p.allowed_mentions, { parse: [] });
-  assert.ok(p.content.includes(bs + '@everyone') && p.content.includes(bs + '*bold' + bs + '*'));
-  assert.ok(JSON.parse(discordPayload('x'.repeat(5000))).content.length <= 1900);
+test('notice payload: plain text, 1 to 1900 characters, whole body at most 4 KB', () => {
+  assert.deepEqual(JSON.parse(noticePayload('hello')), { text: 'hello' });
+  assert.equal(JSON.parse(noticePayload('x'.repeat(5000))).text.length, 1900);
+  assert.equal(JSON.parse(noticePayload('')).text, '-');
+  const wide = noticePayload('\u00e9\u20ac'.repeat(2000));
+  assert.ok(Buffer.byteLength(wide) <= 4096);
+  assert.ok(JSON.parse(wide).text.length >= 1);
 });
 
-test('webhook is passed to curl on stdin, never on a command line; no email path is left', () => {
+test('the token goes to curl on stdin only; no email or webhook path is left', () => {
   const curls = script.split('\n').filter((l) => /\bcurl\b/.test(l) && !l.trim().startsWith('#'));
-  for (const l of curls) assert.ok(!l.includes('$WEBHOOK') || l.includes('printf'), l);
-  assert.match(script, /curl -fsS -K - --max-time 10/);
-  assert.doesNotMatch(script, /sendmail|MAILLOOM_UPDATE_NOTIFY/i);
+  for (const l of curls) assert.ok(!l.includes('NOTICE_TOKEN') && !l.includes('Bearer'), l);
+  assert.match(script, /curl -s -K - --max-time 10/);
+  assert.match(script, /printf 'url = "%s"\\nheader = "Authorization: Bearer %s"\\n' "\$NOTICE_URL" "\$NOTICE_TOKEN"/);
+  assert.doesNotMatch(script, /sendmail|MAILLOOM_UPDATE_NOTIFY|DISCORD_WEBHOOK/i);
+  assert.match(script, /\{32,\}/);
+  assert.match(script, /notices off/);
 });
