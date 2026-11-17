@@ -2,7 +2,7 @@
 # End-to-end test of deploy/mailloom-update.sh in a sandbox. Linux only (run it in WSL or CI), as root.
 #   bash scripts/test/update-e2e.sh
 # Needs: node 22, curl, flock, tar, internet (reads the real GitHub API and downloads the latest release file, about 2 MB).
-# Everything lives in a temp folder (MAILLOOM_UPDATE_ROOT); systemctl, journalctl, sendmail, and (for failure
+# Everything lives in a temp folder (MAILLOOM_UPDATE_ROOT); systemctl, journalctl, a fake Work OS notice endpoint, and (for failure
 # injection) cp and mv are stubs found through PATH. The real /opt, /var and /etc are never touched.
 set -uo pipefail
 
@@ -27,6 +27,7 @@ PASS=0; FAIL=0
 cleanup() {
   [ -f "$STUB_DIR/pid" ] && kill "$(cat "$STUB_DIR/pid")" 2>/dev/null
   [ -n "${GP_PID:-}" ] && kill "$GP_PID" 2>/dev/null
+  [ -n "${WH_PID:-}" ] && kill "$WH_PID" 2>/dev/null
   rm -rf "$SB"
 }
 trap cleanup EXIT
@@ -77,9 +78,35 @@ cat >"$STUB_DIR/bin/journalctl" <<'EOF'
 #!/bin/bash
 printf 'mailloom[1]: starting\nmailloom[1]: SESSION_SECRET=hunter2\nmailloom[1]: Error: boom\n'
 EOF
-cat >"$STUB_DIR/sendmail" <<'EOF'
-#!/bin/bash
-cat >"$STUB_DIR/mail/$(date +%s%N).eml"
+# A fake Work OS notice endpoint. It checks method, path, bearer token, content type, body size and text length, records every
+# request as .req, and stores accepted text as .msg (anything that breaks the contract is .bad). $STUB_DIR/mode picks the answer:
+# ok (204, default) | 429once (429 with Retry-After: 1 on the first request, then 204) | 401 | 500
+cat >"$STUB_DIR/workos.js" <<'EOF'
+const http = require('http'), fs = require('fs');
+const [port, dir, token, mode] = process.argv.slice(2, 6);
+let n = 0, last = '', first = true;
+http.createServer((q, r) => {
+  let b = '';
+  q.on('data', (d) => (b += d));
+  q.on('end', () => {
+    let m = 'ok'; try { m = fs.readFileSync(mode, 'utf8').trim() || 'ok'; } catch (e) {}
+    if (m !== last) { last = m; first = true; }
+    let j = {}; try { j = JSON.parse(b); } catch (e) {}
+    const ok = q.method === 'POST' && q.url === '/api/intake/mailloom/notice'
+      && q.headers.authorization === 'Bearer ' + token && /^application\/json/.test(q.headers['content-type'] || '')
+      && Buffer.byteLength(b) <= 4096 && typeof j.text === 'string' && j.text.length >= 1 && j.text.length <= 1900;
+    const id = Date.now() + '-' + (n++);
+    fs.writeFileSync(dir + '/' + id + '.req', q.method + ' ' + q.url + ' ' + m);
+    let code = ok ? 204 : 400;
+    if (ok && m === '401') code = 401;
+    else if (ok && m === '500') code = 500;
+    else if (ok && m === '429once' && first) { code = 429; r.setHeader('Retry-After', '1'); }
+    first = false;
+    if (code === 204) fs.writeFileSync(dir + '/' + id + '.msg', j.text);
+    if (!ok) fs.writeFileSync(dir + '/' + id + '.bad', b);
+    r.statusCode = code; r.end();
+  });
+}).listen(+port, '127.0.0.1');
 EOF
 cat >"$STUB_DIR/bin/mv" <<'EOF'
 #!/bin/bash
@@ -97,9 +124,16 @@ cat >"$STUB_DIR/bin/cp" <<'EOF'
 if [ -f "$STUB_DIR/failcp" ]; then case "${@: -1}" in *.next) exit 1 ;; esac; fi
 exec /bin/cp "$@"
 EOF
-chmod +x "$STUB_DIR"/bin/* "$STUB_DIR/sendmail"
+chmod +x "$STUB_DIR"/bin/*
 export OLD_VERSION="$OLD"
 
+WHPORT="$(node -e 'const s=require("net").createServer().listen(0,()=>{console.log(s.address().port);s.close()})')"
+mkdir -p "$STUB_DIR/mail"
+TOKEN="e2eTok3n0123456789abcdefghijklmnopqrstuvwxyz"
+start_workos() { node "$STUB_DIR/workos.js" "$WHPORT" "$STUB_DIR/mail" "$TOKEN" "$STUB_DIR/mode" & WH_PID=$!; sleep 0.5; }
+start_workos
+NOTICE_URL="http://127.0.0.1:$WHPORT/api/intake/mailloom/notice"
+export MAILLOOM_UPDATE_NOTICE_URL_RE="^http://127[.]0[.]0[.]1:[0-9]+/api/intake/mailloom/notice$"
 GPPORT="$(node -e 'const s=require("net").createServer().listen(0,()=>{console.log(s.address().port);s.close()})')"
 mkdir -p "$STUB_DIR/ghcache"
 node "$STUB_DIR/ghproxy.js" "$GPPORT" "$STUB_DIR/ghcache" & GP_PID=$!
@@ -119,21 +153,22 @@ check() { # check "name" command...  (a failing check shows the output of the la
 }
 has() { printf '%s' "$OUT" | grep -qF -- "$1"; }
 hasnt() { ! printf '%s' "$OUT" | grep -qF -- "$1"; }
-mails() { find "$MAIL" -name '*.eml' | wc -l; }
-subjects() { cat "$MAIL"/*.eml 2>/dev/null | grep '^Subject:' ; }
+mails() { find "$MAIL" -name '*.msg' | wc -l; }
 version() { head -1 "$APP/VERSION"; }
 healthy() { curl -fs -o /dev/null "http://127.0.0.1:$PORT/api/auth/accounts"; }
-run() { RUNID=$((RUNID + 1)); OUT="$(bash "$SCRIPT" "$@" 2>&1)"; RC=$?; }
+run() {
+  RUNID=$((RUNID + 1)); OUT="$(bash "$SCRIPT" "$@" 2>&1)"; RC=$?
+  case "$OUT" in *"$TOKEN"*|*"/api/intake/"*|*"Bearer"*) check "the notice token and address are never printed" false ;; esac
+}
 section() { echo; echo "== $1"; }
 
 reset() {
-  systemctl stop mailloom; rm -f "$STUB_DIR"/{badbuild,failmv,failcp,failrm,slowstop}
+  systemctl stop mailloom; rm -f "$STUB_DIR"/{badbuild,failmv,failcp,failrm,slowstop,mode}
   rm -rf "$R" "$MAIL"; mkdir -p "$APP" "$R/usr/sbin" "$MAIL"; : >"$R/.mailloom-e2e"
   printf 'mailloom-%s\nbuilt test\n' "$OLD" >"$APP/VERSION"
   echo "// old" >"$APP/server.mjs"
-  printf 'PORT=%s\nMAILLOOM_UPDATE_NOTIFY=ops@example.com\nSESSION_SECRET=zzz\n' "$PORT" >"$APP/.env"
+  printf 'PORT=%s\nWORKOS_NOTICE_URL=%s\nWORKOS_INTAKE_TOKEN=%s\nSESSION_SECRET=zzz\n' "$PORT" "$NOTICE_URL" "$TOKEN" >"$APP/.env"
   chmod 640 "$APP/.env"
-  cp "$STUB_DIR/sendmail" "$R/usr/sbin/sendmail"
   systemctl start mailloom
 }
 
@@ -173,7 +208,7 @@ check "exit 0" test "$RC" = 0
 check "says what it would install" has "Would install $LTAG"
 check "says nothing changed" has "Nothing changed"
 check "files untouched" test "$(find "$R/opt" | sort | xargs sha256sum 2>/dev/null | sha256sum)" = "$before"
-check "no email" test "$(mails)" = 0
+check "no message" test "$(mails)" = 0
 check "no previous copy" test ! -e "$PREV"
 check "version unchanged" test "$(version)" = "mailloom-$OLD"
 
@@ -187,8 +222,8 @@ check "version is the release" test "$(version)" = "$LVER"
 check "service answers" healthy
 check "previous version kept" test "$(head -1 "$PREV/VERSION")" = "mailloom-$OLD"
 check ".env carried over, mode 640" bash -c 'grep -q "^PORT=$0" "$1/.env" && test "$(stat -c %a "$1/.env")" = 640 && test "$(stat -c %G "$1/.env")" = www-data' "$PORT" "$APP"
-check "one email: updated" bash -c 'test "$(find "$0" -name "*.eml" | wc -l)" = 1 && cat "$0"/*.eml | grep -q "^Subject: Mailloom updated to '"$LTAG"' (healthy)"' "$MAIL"
-check "email has no .env contents" bash -c '! cat "$0"/*.eml | grep -q "SESSION_SECRET\|zzz"' "$MAIL"
+check "one message: updated" bash -c 'test "$(find "$0" -name "*.msg" | wc -l)" = 1 && cat "$0"/*.msg | grep -q "Mailloom update: updated to '"$LTAG"' (healthy)"' "$MAIL"
+check "message has no .env contents" bash -c '! cat "$0"/*.msg | grep -q "SESSION_SECRET\|zzz"' "$MAIL"
 check "no curl noise" hasnt "curl:"
 check "no 'Failed' noise" hasnt "Failed"
 check "skip cleared" test ! -e "$STATE/skip"
@@ -198,7 +233,7 @@ section "(c) --auto again"
 run --auto
 check "exit 0" test "$RC" = 0
 check "already running" has "already running $LTAG"
-check "no new email" test "$(mails)" = 1
+check "no new message" test "$(mails)" = 1
 check "output is one line" test "$(printf '%s\n' "$OUT" | wc -l)" = 1
 
 # ---- (d) health failure ------------------------------------------------------------------------
@@ -211,16 +246,16 @@ check "says it put the previous one back" has "Previous version is running again
 check "version back to old" test "$(version)" = "mailloom-$OLD"
 check "service answers" healthy
 check "skip file names the release" test "$(cat "$STATE/skip")" = "$LNAME"
-check "email: rolled back" bash -c 'grep -q "^Subject: Mailloom update failed, rolled back to mailloom-'"$OLD"'" "$0"/*.eml' "$MAIL"
+check "message: rolled back" bash -c 'grep -q "Mailloom update: failed, rolled back to mailloom-'"$OLD"'" "$0"/*.msg' "$MAIL"
 check "secret line not shown" hasnt "hunter2"
-check "no log lines in the email" bash -c '! grep -q "boom\|starting" "$0"/*.eml' "$MAIL"
+check "no log lines in the message" bash -c '! grep -q "boom\|starting" "$0"/*.msg' "$MAIL"
 rm -f "$STUB_DIR/badbuild"; n="$(mails)"
 MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
 check "next --auto: exit 0, nothing installed" test "$RC" = 0 -a "$(version)" = "mailloom-$OLD"
 check "next --auto: says it is skipped" has "not tried again"
-check "skip noted by one email only" test "$(mails)" = "$((n + 1))"
+check "skip noted by one message only" test "$(mails)" = "$((n + 1))"
 run --auto
-check "third --auto: no more email" test "$(mails)" = "$((n + 1))"
+check "third --auto: no more message" test "$(mails)" = "$((n + 1))"
 
 # ---- (e) rollback ------------------------------------------------------------------------------
 section "(e) --rollback"
@@ -231,7 +266,7 @@ check "rollback exit 0" test "$RC" = 0
 check "back to old" test "$(version)" = "mailloom-$OLD"
 check "service answers" healthy
 check "skip written" test "$(cat "$STATE/skip")" = "$LNAME"
-check "email: rolled back" bash -c 'grep -q "^Subject: Mailloom rolled back to mailloom-'"$OLD"' (healthy)" "$0"/*.eml' "$MAIL"
+check "message: rolled back" bash -c 'grep -q "Mailloom update: rolled back to mailloom-'"$OLD"' (healthy)" "$0"/*.msg' "$MAIL"
 run --auto
 check "--auto does not undo the rollback" test "$RC" = 0 -a "$(version)" = "mailloom-$OLD"
 MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run
@@ -257,7 +292,7 @@ for kind in symlink hardlink dotdot absolute elsewhere; do
   check "$kind: says why" bash -c 'printf "%s" "$0" | grep -q "links or special files\|outside its own folder"' "$OUT"
   check "$kind: nothing changed" test "$(version)" = "mailloom-$OLD" -a ! -e "$PREV" -a ! -e "$R/opt/www/mailloom.next"
   check "$kind: service still answers" healthy
-  check "$kind: email says failed before installing" bash -c 'grep -q "^Subject: Mailloom update to .* failed before installing" "$0"/*.eml' "$MAIL"
+  check "$kind: message says failed before installing" bash -c 'grep -q "Mailloom update: failed before installing" "$0"/*.msg' "$MAIL"
   check "$kind: nothing escaped the sandbox" test ! -e /tmp/pwn -a ! -e "$SB/x/f"
 done
 
@@ -271,7 +306,7 @@ check "exit 1" test "$RC" = 1
 check "says it stopped" has "unexpected error at line"
 check "old version is back" test "$(version)" = "mailloom-$OLD"
 check "service answers" healthy
-check "email: aborted" bash -c 'grep -q "^Subject: Mailloom update aborted at line" "$0"/*.eml && grep -q "previous version is running again" "$0"/*.eml' "$MAIL"
+check "message: aborted" bash -c 'grep -q "Mailloom update: aborted at line" "$0"/*.msg && grep -q "previous version is running again" "$0"/*.msg' "$MAIL"
 check "release will not be retried" test "$(cat "$STATE/skip")" = "$LNAME"
 
 section "(g2) a failed copy before the swap changes nothing"
@@ -281,7 +316,7 @@ rm -f "$STUB_DIR/failcp"
 check "exit 1" test "$RC" = 1
 check "old version still in place" test "$(version)" = "mailloom-$OLD" -a ! -e "$PREV"
 check "service answers" healthy
-check "email: aborted" bash -c 'grep -q "^Subject: Mailloom update aborted at line" "$0"/*.eml' "$MAIL"
+check "message: aborted" bash -c 'grep -q "Mailloom update: aborted at line" "$0"/*.msg' "$MAIL"
 
 # ---- (i) S1: the old copy cannot be deleted ----------------------------------------------------
 section "(i) a failure while clearing the old backup leaves the running version untouched"
@@ -292,7 +327,7 @@ check "exit 1" test "$RC" = 1
 check "running version never moved" test "$(version)" = "mailloom-$OLD" -a ! -e "$APP.bad"
 check "service answers" healthy
 check "old backup still there" test "$(cat "$PREV/VERSION")" = older
-check "email: aborted" bash -c 'grep -q "^Subject: Mailloom update aborted at line" "$0"/*.eml' "$MAIL"
+check "message: aborted" bash -c 'grep -q "Mailloom update: aborted at line" "$0"/*.msg' "$MAIL"
 check "no skip written (nothing was tried)" test ! -e "$STATE/skip"
 
 # ---- (j) S2: a failed manual install keeps the do-not-retry mark ---------------------------------
@@ -313,7 +348,7 @@ rm -f "$STUB_DIR/failmv"
 check "exit 1" test "$RC" = 1
 check "the version that was running is back" test "$(version)" = "$LVER" -a ! -e "$APP.bad"
 check "service answers" healthy
-check "email says aborted and put back" bash -c 'grep -q "^Subject: Mailloom update aborted at line" "$0"/*.eml && grep -q "put back from" "$0"/*.eml' "$MAIL"
+check "message says aborted and put back" bash -c 'grep -q "Mailloom update: aborted at line" "$0"/*.msg && grep -q "put back from" "$0"/*.msg' "$MAIL"
 
 # ---- (l) the test overrides are refused outside the harness ---------------------------------------
 section "(l) test overrides are refused outside the harness"
@@ -327,6 +362,37 @@ OUT="$(INVOCATION_ID=abc bash "$SCRIPT" --check 2>&1)"; RC=$?
 check "refused under systemd" refused
 OUT="$(env -u MAILLOOM_UPDATE_ROOT bash "$SCRIPT" --check 2>&1)"; RC=$?
 check "helper override without a root refused" refused
+
+# ---- (m) Work OS notices ------------------------------------------------------------------------
+reqs() { find "$MAIL" -name '*.req' | wc -l; }
+section "(m) notices: contract, retry rules, bad config, unreachable endpoint"
+reset; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "one request, accepted (right header, body, size)" test "$(reqs)" = 1 -a -z "$(find "$MAIL" -name '*.bad')"
+check "the post is plain text with the prefix" bash -c 'grep -q "^Mailloom update: updated to" "$0"/*.msg' "$MAIL"
+check "the post has no token or .env contents" bash -c '! grep -q "e2eTok3n\|zzz\|SESSION_SECRET" "$0"/*.msg' "$MAIL"
+reset; echo 429once >"$STUB_DIR/mode"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "429 is retried once and then posted" test "$(reqs)" = 2 -a "$(mails)" = 1
+check "update fine" test "$RC" = 0 -a "$(version)" = "$LVER"
+reset; echo 401 >"$STUB_DIR/mode"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "401 is not retried" test "$(reqs)" = 1 -a "$(mails)" = 0
+check "401 does not fail the update" test "$RC" = 0 -a "$(version)" = "$LVER"
+check "it says so, with the status only" has "HTTP 401"
+reset; echo 500 >"$STUB_DIR/mode"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "500 is retried once, not more" test "$(reqs)" = 2
+check "500 does not fail the update" test "$RC" = 0 -a "$(version)" = "$LVER"
+reset; sed -i '/^WORKOS_INTAKE_TOKEN=/d' "$APP/.env"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "missing token: notices off, update still done, nothing sent" test "$RC" = 0 -a "$(version)" = "$LVER" -a "$(reqs)" = 0
+check "says notices off" has "notices off"
+reset; sed -i 's#^WORKOS_INTAKE_TOKEN=.*#WORKOS_INTAKE_TOKEN=tooshort#' "$APP/.env"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "short token: notices off" has "notices off"
+check "short token never printed" hasnt "tooshort"
+reset; sed -i 's#^WORKOS_NOTICE_URL=.*#WORKOS_NOTICE_URL=http://evil.example/notice#' "$APP/.env"; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "bad address: notices off, nothing sent" test "$(reqs)" = 0 -a "$RC" = 0
+check "bad address never printed" hasnt "evil.example"
+kill "$WH_PID" 2>/dev/null; wait "$WH_PID" 2>/dev/null
+reset; MAILLOOM_UPDATE_ASSET_FILE="$CACHED" run --auto
+check "an unreachable endpoint does not break the update" test "$RC" = 0 -a "$(version)" = "$LVER"
+start_workos
 
 # ---- (h) lock ----------------------------------------------------------------------------------
 section "(h) two runs at once"
@@ -342,7 +408,7 @@ check "second (manual) exits 1" test "$RC" = 1
 wait "$APID"
 rm -f "$STUB_DIR/slowstop"
 check "first finished fine" test "$(cat "$SB/a.rc")" = 0 -a "$(version)" = "$LVER"
-check "only one email" test "$(mails)" = 1
+check "only one message" test "$(mails)" = 1
 
 echo
 echo "Passed: $PASS   Failed: $FAIL"

@@ -9,15 +9,16 @@
 #   sudo mailloom-update --rollback               put the previous version back
 # Layout: systemd unit "mailloom", app in /opt/www/mailloom (with its .env), previous version in /opt/www/mailloom.prev.
 # State (root only): /var/lib/mailloom-update. This script does not update itself: see docs/deploy.md section 8b.
-# Email: set MAILLOOM_UPDATE_NOTIFY=address in /opt/www/mailloom/.env to get a short note after any install,
-# rollback, refusal or failure (never when there was nothing new, and never any .env contents or log lines).
+# Notices: with WORKOS_NOTICE_URL and WORKOS_INTAKE_TOKEN set in /opt/www/mailloom/.env (the same values the server uses
+# for problem reports), a short plain-text note is posted to Work OS after any install, rollback, refusal or failure
+# (never when there was nothing new, never any .env contents or log lines, and the token and address are never printed).
 set -Eeuo pipefail
 
 REPO="Delpat-Tech/mailloom"
 # MAILLOOM_UPDATE_ROOT moves every path under a test folder (scripts/test/update-e2e.sh). It is empty on the server.
 R="${MAILLOOM_UPDATE_ROOT:-}"
 # The test overrides are refused anywhere but the harness: not "/", not under systemd, and only in a folder the harness marked.
-if [ -n "$R" ] || [ -n "${MAILLOOM_UPDATE_DECIDE:-}" ] || [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ] || [ -n "${MAILLOOM_UPDATE_TEST_API:-}" ]; then
+if [ -n "$R" ] || [ -n "${MAILLOOM_UPDATE_DECIDE:-}" ] || [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ] || [ -n "${MAILLOOM_UPDATE_TEST_API:-}" ] || [ -n "${MAILLOOM_UPDATE_NOTICE_URL_RE:-}" ]; then
   if [ -z "$R" ] || [ "$R" = "/" ] || [ -n "${INVOCATION_ID:-}" ] || [ ! -f "$R/.mailloom-e2e" ]; then
     echo "Test overrides (MAILLOOM_UPDATE_*) are only accepted by the test harness. Nothing changed."; exit 1
   fi
@@ -28,7 +29,6 @@ NEXT="$R/opt/www/mailloom.next"
 STATE="$R/var/lib/mailloom-update"
 DECIDE="${MAILLOOM_UPDATE_DECIDE:-$R/usr/local/lib/mailloom/update-decide.mjs}"
 LOCK="$R/run/mailloom-update.lock"
-SENDMAIL="$R/usr/sbin/sendmail"
 PORT="$(grep -E '^PORT=' "$APP/.env" 2>/dev/null | cut -d= -f2 || true)"; PORT="${PORT:-3000}"
 
 [ "$(id -u)" = 0 ] || { echo "Run with sudo."; exit 1; }
@@ -63,25 +63,57 @@ if ! flock -n 9; then
 fi
 
 # ---- helpers -----------------------------------------------------------------------------------
-# One redaction for everything that is shown or mailed: lines that look like secrets are dropped.
-redact() { grep -iv 'secret\|password\|token\|authorization\|cookie\|key' || true; }
-
-NOTIFY="$(grep -E '^MAILLOOM_UPDATE_NOTIFY=' "$APP/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' \r' || true)"
-[[ "$NOTIFY" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || NOTIFY=""
-
-# notify "subject" "body text". Never fails the update.
-notify() {
-  [ "$CHECK" = 0 ] && [ -n "$NOTIFY" ] && [ -x "$SENDMAIL" ] || return 0
-  {
-    printf 'To: %s\nFrom: Mailloom updater <root@%s>\nSubject: %s\nDate: %s\nMIME-Version: 1.0\n' \
-      "$NOTIFY" "$(hostname -f 2>/dev/null || hostname)" "$1" "$(date -R)"
-    printf 'Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 8bit\n\n'
-    printf '%s\n' "$2" | redact
-    printf '\nTime: %s\nServer: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$(hostname)"
-  } | "$SENDMAIL" -oi -t >/dev/null 2>&1 || true
+# One redaction for everything that is shown or posted: lines that look like secrets, and the notice URL and token, are dropped.
+redact() {
+  { grep -iv 'secret\|password\|token\|authorization\|cookie\|key\|webhook\|bearer\|intake\|notice_url' || true; } \
+    | { grep -vF -e "${NOTICE_URL:-@@none@@}" -e "${NOTICE_TOKEN:-@@none@@}" || true; }
 }
 
-# State kept between runs (root only): the release not to retry, the failed-check count, the last refusal mailed.
+NOTICE_URL="$(grep -E '^WORKOS_NOTICE_URL=' "$APP/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' \r' || true)"
+NOTICE_TOKEN="$(grep -E '^WORKOS_INTAKE_TOKEN=' "$APP/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' \r' || true)"
+NOTICE_URL_RE='^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
+[ -z "${MAILLOOM_UPDATE_NOTICE_URL_RE:-}" ] || NOTICE_URL_RE="$MAILLOOM_UPDATE_NOTICE_URL_RE"   # tests only (guarded above)
+NOTICES=0
+if [[ "$NOTICE_URL" =~ $NOTICE_URL_RE ]] && [[ "$NOTICE_TOKEN" =~ ^[A-Za-z0-9+/=_-]{32,}$ ]]; then
+  NOTICES=1
+else
+  echo "notices off"; NOTICE_URL=""; NOTICE_TOKEN=""
+fi
+
+# post_notice payload-file header-file: prints the HTTP status. The token goes to curl on stdin (-K -), never on a command line.
+post_notice() {
+  printf 'url = "%s"\nheader = "Authorization: Bearer %s"\n' "$NOTICE_URL" "$NOTICE_TOKEN" \
+    | curl -s -K - --max-time 10 -X POST -H 'Content-Type: application/json' --data-binary "@$1" -D "$2" -o /dev/null -w '%{http_code}'
+}
+
+# notify "subject" "body text": one short plain-text post to Work OS. Never fails the update, never prints the token.
+# 204 = posted. 400, 401, 413: not retried. 429, 5xx or no answer: one retry after Retry-After (at most 30 s).
+notify() {
+  [ "$CHECK" = 0 ] && [ "$NOTICES" = 1 ] || return 0
+  local s="${1#Mailloom }" body tmp hdr code="000" try wait
+  s="${s#update }"
+  body="$(printf 'Mailloom update: %s\n%s\nTime: %s\nServer: %s' "$s" "$(printf '%s\n' "$2" | redact)" "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$(hostname)")"
+  tmp="$(mktemp)"; hdr="$(mktemp)"
+  if printf '%s' "$body" | "$NODE" "$DECIDE" --payload >"$tmp" 2>/dev/null; then
+    for try in 1 2; do
+      code="$(post_notice "$tmp" "$hdr" 2>/dev/null)" || code="000"
+      case "$code" in
+        204 | 400 | 401 | 413) break ;;
+        429 | 5?? | 000) ;;
+        *) break ;;
+      esac
+      [ "$try" = 1 ] || break
+      wait="$(grep -i '^retry-after:' "$hdr" 2>/dev/null | head -1 | tr -dc '0-9' || true)"
+      [ -n "$wait" ] || wait=3
+      [ "$wait" -le 30 ] || wait=30
+      sleep "$wait"
+    done
+    [ "$code" = 204 ] || echo "(the notice could not be sent: HTTP $code)" >&2
+  fi
+  rm -f "$tmp" "$hdr"
+}
+
+# State kept between runs (root only): the release not to retry, the failed-check count, the last refusal posted.
 skip_get() {
   local v=""
   [ -f "$STATE/skip" ] && [ ! -L "$STATE/skip" ] && v="$(head -1 "$STATE/skip" 2>/dev/null || true)"
@@ -194,7 +226,7 @@ case "$ACTION" in
   noop)
     echo "$MSG"
     if [ "$CODE" = skipped ] && [ "$CHECK" = 0 ] && [ ! -e "$STATE/skip.notified" ]; then
-      notify "Mailloom: $RTAG not installed (rolled back or failed earlier)" "$MSG Running now: $CUR"
+      notify "Mailloom $RTAG not installed (rolled back or failed earlier)" "$MSG Running now: $CUR"
       : >"$STATE/skip.notified"
     fi
     exit 0 ;;
@@ -230,7 +262,7 @@ echo "Installing $RTAG ($NAME). Running now: $CUR"
 
 # ---- download and verify -----------------------------------------------------------------------
 WORK="$(mktemp -d)"
-fail_early() { echo "$1 Nothing changed."; notify "Mailloom update to $RTAG failed before installing" "$1 Nothing was changed. Running now: $CUR"; exit 1; }
+fail_early() { echo "$1 Nothing changed."; notify "Mailloom update failed before installing $RTAG" "$1 Nothing was changed. Running now: $CUR"; exit 1; }
 if [ -n "$R" ] && [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ]; then
   # Tests only (needs MAILLOOM_UPDATE_ROOT): use a prepared file instead of the download.
   cp "$MAILLOOM_UPDATE_ASSET_FILE" "$WORK/$NAME"
