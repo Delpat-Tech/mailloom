@@ -395,17 +395,29 @@ async function addSnippets(client: ImapFlow, items: ListItem[]): Promise<void> {
     groups.set(key, g);
   }
   const byUid = new Map(items.map((i) => [i.header.uid, i.header]));
+  const SMALL = 16384;
+  const LARGE = 131072;
   for (const { part, uids } of groups.values()) {
-    try {
-      const gen = client.fetch(uids, { uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength: part.type === 'text/html' ? 16384 : 4096 }] }, { uid: true });
+    const isHtml = part.type === 'text/html';
+    // One pass over `want` uids with a byte limit; returns the uids whose result was empty although the fetch was full.
+    const pass = async (want: number[], limit: number): Promise<number[]> => {
+      const again: number[] = [];
+      const gen = client.fetch(want, { uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength: limit }] }, { uid: true });
       for await (const m of gen) {
         const raw = m.bodyParts?.get(part.partId) || m.bodyParts?.values().next().value;
         const header = byUid.get(m.uid);
         if (!raw || !header) continue;
         const text = decodeCharset(decodeTransfer(raw, part.encoding), part.charset);
-        const snippet = makeSnippet(part.type === 'text/html' ? htmlToText(text) : text);
+        const snippet = makeSnippet(isHtml ? htmlToText(text) : text);
         header.snippet = looksLikeCode(snippet) ? '' : snippet;
+        if (isHtml && !header.snippet && raw.length >= limit) again.push(m.uid);
       }
+      return again;
+    };
+    try {
+      // Big <style>/<head> blocks (newsletters) can fill the first fetch; retry those few with a larger one.
+      const again = await pass(uids, isHtml ? SMALL : 4096);
+      if (again.length) await pass(again, LARGE);
     } catch {
       // A preview is a nicety; the list still works without it.
     }

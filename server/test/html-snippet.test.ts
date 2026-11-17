@@ -83,3 +83,21 @@ test('list API snippet of an HTML mail with a huge style block is the mail text'
   assert.match(m.snippet, /^Hello Om, your spring update is here\./);
   assert.doesNotMatch(m.snippet, /font-family|cls-|\{/);
 });
+
+test('a 20 KB style block gives the real text via the second (131072-byte) fetch', async () => {
+  const html = newsletter(220);
+  const end = html.lastIndexOf('</style>');
+  assert.ok(end > 16384 && html.length < 131072);
+  // First fetch (16384 bytes) is all CSS: empty. The larger one reaches the copy.
+  assert.equal(snippetOf(html.slice(0, 16384)), '');
+  assert.match(snippetOf(html.slice(0, 131072)), /^Hello Om, your spring update is here\./);
+  const raw = await buildMime({ subject: 'Huge style', html, messageId: '<hugestyle@delpat.test>' });
+  await withImap(GM.tester, async (c) => {
+    await c.append('INBOX', raw);
+  });
+  const res = await app.inject({ method: 'GET', url: '/api/mailboxes/INBOX/messages', headers: t.headers });
+  assert.equal(res.statusCode, 200, res.body);
+  const m = res.json().messages.find((x: any) => x.subject === 'Huge style');
+  assert.ok(m);
+  assert.match(m.snippet, /^Hello Om, your spring update is here\./);
+});

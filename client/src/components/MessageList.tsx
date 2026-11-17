@@ -448,7 +448,7 @@ const MessageRow = React.memo(function MessageRow({
                     {isDraft && msg.to.length > 0 && (
                       <span className="font-medium">To {msg.to.map((t) => t.name || t.address).join(', ')}. </span>
                     )}
-                    {msg.snippet || 'No text content available'}
+                    {msg.snippet || ' '}
                   </>
                 )}
               </span>
