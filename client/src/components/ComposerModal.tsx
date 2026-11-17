@@ -1,4 +1,5 @@
 import { useBackLayer } from '../hooks/useBackLayer.js';
+import { getUpdater } from '../services/updater.js';
 import { useOnline } from '../hooks/useOnline.js';
 import { usePresence, LEAVE_COMPOSER_MS, Presence } from './Presence.js';
 import { AnchoredPanel } from './AnchoredPanel.js';
@@ -312,6 +313,14 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({
       document.removeEventListener('visibilitychange', save);
       window.removeEventListener('pagehide', save);
     };
+  }, [isOpen]);
+
+  // Before the app reloads for a new version, the draft is saved (a failed save is reported by the bar's caller).
+  useEffect(() => {
+    if (!isOpen) return;
+    return getUpdater()?.registerBeforeReload(async () => {
+      if (!sentRef.current) await saveDraftRef.current();
+    });
   }, [isOpen]);
 
   /** Remove the saved draft (if any) and close. Stays open if the draft could not be removed. */

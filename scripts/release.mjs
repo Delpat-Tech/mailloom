@@ -45,7 +45,12 @@ fs.rmSync(tarball, { force: true });
 fs.mkdirSync(out, { recursive: true });
 
 step('Building the client');
-execFileSync('pnpm', ['--filter', 'mailloom-client', 'build'], { cwd: root, stdio: 'inherit', shell: sh });
+execFileSync('pnpm', ['--filter', 'mailloom-client', 'build'], {
+  cwd: root,
+  stdio: 'inherit',
+  shell: sh,
+  env: { ...process.env, MAILLOOM_BUILD_ID: commit } // the same id VERSION carries, so the app can tell when the server moved on
+});
 fs.cpSync(path.join(root, 'client', 'dist'), path.join(out, 'public'), { recursive: true });
 
 step('Bundling the server');

@@ -41,6 +41,8 @@ import {
 } from './services/push.js';
 import { MessageList } from './components/MessageList.js';
 import { MessageViewer } from './components/MessageViewer.js';
+import { getUpdater, setBusyProbe, startUpdater } from './services/updater.js';
+import { UpdateBar } from './components/UpdateBar.js';
 import { ComposerModal, type ComposerReplyMeta } from './components/ComposerModal.js';
 import { clearMessageLinkHash, parseMessageLinkHash } from './services/deeplink.js';
 import { planReply } from './services/reply.js';
@@ -682,6 +684,24 @@ export const App: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Updates: an app left open for days picks up a new release (see services/updater.ts).
+  const busyRef = useRef(false);
+  busyRef.current = isComposerOpen || settingsOpen || isAddingAccount || !!reauth || !!confirmRequest;
+  useEffect(() => {
+    setBusyProbe(() => busyRef.current);
+    const u = getUpdater();
+    const off = u?.registerBeforeReload(() => pending.flush());
+    const stop = startUpdater();
+    return () => {
+      off?.();
+      stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    getUpdater()?.refresh();
+  }, [isComposerOpen, settingsOpen, isAddingAccount, reauth, confirmRequest]);
 
   const selectedFolderKind = folders.find((f) => f.path === selectedFolder)?.specialUse;
   // The count in the header follows optimistic changes too: rows leaving or arriving count at once.
@@ -2084,6 +2104,7 @@ export const App: React.FC = () => {
             </button>
           </div>
         )}
+        <UpdateBar />
       </div>
     </div>
     </>

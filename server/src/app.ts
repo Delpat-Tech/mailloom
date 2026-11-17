@@ -55,6 +55,22 @@ export interface BuildAppOptions {
   organise?: Pick<IndexerOptions, 'batchSize' | 'retryMs' | 'onBatch'> & { snoozeIntervalMs?: number };
 }
 
+/**
+ * The build this server runs, for GET /api/version: a commit short hash. Order: MAILLOOM_VERSION (override, used by
+ * tests), the first line of the VERSION file beside the server (written by `pnpm release`), else 'dev'.
+ */
+function resolveVersion(env: Record<string, string | undefined>): string {
+  const clean = (v: string) => v.trim().replace(/^mailloom-/, '').slice(0, 40);
+  if (env.MAILLOOM_VERSION) return clean(env.MAILLOOM_VERSION);
+  try {
+    const first = fs.readFileSync(path.resolve(__dirname, 'VERSION'), 'utf8').split(/\r?\n/)[0] ?? '';
+    if (/^mailloom-[0-9a-f]{7,40}(-dirty)?$/.test(first.trim())) return clean(first);
+  } catch {
+    // No VERSION file: a development run.
+  }
+  return 'dev';
+}
+
 function isApiUrl(url: string): boolean {
   return url.startsWith('/api/') || url.startsWith('/mail/api/');
 }
@@ -280,7 +296,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
 
   // Register routes at / and behind the /mail subpath used by nginx.
+  const buildVersion = resolveVersion(env);
   for (const prefix of ['', '/mail']) {
+    // Which build is running: a commit short hash, nothing else. Open to everyone so a signed-out tab can check too.
+    fastify.get(`${prefix}/api/version`, async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return { version: buildVersion };
+    });
     await fastify.register(authRoutes, { prefix });
     await fastify.register(mailRoutes, {
       prefix,

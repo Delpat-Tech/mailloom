@@ -8,6 +8,7 @@ import {
   promptPwaInstall,
   subscribePwaInstallState
 } from '../../services/pwa.js';
+import { getUpdater } from '../../services/updater.js';
 import { BTN, BTN_PRIMARY, Card, Setting } from './ui.js';
 
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'development';
@@ -43,7 +44,10 @@ export const AppSection: React.FC<Props> = ({ onOpenShortcuts, onInstalled }) =>
   const check = async () => {
     setUpdate('checking');
     try {
-      setUpdate(await checkForUpdate());
+      const u = getUpdater();
+      // The build id decides when there is one; the service worker alone is the fallback (development builds).
+      if (!u) setUpdate(await checkForUpdate());
+      else setUpdate((await u.check(true)) ? 'updated' : 'current');
     } catch {
       setUpdate('error');
     }
@@ -104,7 +108,7 @@ export const AppSection: React.FC<Props> = ({ onOpenShortcuts, onInstalled }) =>
           </div>
           <div className="sm:shrink-0">
             {update === 'updated' ? (
-              <button type="button" className={BTN_PRIMARY} onClick={() => window.location.reload()}>
+              <button type="button" className={BTN_PRIMARY} onClick={() => void (getUpdater()?.apply() ?? window.location.reload())}>
                 <RefreshCw className="w-4 h-4" aria-hidden="true" /> Reload
               </button>
             ) : (
