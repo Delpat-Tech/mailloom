@@ -274,7 +274,7 @@ Nothing is installed unless the commit is on `main` and every checksum matches.
 ```bash
 REF=<the 40-character commit from the release notes>
 # 1. Is that commit on main? Must print "ahead" or "identical".
-curl -fsS "https://api.github.com/repos/Delpat-Tech/mailloom/compare/$REF...main" \n  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);console.log(r.status);process.exit(["ahead","identical"].includes(r.status)?0:1)})' \n  || { echo "NOT ON MAIN: stop here"; false; }
+curl -fsS "https://api.github.com/repos/Delpat-Tech/mailloom/compare/$REF...main"   | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);console.log(r.status);process.exit(["ahead","identical"].includes(r.status)?0:1)})'   || { echo "NOT ON MAIN: stop here"; false; }
 
 # 2. Download into a fresh folder and check the checksums (replace the four <sha256> values).
 T=$(mktemp -d) && cd "$T"
