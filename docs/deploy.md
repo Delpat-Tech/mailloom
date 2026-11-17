@@ -265,19 +265,38 @@ It installs only a release whose commit is on `main`; anything else is refused a
 A pre-release or draft is never installed by the timer. If nothing new was released, nothing happens and no email is sent.
 
 **Step 1: install (the first step, because the old `mailloom-update` on the server has no main-only check).**
-Paste on the server. `v2026.11.18` is a placeholder: use the newest release tag that contains these files.
+The updater never updates itself: to change `mailloom-update` later, repeat this step with a newer commit.
+
+The commit (`REF`) and the four checksums come from the release notes of a release (printed by `pnpm release` when
+the release is built; they are the checksums of the files as committed). Paste the lines below with those values filled in.
+Nothing is installed unless the commit is on `main` and every checksum matches.
 
 ```bash
-TAG=v2026.11.18                      # a release tag that includes deploy/mailloom-update-decide.mjs
-RAW=https://raw.githubusercontent.com/Delpat-Tech/mailloom/$TAG/deploy
-sudo mkdir -p /usr/local/lib/mailloom
-sudo curl -fsSL $RAW/mailloom-update.sh          -o /usr/local/bin/mailloom-update
-sudo curl -fsSL $RAW/mailloom-update-decide.mjs  -o /usr/local/lib/mailloom/update-decide.mjs
-sudo curl -fsSL $RAW/mailloom-update.service     -o /etc/systemd/system/mailloom-update.service
-sudo curl -fsSL $RAW/mailloom-update.timer       -o /etc/systemd/system/mailloom-update.timer
-sudo chmod 755 /usr/local/bin/mailloom-update
-sudo chmod 644 /usr/local/lib/mailloom/update-decide.mjs /etc/systemd/system/mailloom-update.*
+REF=<the 40-character commit from the release notes>
+# 1. Is that commit on main? Must print "ahead" or "identical".
+curl -fsS "https://api.github.com/repos/Delpat-Tech/mailloom/compare/$REF...main" \n  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);console.log(r.status);process.exit(["ahead","identical"].includes(r.status)?0:1)})' \n  || { echo "NOT ON MAIN: stop here"; false; }
+
+# 2. Download into a fresh folder and check the checksums (replace the four <sha256> values).
+T=$(mktemp -d) && cd "$T"
+RAW=https://raw.githubusercontent.com/Delpat-Tech/mailloom/$REF/deploy
+for f in mailloom-update.sh mailloom-update-decide.mjs mailloom-update.service mailloom-update.timer; do curl -fsSL "$RAW/$f" -o "$f"; done
+cat > SUMS <<'SUMS'
+<sha256>  mailloom-update.sh
+<sha256>  mailloom-update-decide.mjs
+<sha256>  mailloom-update.service
+<sha256>  mailloom-update.timer
+SUMS
+sha256sum -c SUMS || { echo "CHECKSUM MISMATCH: stop here"; false; }
+
+# 3. Install.
+sudo install -d -m 755 /usr/local/lib/mailloom
+sudo install -m 755 mailloom-update.sh /usr/local/bin/mailloom-update
+sudo install -m 644 mailloom-update-decide.mjs /usr/local/lib/mailloom/update-decide.mjs
+sudo install -m 644 mailloom-update.service mailloom-update.timer /etc/systemd/system/
+cd / && rm -rf "$T"
 ```
+
+If a line says "stop here", do not carry on: nothing has been installed yet.
 
 Who gets the emails (once; replace the address):
 
@@ -302,7 +321,7 @@ complains, edit the timer and use the UTC line in its comment (21:30 UTC).
 
 ```bash
 sudo mailloom-update --check
-sudo mailloom-update --check v2026.11.18     # a specific tag
+sudo mailloom-update --check v2026.11.18     # a specific tag (a placeholder: use a real one)
 ```
 
 **Other commands**
@@ -310,10 +329,15 @@ sudo mailloom-update --check v2026.11.18     # a specific tag
 ```bash
 sudo mailloom-update                         # update now (same checks as the nightly run)
 sudo mailloom-update --allow-prerelease TAG  # a release marked pre-release; its commit must still be on main
-sudo mailloom-update --rollback              # previous version
+sudo mailloom-update --rollback              # previous version; the nightly run will not install the one you left
 sudo systemctl start mailloom-update.service # run the nightly job now
 journalctl -u mailloom-update -n 50          # what the nightly job did
 ```
+
+The nightly run only moves forward (a release must be newer than the one running), and it does not retry a release
+that was rolled back or failed: it mails once and waits for a newer release. Installing a tag by hand clears that. State
+lives in `/var/lib/mailloom-update` (root only). Emails never contain log lines: use `journalctl -u mailloom -n 30`.
+A failed check for a release (GitHub down) is mailed only on the second night in a row.
 
 There is deliberately no switch to install a commit that is not on main. To test an unmerged change, merge it
 to main first (or run it on a test server).

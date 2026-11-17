@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
 # Update Mailloom on the live server to a GitHub release. Only releases whose commit is on main are ever installed.
 #   sudo mailloom-update                          latest release
-#   sudo mailloom-update v2026.11.16              that release
+#   sudo mailloom-update v2026.11.16              that release (may be older: going back is allowed by hand)
 #   sudo mailloom-update --allow-prerelease TAG   a release marked pre-release (its commit must still be on main)
 #   sudo mailloom-update --check [TAG]            report what would happen; installs nothing
-#   sudo mailloom-update --auto                   what the nightly timer runs: quiet when there is nothing new
+#   sudo mailloom-update --auto                   what the nightly timer runs: quiet when there is nothing new,
+#                                                 never goes backwards, never retries a rolled-back or failed release
 #   sudo mailloom-update --rollback               put the previous version back
 # Layout: systemd unit "mailloom", app in /opt/www/mailloom (with its .env), previous version in /opt/www/mailloom.prev.
+# State (root only): /var/lib/mailloom-update. This script does not update itself: see docs/deploy.md section 8b.
 # Email: set MAILLOOM_UPDATE_NOTIFY=address in /opt/www/mailloom/.env to get a short note after any install,
-# rollback, refusal or failure (never when there was nothing new, and never any .env contents).
-set -euo pipefail
+# rollback, refusal or failure (never when there was nothing new, and never any .env contents or log lines).
+set -Eeuo pipefail
 
 REPO="Delpat-Tech/mailloom"
 APP="/opt/www/mailloom"
 PREV="/opt/www/mailloom.prev"
 NEXT="/opt/www/mailloom.next"
+STATE="/var/lib/mailloom-update"
 DECIDE="${MAILLOOM_UPDATE_DECIDE:-/usr/local/lib/mailloom/update-decide.mjs}"
-LOCK="/run/lock/mailloom-update.lock"
+LOCK="/run/mailloom-update.lock"
 PORT="$(grep -E '^PORT=' "$APP/.env" 2>/dev/null | cut -d= -f2 || true)"; PORT="${PORT:-3000}"
 
 [ "$(id -u)" = 0 ] || { echo "Run with sudo."; exit 1; }
+NODE="$(command -v node || true)"
+[ -n "$NODE" ] || { echo "Node.js was not found in PATH ($PATH). It is needed to check releases. Nothing changed."; exit 1; }
 
 # ---- arguments ---------------------------------------------------------------------------------
 AUTO=0; CHECK=0; ROLLBACK=0; PRE=0; TAG=""
@@ -37,6 +42,8 @@ done
 if [ "$PRE" = 1 ] && [ -z "$TAG" ]; then echo "--allow-prerelease needs a tag, for example: --allow-prerelease v2026.11.16"; exit 1; fi
 if [ "$AUTO" = 1 ] && { [ -n "$TAG" ] || [ "$ROLLBACK" = 1 ] || [ "$PRE" = 1 ]; }; then echo "--auto takes no tag and no other mode."; exit 1; fi
 
+install -d -m 0700 -o root -g root "$STATE"
+
 # ---- one update at a time (the timer and a manual run never overlap) ---------------------------
 exec 9>"$LOCK"
 if ! flock -n 9; then
@@ -45,24 +52,33 @@ if ! flock -n 9; then
   exit 1
 fi
 
-# ---- email report ------------------------------------------------------------------------------
+# ---- helpers -----------------------------------------------------------------------------------
+# One redaction for everything that is shown or mailed: lines that look like secrets are dropped.
+redact() { grep -iv 'secret\|password\|token\|authorization\|cookie\|key' || true; }
+
 NOTIFY="$(grep -E '^MAILLOOM_UPDATE_NOTIFY=' "$APP/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' \r' || true)"
 [[ "$NOTIFY" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || NOTIFY=""
 
-# notify "subject" "body text" [with-log]. Never fails the update.
+# notify "subject" "body text". Never fails the update.
 notify() {
   [ "$CHECK" = 0 ] && [ -n "$NOTIFY" ] && [ -x /usr/sbin/sendmail ] || return 0
   {
-    printf 'To: %s\nFrom: Mailloom updater <root@%s>\nSubject: %s\nDate: %s\n' \
+    printf 'To: %s\nFrom: Mailloom updater <root@%s>\nSubject: %s\nDate: %s\nMIME-Version: 1.0\n' \
       "$NOTIFY" "$(hostname -f 2>/dev/null || hostname)" "$1" "$(date -R)"
-    printf 'Content-Type: text/plain; charset=utf-8\n\n%s\n' "$2"
+    printf 'Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 8bit\n\n'
+    printf '%s\n' "$2" | redact
     printf '\nTime: %s\nServer: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$(hostname)"
-    if [ "${3:-}" = with-log ]; then
-      printf '\nLast lines of the service log:\n'
-      journalctl -u mailloom -n 15 --no-pager 2>/dev/null | grep -iv 'secret\|password\|token\|authorization\|cookie\|key' || true
-    fi
-  } | /usr/sbin/sendmail -t >/dev/null 2>&1 || true
+  } | /usr/sbin/sendmail -oi -t >/dev/null 2>&1 || true
 }
+
+# State kept between runs (root only): the release not to retry, the failed-check count, the last refusal mailed.
+skip_get() {
+  local v=""
+  [ -f "$STATE/skip" ] && [ ! -L "$STATE/skip" ] && v="$(head -1 "$STATE/skip" 2>/dev/null || true)"
+  [[ "$v" =~ ^mailloom-[0-9a-f]{10,40}\.tar\.gz$ ]] && printf '%s' "$v" || true
+}
+skip_set() { printf '%s\n' "$1" >"$STATE/skip"; rm -f "$STATE/skip.notified"; }
+skip_clear() { rm -f "$STATE/skip" "$STATE/skip.notified"; }
 
 healthy() {
   for _ in $(seq 1 15); do
@@ -72,98 +88,186 @@ healthy() {
   return 1
 }
 
+# Puts the previous version back (also from a half-finished swap) and starts the service.
+restore_previous() {
+  systemctl stop mailloom || true
+  if [ -d "$PREV" ]; then
+    rm -rf "$APP.bad"
+    [ ! -e "$APP" ] || mv "$APP" "$APP.bad"
+    mv "$PREV" "$APP"
+  fi
+  systemctl start mailloom || true
+}
+
 CUR="$(head -1 "$APP/VERSION" 2>/dev/null || echo unknown)"
+RTAG="-"; NAME=""; WORK=""; STAGE=pre   # STAGE: pre -> stopping -> swapping -> swapped
+
+on_exit() { [ -z "$WORK" ] || rm -rf "$WORK"; }
+trap on_exit EXIT
+
+# Any command that fails unexpectedly lands here: undo a half-done swap, tell Om, stop.
+on_err() {
+  local line="$1" what
+  trap - ERR
+  set +e
+  echo "Update stopped by an unexpected error at line $line."
+  what="The update stopped by an unexpected error at line $line. Release: $RTAG. Running before: $CUR."
+  case "$STAGE" in
+    stopping) systemctl start mailloom || true ;;
+    swapping | swapped)
+      restore_previous
+      if healthy; then what="$what The previous version is running again."; else what="$what The service is NOT answering: check the server now."; fi
+      [ -z "$NAME" ] || skip_set "$NAME"
+      ;;
+  esac
+  notify "Mailloom update aborted at line $line" "$what See: journalctl -u mailloom -n 30"
+  exit 1
+}
+trap 'on_err $LINENO' ERR
 
 # ---- rollback ----------------------------------------------------------------------------------
 if [ "$ROLLBACK" = 1 ]; then
   [ -d "$PREV" ] || { echo "No previous version in $PREV."; exit 1; }
   if [ "$CHECK" = 1 ]; then echo "Would put back: $(head -1 "$PREV/VERSION" 2>/dev/null) (running now: $CUR). Nothing changed."; exit 0; fi
-  systemctl stop mailloom
+  STAGE=stopping
+  systemctl stop mailloom || true
   rm -rf "$APP.bad"; mv "$APP" "$APP.bad"; mv "$PREV" "$APP"
-  systemctl start mailloom
+  systemctl start mailloom || true
+  STAGE=pre
+  # The nightly run must not put the version that was just rolled back from straight back.
+  [[ "$CUR" =~ ^mailloom-[0-9a-f]{10,40}$ ]] && skip_set "$CUR.tar.gz"
   NOW="$(head -1 "$APP/VERSION" 2>/dev/null || echo unknown)"
   if healthy; then
     echo "Rolled back. Running: $NOW"
-    notify "Mailloom rolled back to $NOW (healthy)" "Rolled back by hand from $CUR to $NOW."
+    notify "Mailloom rolled back to $NOW (healthy)" "Rolled back by hand from $CUR to $NOW. The nightly update will not install $CUR again unless you do it by hand."
     exit 0
   fi
   echo "Rolled back but not answering; check: journalctl -u mailloom -n 30"
-  notify "Mailloom rolled back to $NOW but is not answering" "Rolled back from $CUR to $NOW; the service is not answering." with-log
+  notify "Mailloom rolled back to $NOW but is not answering" "Rolled back from $CUR to $NOW; the service is not answering. See: journalctl -u mailloom -n 30"
   exit 1
 fi
 
 # ---- decide: is there a release, and is it on main? --------------------------------------------
-if [ "$AUTO" = 1 ] || { [ -z "$TAG" ] && [ "$PRE" = 0 ]; }; then
-  [ "$AUTO" = 1 ] && MODE=auto || MODE=latest
+if [ "$AUTO" = 1 ]; then MODE=auto
 elif [ "$PRE" = 1 ]; then MODE=prerelease
-else MODE=tag; fi
-# A manual check with no tag behaves like the nightly run, so it can say "already running".
-[ "$CHECK" = 1 ] && [ "$MODE" = latest ] && MODE=auto
+elif [ -n "$TAG" ]; then MODE=tag
+elif [ "$CHECK" = 1 ]; then MODE=auto   # a manual check with no tag behaves like the nightly run
+else MODE=latest; fi
 
-DECISION="$(node "$DECIDE" "$REPO" "$MODE" "${CUR:-unknown}" "$TAG" || true)"
+DECISION="$("$NODE" "$DECIDE" "$REPO" "$MODE" "$CUR" "$TAG" "$(skip_get)" || true)"
+ACTION=""; CODE=""; COMMIT=""; ID=""; DIGEST=""; MSG=""
 IFS=$'\t' read -r ACTION CODE RTAG COMMIT NAME ID DIGEST MSG <<<"$DECISION" || true
-[ -n "${ACTION:-}" ] || { ACTION=error; MSG="The decision helper gave no answer ($DECIDE)."; RTAG="-"; }
+[ "$NAME" != "-" ] || NAME=""
+if [ -z "$ACTION" ]; then ACTION=error; MSG="The decision helper gave no answer ($DECIDE)."; RTAG="-"; fi
+
+# Repeated identical news is mailed once: a failed check only on the second night in a row, a refusal once per release.
+if [ "$ACTION" = error ] && [ "$AUTO" = 1 ]; then
+  N="$(cat "$STATE/check-failures" 2>/dev/null || echo 0)"; [[ "$N" =~ ^[0-9]+$ ]] || N=0
+  N=$((N + 1)); echo "$N" >"$STATE/check-failures"
+else
+  rm -f "$STATE/check-failures"
+fi
+if [ "$ACTION" != refuse ]; then rm -f "$STATE/last-refusal"; fi
 
 case "$ACTION" in
   noop)
-    echo "$MSG"; exit 0 ;;
+    echo "$MSG"
+    if [ "$CODE" = skipped ] && [ "$CHECK" = 0 ] && [ ! -e "$STATE/skip.notified" ]; then
+      notify "Mailloom: $RTAG not installed (rolled back or failed earlier)" "$MSG Running now: $CUR"
+      : >"$STATE/skip.notified"
+    fi
+    exit 0 ;;
   refuse)
     echo "Not installing: $MSG"
-    [ "$CODE" = not_on_main ] && SUBJ="Mailloom skipped $RTAG: not on main" || SUBJ="Mailloom skipped $RTAG: $CODE"
+    if [ "$CODE" = not_on_main ]; then SUBJ="Mailloom skipped $RTAG: not on main"; else SUBJ="Mailloom skipped $RTAG: $CODE"; fi
+    if [ "$AUTO" = 1 ] && [ "$CHECK" = 0 ]; then
+      [ "$(cat "$STATE/last-refusal" 2>/dev/null || true)" != "$RTAG:$CODE" ] || exit 1
+      printf '%s' "$RTAG:$CODE" >"$STATE/last-refusal"
+    fi
     notify "$SUBJ" "$MSG
 Running now: $CUR"
     exit 1 ;;
   error)
     echo "Could not check for a release: $MSG Nothing changed."
-    notify "Mailloom update check failed" "$MSG Nothing was changed. Running now: $CUR"
+    [ "$AUTO" = 1 ] && [ "${N:-0}" = 2 ] && notify "Mailloom update check failed (2 nights running)" "$MSG Nothing was changed. Running now: $CUR"
     exit 1 ;;
   install) ;;
   *) echo "Unexpected answer from the decision helper. Nothing changed."; exit 1 ;;
 esac
+
+# The helper's fields are checked again here before they are used in a download or a path.
+[[ "$NAME" =~ ^mailloom-[0-9a-f]{10,40}\.tar\.gz$ ]] && [[ "$ID" =~ ^[0-9]+$ ]] && [[ "$DIGEST" =~ ^[0-9a-f]{64}$ ]] \
+  && [[ "$RTAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]] \
+  || { echo "The release details look wrong. Nothing changed."; exit 1; }
 
 if [ "$CHECK" = 1 ]; then
   echo "Would install $RTAG ($NAME, commit ${COMMIT:0:10}), which is on main. Running now: $CUR. Nothing changed."
   exit 0
 fi
 
+# A release installed by hand is wanted: it clears any "do not retry" mark.
+[ "$AUTO" = 1 ] || skip_clear
 echo "Installing $RTAG ($NAME). Running now: $CUR"
 
 # ---- download and verify -----------------------------------------------------------------------
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d)"
 fail_early() { echo "$1 Nothing changed."; notify "Mailloom update to $RTAG failed before installing" "$1 Nothing was changed. Running now: $CUR"; exit 1; }
 curl -fsSL --max-time 300 -H "Accept: application/octet-stream" -o "$WORK/$NAME" "https://api.github.com/repos/$REPO/releases/assets/$ID" \
   || fail_early "Could not download the release file."
 GOT="$(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
-[ "$GOT" = "$DIGEST" ] || { echo "Checksum does not match GitHub's. Nothing changed."; notify "Mailloom skipped $RTAG: checksum mismatch" "The downloaded file's checksum does not match GitHub's. Nothing was changed. Running now: $CUR"; exit 1; }
-tar -xzf "$WORK/$NAME" -C "$WORK"
-DIR="$WORK/${NAME%.tar.gz}"
+if [ "$GOT" != "$DIGEST" ]; then
+  echo "Checksum does not match GitHub's. Nothing changed."
+  notify "Mailloom skipped $RTAG: checksum mismatch" "The downloaded file's checksum does not match GitHub's. Nothing was changed. Running now: $CUR"
+  exit 1
+fi
+
+# Look inside before unpacking: only plain files and folders under one folder named after the release.
+PFX="${NAME%.tar.gz}"
+tar -tzf "$WORK/$NAME" >"$WORK/names" || fail_early "The release file cannot be read."
+tar -tvzf "$WORK/$NAME" | cut -c1 >"$WORK/types" || fail_early "The release file cannot be read."
+if [ ! -s "$WORK/names" ] || grep -qvE "^$PFX(/.*)?\$" "$WORK/names" || grep -qE '(^|/)\.\.(/|$)' "$WORK/names" || grep -q '^/' "$WORK/names"; then
+  fail_early "The release file has paths outside its own folder."
+fi
+if grep -qv '^[-d]$' "$WORK/types"; then fail_early "The release file contains links or special files."; fi
+
+mkdir "$WORK/x"
+tar -xzf "$WORK/$NAME" -C "$WORK/x" --no-same-owner --no-same-permissions
+chmod -R u+rwX,g+rX,o+rX,go-w "$WORK/x"
+[ -z "$(find "$WORK/x" ! -type f ! -type d -print -quit)" ] || fail_early "The unpacked release contains links or special files."
+DIR="$WORK/x/$PFX"
 [ -f "$DIR/server.mjs" ] && [ -f "$DIR/server.bundle.mjs" ] || fail_early "Release file is incomplete."
+{ [ -f "$APP/.env" ] && [ ! -L "$APP/.env" ]; } || fail_early "$APP/.env is missing or is a link."
 
 # ---- swap, health-check, roll back on failure --------------------------------------------------
 rm -rf "$NEXT"; cp -a "$DIR" "$NEXT"
-cp -a "$APP/.env" "$NEXT/.env"
-chown -R root:www-data "$NEXT"; chmod 640 "$NEXT/.env"
+rm -f "$NEXT/.env"
+chown -R --no-dereference root:www-data "$NEXT"
+install -m 640 -o root -g www-data "$APP/.env" "$NEXT/.env"
 
+STAGE=stopping
 systemctl stop mailloom
+STAGE=swapping
 rm -rf "$PREV"; mv "$APP" "$PREV"; mv "$NEXT" "$APP"
-systemctl start mailloom
+STAGE=swapped
+systemctl start mailloom || true
 
 if healthy; then
+  STAGE=pre
+  skip_clear
   echo "Done. Running $RTAG. Previous version kept for: sudo mailloom-update --rollback"
   notify "Mailloom updated to $RTAG (healthy)" "Updated from $CUR to $RTAG ($NAME). The service is answering. Roll back with: sudo mailloom-update --rollback"
 else
   echo "New version did not start; putting the previous one back."
-  LOG="$(journalctl -u mailloom -n 15 --no-pager 2>/dev/null | grep -iv 'secret\|password' || true)"
-  [ -z "$LOG" ] || echo "$LOG"
-  systemctl stop mailloom
-  rm -rf "$APP.bad"; mv "$APP" "$APP.bad"; mv "$PREV" "$APP"
-  systemctl start mailloom
+  journalctl -u mailloom -n 15 --no-pager 2>/dev/null | redact || true
+  restore_previous
+  STAGE=pre
+  skip_set "$NAME"
   if healthy; then
     echo "Previous version is running again."
-    notify "Mailloom update failed, rolled back to $CUR" "$RTAG did not start. The previous version ($CUR) is running again." with-log
+    notify "Mailloom update failed, rolled back to $CUR" "$RTAG did not start. The previous version ($CUR) is running again and $RTAG will not be tried again automatically. See: journalctl -u mailloom -n 30"
   else
     echo "Previous version is not answering either; check: journalctl -u mailloom -n 30"
-    notify "Mailloom update failed and the service is not answering" "$RTAG did not start and the previous version ($CUR) is not answering either. Check the server now." with-log
+    notify "Mailloom update failed and the service is not answering" "$RTAG did not start and the previous version ($CUR) is not answering either. Check the server now: journalctl -u mailloom -n 30"
   fi
   exit 1
 fi

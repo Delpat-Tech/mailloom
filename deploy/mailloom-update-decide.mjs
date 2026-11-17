@@ -2,16 +2,17 @@
 // Decides whether mailloom-update may install a release. Only releases whose commit is on main are accepted.
 // Installed next to the update script (see docs/deploy.md). Every doubt ends in "refuse" or "error": it never guesses.
 //
-// CLI: node mailloom-update-decide.mjs <repo> <mode> <installed> [tag]
+// CLI: node mailloom-update-decide.mjs <repo> <mode> <installed> [tag] [skip]
 //   mode: auto | latest | tag | prerelease   (prerelease = a manual install of a tag that is marked pre-release)
 //   installed: first line of the running VERSION file ("-" if unknown)
+//   skip: release file name that must not be installed again automatically (after a rollback or a failed install)
 // Prints one tab-separated line: ACTION CODE TAG COMMIT ASSET_NAME ASSET_ID DIGEST MESSAGE   ("-" when empty)
 //   ACTION: install | noop | refuse | error
 import { fileURLToPath } from 'node:url';
 
 const API = 'https://api.github.com';
 const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const ASSET_RE = /^mailloom-[0-9a-f]+\.tar\.gz$/;
+const ASSET_RE = /^mailloom-[0-9a-f]{10,40}\.tar\.gz$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 export class GithubError extends Error {}
@@ -48,10 +49,18 @@ export async function resolveTagToCommit(repo, tag, get) {
   throw new GithubError('Tag chain is too deep.');
 }
 
+// The tip of a branch as a full commit SHA. The exact-ref endpoint is used so a tag with the same name cannot stand in.
+export async function resolveBranch(repo, branch, get) {
+  const ref = await get(`/repos/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+  const o = ref && ref.object;
+  if (!o || o.type !== 'commit' || typeof o.sha !== 'string' || !SHA_RE.test(o.sha)) throw new GithubError(`The ${branch} branch answer was not understood.`);
+  return o.sha;
+}
+
 const out = (o) => ({ action: 'refuse', code: '', tag: '', commit: '', asset: null, message: '', ...o });
 
 // mode: auto | latest | tag | prerelease
-export async function decide({ repo, mode, tag, installed, get }) {
+export async function decide({ repo, mode, tag, installed, skip, get }) {
   try {
     const latest = mode === 'auto' || mode === 'latest';
     if (!latest && !TAG_RE.test(tag || '')) {
@@ -75,7 +84,9 @@ export async function decide({ repo, mode, tag, installed, get }) {
 
     // Checked against main before anything else is decided, even when the version is the same.
     const commit = await resolveTagToCommit(repo, t, get);
-    const cmp = await get(`/repos/${repo}/compare/${commit}...main?per_page=1`);
+    // Compare against main's SHA, never the word "main": a tag called main would win that lookup.
+    const mainSha = await resolveBranch(repo, 'main', get);
+    const cmp = await get(`/repos/${repo}/compare/${commit}...${mainSha}?per_page=1`);
     if (!cmp || (cmp.status !== 'identical' && cmp.status !== 'ahead')) {
       const says = cmp && cmp.status ? cmp.status : 'unknown';
       return out({ code: 'not_on_main', tag: t, commit, asset, message: `${t} (commit ${commit.slice(0, 10)}) is not on main (GitHub says: ${says}). Nothing changed.` });
@@ -85,8 +96,20 @@ export async function decide({ repo, mode, tag, installed, get }) {
     if (!commit.startsWith(built)) {
       return out({ code: 'asset_mismatch', tag: t, commit, asset, message: `The release file ${a.name} was not built from the commit of ${t} (${commit.slice(0, 10)}). Nothing changed.` });
     }
-    if (mode === 'auto' && installed === a.name.replace(/\.tar\.gz$/, '')) {
-      return out({ action: 'noop', code: 'same', tag: t, commit, asset, message: `already running ${t}` });
+    if (mode === 'auto') {
+      const built2 = a.name.replace(/\.tar\.gz$/, '');
+      if (installed === built2) return out({ action: 'noop', code: 'same', tag: t, commit, asset, message: `already running ${t}` });
+      if (skip && skip === a.name) {
+        return out({ action: 'noop', code: 'skipped', tag: t, commit, asset, message: `${t} was rolled back or failed earlier, so it is not tried again. To install it anyway: sudo mailloom-update ${t}` });
+      }
+      // The nightly run only ever moves forward: the candidate must be strictly ahead of what is installed.
+      const m = /^mailloom-([0-9a-f]{10,40})$/.exec(installed || '');
+      if (!m) return out({ code: 'installed_unknown', tag: t, commit, asset, message: `Cannot tell which commit is installed (${installed || 'unknown'}), so ${t} is not installed automatically. Install it by hand.` });
+      const fwd = await get(`/repos/${repo}/compare/${m[1]}...${commit}?per_page=1`);
+      if (fwd && fwd.status === 'identical') return out({ action: 'noop', code: 'same', tag: t, commit, asset, message: `already running ${t}` });
+      if (!fwd || fwd.status !== 'ahead') {
+        return out({ code: 'not_newer', tag: t, commit, asset, message: `${t} is not newer than the installed ${installed} (GitHub says: ${fwd && fwd.status ? fwd.status : 'unknown'}), so the nightly run will not install it. Nothing changed.` });
+      }
     }
     return out({ action: 'install', code: 'ok', tag: t, commit, asset, message: `${t} is on main.` });
   } catch (e) {
@@ -100,10 +123,10 @@ export function toLine(d) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const [repo, mode, installed, tag] = process.argv.slice(2);
+  const [repo, mode, installed, tag, skip] = process.argv.slice(2);
   const ok = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo || '') && ['auto', 'latest', 'tag', 'prerelease'].includes(mode);
   const d = ok
-    ? await decide({ repo, mode, tag, installed, get: (p) => fetchJson(p) })
+    ? await decide({ repo, mode, tag, installed, skip, get: (p) => fetchJson(p) })
     : out({ action: 'error', code: 'usage', message: 'Bad arguments.' });
   console.log(toLine(d));
 }

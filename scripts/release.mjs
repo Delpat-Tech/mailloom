@@ -154,3 +154,13 @@ execFileSync('tar', ['-czf', `${name}.tar.gz`, name], { cwd: relRoot, stdio: 'in
 const size = (fs.statSync(tarball).size / 1024 / 1024).toFixed(1);
 console.log(`\nRelease ready: ${path.relative(root, tarball)} (${size} MB)`);
 console.log(`Needs Node ${MIN_NODE} or newer on the server. See docs/deploy.md.`);
+
+// Checksums of the self-update files as committed (not the working copy), for the release notes and docs/deploy.md section 8b.
+if (!commit.endsWith('-dirty')) {
+  const { createHash } = await import('node:crypto');
+  console.log(`\nSelf-update files at commit ${git('rev-parse', 'HEAD')} (paste into the release notes):`);
+  for (const f of ['mailloom-update.sh', 'mailloom-update-decide.mjs', 'mailloom-update.service', 'mailloom-update.timer']) {
+    const blob = execFileSync('git', ['show', `HEAD:deploy/${f}`], { cwd: root });
+    console.log(`${createHash('sha256').update(blob).digest('hex')}  ${f}`);
+  }
+}
