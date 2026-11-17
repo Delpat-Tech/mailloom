@@ -9,15 +9,16 @@
 #   sudo mailloom-update --rollback               put the previous version back
 # Layout: systemd unit "mailloom", app in /opt/www/mailloom (with its .env), previous version in /opt/www/mailloom.prev.
 # State (root only): /var/lib/mailloom-update. This script does not update itself: see docs/deploy.md section 8b.
-# Email: set MAILLOOM_UPDATE_NOTIFY=address in /opt/www/mailloom/.env to get a short note after any install,
-# rollback, refusal or failure (never when there was nothing new, and never any .env contents or log lines).
+# Discord: set MAILLOOM_UPDATE_DISCORD_WEBHOOK=<webhook url> in /opt/www/mailloom/.env to get a short note after any
+# install, rollback, refusal or failure (never when there was nothing new, never any .env contents or log lines, and
+# the webhook address itself is never printed).
 set -Eeuo pipefail
 
 REPO="Delpat-Tech/mailloom"
 # MAILLOOM_UPDATE_ROOT moves every path under a test folder (scripts/test/update-e2e.sh). It is empty on the server.
 R="${MAILLOOM_UPDATE_ROOT:-}"
 # The test overrides are refused anywhere but the harness: not "/", not under systemd, and only in a folder the harness marked.
-if [ -n "$R" ] || [ -n "${MAILLOOM_UPDATE_DECIDE:-}" ] || [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ] || [ -n "${MAILLOOM_UPDATE_TEST_API:-}" ]; then
+if [ -n "$R" ] || [ -n "${MAILLOOM_UPDATE_DECIDE:-}" ] || [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ] || [ -n "${MAILLOOM_UPDATE_TEST_API:-}" ] || [ -n "${MAILLOOM_UPDATE_WEBHOOK_RE:-}" ]; then
   if [ -z "$R" ] || [ "$R" = "/" ] || [ -n "${INVOCATION_ID:-}" ] || [ ! -f "$R/.mailloom-e2e" ]; then
     echo "Test overrides (MAILLOOM_UPDATE_*) are only accepted by the test harness. Nothing changed."; exit 1
   fi
@@ -28,7 +29,6 @@ NEXT="$R/opt/www/mailloom.next"
 STATE="$R/var/lib/mailloom-update"
 DECIDE="${MAILLOOM_UPDATE_DECIDE:-$R/usr/local/lib/mailloom/update-decide.mjs}"
 LOCK="$R/run/mailloom-update.lock"
-SENDMAIL="$R/usr/sbin/sendmail"
 PORT="$(grep -E '^PORT=' "$APP/.env" 2>/dev/null | cut -d= -f2 || true)"; PORT="${PORT:-3000}"
 
 [ "$(id -u)" = 0 ] || { echo "Run with sudo."; exit 1; }
@@ -63,25 +63,30 @@ if ! flock -n 9; then
 fi
 
 # ---- helpers -----------------------------------------------------------------------------------
-# One redaction for everything that is shown or mailed: lines that look like secrets are dropped.
-redact() { grep -iv 'secret\|password\|token\|authorization\|cookie\|key' || true; }
+# One redaction for everything that is shown or posted: lines that look like secrets are dropped.
+redact() { grep -iv 'secret\|password\|token\|authorization\|cookie\|key\|webhook' || true; }
 
-NOTIFY="$(grep -E '^MAILLOOM_UPDATE_NOTIFY=' "$APP/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' \r' || true)"
-[[ "$NOTIFY" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || NOTIFY=""
+WEBHOOK="$(grep -E '^MAILLOOM_UPDATE_DISCORD_WEBHOOK=' "$APP/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' \r' || true)"
+WEBHOOK_RE='^https://(discord\.com|discordapp\.com)/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$'
+[ -z "${MAILLOOM_UPDATE_WEBHOOK_RE:-}" ] || WEBHOOK_RE="$MAILLOOM_UPDATE_WEBHOOK_RE"   # tests only (guarded above)
+if [ -n "$WEBHOOK" ] && ! [[ "$WEBHOOK" =~ $WEBHOOK_RE ]]; then echo "webhook not valid"; WEBHOOK=""; fi
 
-# notify "subject" "body text". Never fails the update.
+# notify "subject" "body text": one short plain-text Discord post. Never fails the update, never prints the webhook.
 notify() {
-  [ "$CHECK" = 0 ] && [ -n "$NOTIFY" ] && [ -x "$SENDMAIL" ] || return 0
-  {
-    printf 'To: %s\nFrom: Mailloom updater <root@%s>\nSubject: %s\nDate: %s\nMIME-Version: 1.0\n' \
-      "$NOTIFY" "$(hostname -f 2>/dev/null || hostname)" "$1" "$(date -R)"
-    printf 'Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 8bit\n\n'
-    printf '%s\n' "$2" | redact
-    printf '\nTime: %s\nServer: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$(hostname)"
-  } | "$SENDMAIL" -oi -t >/dev/null 2>&1 || true
+  [ "$CHECK" = 0 ] && [ -n "$WEBHOOK" ] || return 0
+  local s="${1#Mailloom }" body tmp
+  s="${s#update }"
+  body="$(printf 'Mailloom update: %s\n%s\nTime: %s\nServer: %s' "$s" "$(printf '%s\n' "$2" | redact)" "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$(hostname)")"
+  tmp="$(mktemp)"
+  if printf '%s' "$body" | "$NODE" "$DECIDE" --payload >"$tmp" 2>/dev/null; then
+    # The address goes to curl on stdin (-K -), so it never appears in the process list.
+    printf 'url = "%s"\n' "$WEBHOOK" | curl -fsS -K - --max-time 10 -H 'Content-Type: application/json' --data-binary "@$tmp" -o /dev/null >/dev/null 2>&1 \
+      || echo "(the Discord notice could not be sent)" >&2
+  fi
+  rm -f "$tmp"
 }
 
-# State kept between runs (root only): the release not to retry, the failed-check count, the last refusal mailed.
+# State kept between runs (root only): the release not to retry, the failed-check count, the last refusal posted.
 skip_get() {
   local v=""
   [ -f "$STATE/skip" ] && [ ! -L "$STATE/skip" ] && v="$(head -1 "$STATE/skip" 2>/dev/null || true)"
@@ -194,7 +199,7 @@ case "$ACTION" in
   noop)
     echo "$MSG"
     if [ "$CODE" = skipped ] && [ "$CHECK" = 0 ] && [ ! -e "$STATE/skip.notified" ]; then
-      notify "Mailloom: $RTAG not installed (rolled back or failed earlier)" "$MSG Running now: $CUR"
+      notify "Mailloom $RTAG not installed (rolled back or failed earlier)" "$MSG Running now: $CUR"
       : >"$STATE/skip.notified"
     fi
     exit 0 ;;
@@ -230,7 +235,7 @@ echo "Installing $RTAG ($NAME). Running now: $CUR"
 
 # ---- download and verify -----------------------------------------------------------------------
 WORK="$(mktemp -d)"
-fail_early() { echo "$1 Nothing changed."; notify "Mailloom update to $RTAG failed before installing" "$1 Nothing was changed. Running now: $CUR"; exit 1; }
+fail_early() { echo "$1 Nothing changed."; notify "Mailloom update failed before installing $RTAG" "$1 Nothing was changed. Running now: $CUR"; exit 1; }
 if [ -n "$R" ] && [ -n "${MAILLOOM_UPDATE_ASSET_FILE:-}" ]; then
   # Tests only (needs MAILLOOM_UPDATE_ROOT): use a prepared file instead of the download.
   cp "$MAILLOOM_UPDATE_ASSET_FILE" "$WORK/$NAME"

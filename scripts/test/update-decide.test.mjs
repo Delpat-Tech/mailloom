@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { decide, resolveTagToCommit, toLine, GithubError } from '../../deploy/mailloom-update-decide.mjs';
+import { decide, resolveTagToCommit, toLine, GithubError, discordPayload } from '../../deploy/mailloom-update-decide.mjs';
 
 const SHA = 'a'.repeat(10) + 'b'.repeat(30);
 const asset = { name: `mailloom-${SHA.slice(0, 10)}.tar.gz`, id: 7, digest: 'sha256:' + 'c'.repeat(64) };
@@ -210,7 +210,20 @@ test('health-poll curl is silent: -fs without -S, stderr to /dev/null', () => {
 test('script safety pieces are present', () => {
   assert.match(script, /trap 'on_err \$LINENO' ERR/);
   assert.match(script, /LOCK="\$R\/run\/mailloom-update\.lock"/);
-  assert.match(script, /-oi -t/);
-  assert.match(script, /MIME-Version: 1\.0/);
   assert.match(script, /--no-same-owner --no-same-permissions/);
+});
+
+test('Discord payload: markdown and @ escaped, mentions off, at most 1900 characters', () => {
+  const bs = String.fromCharCode(92);
+  const p = JSON.parse(discordPayload('hi @everyone *bold* [a](b) _x_'));
+  assert.deepEqual(p.allowed_mentions, { parse: [] });
+  assert.ok(p.content.includes(bs + '@everyone') && p.content.includes(bs + '*bold' + bs + '*'));
+  assert.ok(JSON.parse(discordPayload('x'.repeat(5000))).content.length <= 1900);
+});
+
+test('webhook is passed to curl on stdin, never on a command line; no email path is left', () => {
+  const curls = script.split('\n').filter((l) => /\bcurl\b/.test(l) && !l.trim().startsWith('#'));
+  for (const l of curls) assert.ok(!l.includes('$WEBHOOK') || l.includes('printf'), l);
+  assert.match(script, /curl -fsS -K - --max-time 10/);
+  assert.doesNotMatch(script, /sendmail|MAILLOOM_UPDATE_NOTIFY/i);
 });

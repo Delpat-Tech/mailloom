@@ -135,7 +135,19 @@ export function toLine(d) {
   return [d.action, d.code, d.tag, d.commit, d.asset && d.asset.name, d.asset && d.asset.id, d.asset && d.asset.digest, d.message].map(f).join('\t');
 }
 
+// Discord post body for a plain-text note: markdown and @ characters escaped, mentions switched off, at most 1900 characters.
+export function discordPayload(text) {
+  const content = String(text).replace(/([\\*_~`|>#@[\]<])/g, '\\$1').slice(0, 1900);
+  return JSON.stringify({ content, allowed_mentions: { parse: [] } });
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  if (process.argv[2] === '--payload') {
+    let s = '';
+    for await (const c of process.stdin) s += c;
+    console.log(discordPayload(s));
+    process.exit(0);
+  }
   const [repo, mode, installed, tag, skip] = process.argv.slice(2);
   const ok = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo || '') && ['auto', 'latest', 'tag', 'prerelease'].includes(mode);
   const d = ok
