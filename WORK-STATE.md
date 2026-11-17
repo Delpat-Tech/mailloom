@@ -5,28 +5,23 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- On main and pushed to GitHub on 15 Nov, reviewed and tested (server 203, client 121): sign-in and sessions, sending, organising, reading, drafts,
-  live list, phone and keyboard, agent keys and API, push notifications, rich-text composer with inline images and
-  signature logo, release build, deploy runbook, deep links, whole-app security fixes, and the Sky rail design in
-  Delpat colours with filters, starred and snoozed views, labels, snooze, conversations, bounce rows, shortcuts,
-  optimistic actions with undo, and motion. Acceptance run in the browser on 15 Nov (desktop and phone, light and dark): send, forward
-  with attachments (byte-identical), drafts, labels, star, snooze, archive and undo, filters, search, phone reader and reply.
-- Work OS mail tools: branch mail-tools in Om/wos-mail, reviewed, 64 e2e checks + 36 live checks against real Mailloom;
-  not merged into Work OS master (waits on Om).
+- 18 Nov: live v2026.11.18 at https://mail.delpat.in/mail/ (Connect Mailloom on; Work OS connected 18 Nov). Om's session ended 18 Nov;
+  status note in Work OS (Mailloom > "Status and handover (18 Nov 2026)").
 
 ## Next
-0. Live at https://mail.delpat.in/mail/ (v2026.11.16, installed by Om 16 Nov with `sudo mailloom-update`; rollback
-   `sudo mailloom-update --rollback`, the intern's build in /opt/www/mailloom.intern, Nginx backup /root/roundcube.tmpl.bak).
-   systemd mailloom.service (www-data, /opt/www/mailloom with its .env); Nginx /etc/nginx/templates/roundcube.tmpl.
-1. Settings live 16 Nov (v2026.11.16b): avatar menu (accounts, Settings, Sign out); sections General, Writing, Notifications,
-   Labels, Accounts, Connections, App; settings stored per mailbox on the server; sidebar back to mail only. Full tests, built-app
-   check, then release for Om.
-2. New icon and motion (Aurora app icon, Dusk in-app mark, intro, step loader, run-off outro) released as v2026.11.16c; pull-to-refresh fix and versioned icon URLs in v2026.11.16d (3ff0c2d)
-   (8c08763) on 16 Nov; waits on Om running `sudo mailloom-update`. All explorations kept in design/brand/.
-3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, Write shortcut, mailto) wait on Om using the phone.
-4. Server: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
+1. Release main (3436564 open-app self-update, c65e979 preview without CSS) once builder-b's second-pass preview fetch
+   (big <style> newsletters showed "No text content available") is merged; built-app check, then `sudo mailloom-update` (Om).
+2. Server self-update (builder-a, b8f2388..d184757 + uncommitted WSL e2e harness in mailloom-A): finish scripts/test/update-e2e.sh
+   in WSL, one more security review, merge, release, then Om pastes the pinned install block (docs/deploy.md 8b) and sets
+   MAILLOOM_UPDATE_NOTIFY. Nightly 03:00 IST, main-only (Om's rule, 18 Nov).
+3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, icon reinstall, pull-to-refresh) wait on Om.
+4. Server OS: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
+5. Live server: Nginx /etc/nginx/templates/roundcube.tmpl (/mail/ and /api/ locations), systemd mailloom (www-data,
+   /opt/www/mailloom + .env), intern build in /opt/www/mailloom.intern, Nginx backup /root/roundcube.tmpl.bak.
 
 ## Later
+- Signed releases (minisign/cosign key on Om's machine) for the self-updater; CI-built release with attestation (waits on Om).
+- Connect: no Nginx rate limit on /oauth/authorize (in-app per-IP limiter only) (waits on real use).
 - Brand: MarkLoader (inline loader) exists but is unused; button spinners unchanged. index.html theme-color is #2F6CB5 while the launch screen is navy; first paint is white before JS (needs index.html/CSP touch) (waits on Om's view after phone use).
 - Spam learning (Dovecot imapsieve + sa-learn): reporting only moves mail today. Om said not for now (16 Nov).
 - Deploy notes: docs/deploy.md describes pm2 at its own host name; the live setup is systemd under /mail/ (update the runbook to match). Nginx also sends iRedMail's loose CSP next to ours (browsers apply both; harmless).
