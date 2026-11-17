@@ -383,8 +383,38 @@ function toHeader(msg: FetchMessageObject, where = ''): ListItem {
   };
 }
 
+/** Second-pass limits per list call: at most this many messages and about this many bytes (the rest keep an empty preview). */
+export const SNIPPET_RETRY_MAX_MESSAGES = 20;
+export const SNIPPET_RETRY_MAX_BYTES = 1024 * 1024;
+const SNIPPET_SMALL = 16384;
+const SNIPPET_LARGE = 131072;
+const SNIPPET_CHUNK = 4;
+const NEGATIVE_CACHE_MAX = 5000;
+
+/** Messages whose preview was still empty after the large fetch: not fetched again (LRU, account + folder + uidvalidity + uid). */
+const emptyPreview = new Map<string, true>();
+export const snippetStats = { secondPassMessages: 0 };
+
+export function resetSnippetCache(): void {
+  emptyPreview.clear();
+  snippetStats.secondPassMessages = 0;
+}
+
+function knownEmpty(key: string): boolean {
+  if (!emptyPreview.has(key)) return false;
+  emptyPreview.delete(key);
+  emptyPreview.set(key, true);
+  return true;
+}
+
+function rememberEmpty(key: string): void {
+  emptyPreview.delete(key);
+  emptyPreview.set(key, true);
+  while (emptyPreview.size > NEGATIVE_CACHE_MAX) emptyPreview.delete(emptyPreview.keys().next().value as string);
+}
+
 /** Fill `snippet` (first ~140 characters of text) with one small partial fetch per distinct text part number. */
-async function addSnippets(client: ImapFlow, items: ListItem[]): Promise<void> {
+async function addSnippets(client: ImapFlow, items: ListItem[], account: string): Promise<void> {
   const groups = new Map<string, { part: LeafPart; uids: number[] }>();
   for (const it of items) {
     const part = it.parts.text?.[0] || it.parts.html?.[0];
@@ -395,29 +425,39 @@ async function addSnippets(client: ImapFlow, items: ListItem[]): Promise<void> {
     groups.set(key, g);
   }
   const byUid = new Map(items.map((i) => [i.header.uid, i.header]));
-  const SMALL = 16384;
-  const LARGE = 131072;
+  const mb = client.mailbox;
+  const cacheKey = (uid: number) => `${account.toLowerCase()}|${mb ? mb.path : ''}|${mb ? mb.uidValidity : ''}|${uid}`;
+  const retry = { messages: 0, bytes: 0 };
   for (const { part, uids } of groups.values()) {
     const isHtml = part.type === 'text/html';
     // One pass over `want` uids with a byte limit; returns the uids whose result was empty although the fetch was full.
-    const pass = async (want: number[], limit: number): Promise<number[]> => {
+    const pass = async (want: number[], limit: number, second: boolean): Promise<number[]> => {
       const again: number[] = [];
       const gen = client.fetch(want, { uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength: limit }] }, { uid: true });
       for await (const m of gen) {
         const raw = m.bodyParts?.get(part.partId) || m.bodyParts?.values().next().value;
         const header = byUid.get(m.uid);
         if (!raw || !header) continue;
+        if (second) retry.bytes += raw.length;
         const text = decodeCharset(decodeTransfer(raw, part.encoding), part.charset);
         const snippet = makeSnippet(isHtml ? htmlToText(text) : text);
         header.snippet = looksLikeCode(snippet) ? '' : snippet;
-        if (isHtml && !header.snippet && raw.length >= limit) again.push(m.uid);
+        if (second && !header.snippet) rememberEmpty(cacheKey(m.uid));
+        if (!second && isHtml && !header.snippet && raw.length >= limit) again.push(m.uid);
       }
       return again;
     };
     try {
-      // Big <style>/<head> blocks (newsletters) can fill the first fetch; retry those few with a larger one.
-      const again = await pass(uids, isHtml ? SMALL : 4096);
-      if (again.length) await pass(again, LARGE);
+      // Big <style>/<head> blocks (newsletters) can fill the first fetch; retry a few of those with a larger one.
+      const again = (await pass(uids, isHtml ? SNIPPET_SMALL : 4096, false)).filter((u) => !knownEmpty(cacheKey(u)));
+      for (let i = 0; i < again.length; i += SNIPPET_CHUNK) {
+        const room = Math.min(SNIPPET_CHUNK, SNIPPET_RETRY_MAX_MESSAGES - retry.messages);
+        if (room <= 0 || retry.bytes >= SNIPPET_RETRY_MAX_BYTES) break;
+        const chunk = again.slice(i, i + room);
+        retry.messages += chunk.length;
+        snippetStats.secondPassMessages += chunk.length;
+        await pass(chunk, SNIPPET_LARGE, true);
+      }
     } catch {
       // A preview is a nicety; the list still works without it.
     }
@@ -467,7 +507,7 @@ export async function fetchListItems(client: ImapFlow, uids: number[], ownEmail:
   const byUid = new Map<number, ListItem>();
   for await (const msg of client.fetch(uids, LIST_FETCH, { uid: true })) byUid.set(msg.uid, toHeader(msg, where));
   const items = uids.map((u) => byUid.get(u)).filter((x): x is ListItem => Boolean(x));
-  await addSnippets(client, items);
+  await addSnippets(client, items, ownEmail);
   await addBounces(client, items, ownEmail);
   return items.map((i) => i.header);
 }
