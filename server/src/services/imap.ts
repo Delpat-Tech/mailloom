@@ -5,7 +5,7 @@ import type { AccountConfig, MailboxFolder, MessageHeader, ParsedEmailMessage, S
 import { renderEmail, findCidReferences } from '../utils/sanitize.js';
 import { sniffImage } from './richbody.js';
 import { classifyParts, findPart, isValidPartId, type LeafPart, type MessageParts } from './mailparts.js';
-import { cleanFilename, decodeCharset, decodeTransfer, htmlToText, makeSnippet } from '../utils/mime.js';
+import { cleanFilename, decodeCharset, decodeTransfer, htmlToText, looksLikeCode, makeSnippet } from '../utils/mime.js';
 import { bounceCandidate, parseDsn, parsePlainBounce, type BounceCandidate } from './bounce.js';
 import { referencesFromHeaderBlock, threadIdFor } from './threading.js';
 
@@ -397,13 +397,14 @@ async function addSnippets(client: ImapFlow, items: ListItem[]): Promise<void> {
   const byUid = new Map(items.map((i) => [i.header.uid, i.header]));
   for (const { part, uids } of groups.values()) {
     try {
-      const gen = client.fetch(uids, { uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength: 4096 }] }, { uid: true });
+      const gen = client.fetch(uids, { uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength: part.type === 'text/html' ? 16384 : 4096 }] }, { uid: true });
       for await (const m of gen) {
         const raw = m.bodyParts?.get(part.partId) || m.bodyParts?.values().next().value;
         const header = byUid.get(m.uid);
         if (!raw || !header) continue;
         const text = decodeCharset(decodeTransfer(raw, part.encoding), part.charset);
-        header.snippet = makeSnippet(part.type === 'text/html' ? htmlToText(text) : text);
+        const snippet = makeSnippet(part.type === 'text/html' ? htmlToText(text) : text);
+        header.snippet = looksLikeCode(snippet) ? '' : snippet;
       }
     } catch {
       // A preview is a nicety; the list still works without it.

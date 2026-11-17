@@ -82,9 +82,16 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
 
 export function htmlToText(html: string): string {
   return html
-    .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<!--[\s\S]*$/, ' ')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, ' $1 ')
+    .replace(/<!\[CDATA\[[\s\S]*$/, ' ')
+    // Blocks whose content is never prose; an unterminated one runs to the end (the input may be cut short).
+    .replace(/<(style|script|head|title|noscript)(?=[\s>/])[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<(?:style|script|head|title|noscript)(?=[\s>/])[\s\S]*$/i, ' ')
     .replace(/<br\s*\/?>|<\/(p|div|tr|li|h[1-6])>/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
+    .replace(/<[^>]*$/, ' ')
     .replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
       if (e[0] === '#') {
         const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
@@ -92,6 +99,14 @@ export function htmlToText(html: string): string {
       }
       return ENTITIES[e.toLowerCase()] ?? m;
     });
+}
+
+/** True when text that should be prose still looks like CSS/script (a preview would show code, so show nothing). */
+export function looksLikeCode(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^[{}@]/.test(t) || /^(\.|#)[\w-]+\s*\{/.test(t)) return true;
+  return /\{[^{}]*:[^{}]*;[^{}]*\}/.test(t) || /[\w-]+\s*:\s*[^;{}]+;\s*[\w-]+\s*:\s*[^;{}]+;/.test(t);
 }
 
 export function makeSnippet(text: string, max = 140): string {
