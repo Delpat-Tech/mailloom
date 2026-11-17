@@ -25,6 +25,10 @@ import { DEFAULT_TIMING, PushWatcher, type WatcherTiming } from './push/watcher.
 import { organiseRoutes } from './routes/organise.js';
 import { OrganiseStore } from './services/organise-store.js';
 import { SettingsStore } from './services/settings-store.js';
+import { feedbackRoutes } from './routes/feedback.js';
+import { FeedbackStore } from './services/feedback-store.js';
+import { FeedbackDelivery } from './services/feedback-delivery.js';
+import { loadIntakeConfig } from './services/feedback-sink.js';
 import { settingsRoutes } from './routes/settings.js';
 import { Snoozer } from './services/snoozer.js';
 import { ConversationIndexer, type IndexerOptions } from './services/conv-index.js';
@@ -41,6 +45,8 @@ export interface BuildAppOptions {
   clientDist?: string | null;
   /** Clock override for tests (session expiry, login throttle). */
   now?: () => number;
+  /** Test hook: the fetch used to reach Work OS. */
+  feedbackFetch?: typeof fetch;
   /** Test hooks for push notifications (never set in production). */
   push?: {
     timing?: Partial<WatcherTiming>;
@@ -207,6 +213,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const indexer = new ConversationIndexer(organiseStore, { ...opts.organise, log: fastify.log, now });
   fastify.decorate('mailloomOrganise', { store: organiseStore, snoozer, indexer, now });
   fastify.decorate('mailloomSettings', new SettingsStore(sessions.database, now));
+  // "Report a problem": reports are kept here and delivered to Work OS in the background (both variables needed).
+  const intake = loadIntakeConfig(env);
+  if (intake.warning) fastify.log.warn(intake.warning);
+  const feedbackHits = new Map<string, number[]>();
+  const feedbackStore = new FeedbackStore(sessions.database, now);
+  const feedbackDelivery = intake.config ? new FeedbackDelivery(feedbackStore, intake.config, fastify.log, now, opts.feedbackFetch) : null;
+  fastify.decorate('mailloomFeedback', { store: feedbackStore, delivery: feedbackDelivery, hits: feedbackHits });
+  if (feedbackDelivery) fastify.addHook('onReady', async () => feedbackDelivery.start());
   const contactStore = new ContactStore(sessions.database);
   const contactIndexer = new ContactIndexer(contactStore, { ...opts.contacts, log: fastify.log, now });
   fastify.decorate('mailloomContacts', { store: contactStore, indexer: contactIndexer, now });
@@ -239,6 +253,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   fastify.addHook('onClose', async () => {
     clearInterval(sweeper);
     snoozer.stop();
+    await feedbackDelivery?.close();
     await indexer.close();
     await contactIndexer.close();
     await pushWatcher?.stopAll();
@@ -317,6 +332,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await fastify.register(pushRoutes, { prefix });
     await fastify.register(organiseRoutes, { prefix });
     await fastify.register(settingsRoutes, { prefix });
+    await fastify.register(feedbackRoutes, { prefix, enabled: !!intake.config, now });
     await fastify.register(contactRoutes, { prefix });
   }
 

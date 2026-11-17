@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Download, HelpCircle, RefreshCw, Share } from 'lucide-react';
+import { CheckCircle2, Download, Flag, HelpCircle, RefreshCw, Share } from 'lucide-react';
 import {
   canInstallPwa,
   checkForUpdate,
@@ -15,11 +15,13 @@ export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_V
 
 interface Props {
   onOpenShortcuts: () => void;
+  /** Present only when "Report a problem" is switched on. */
+  onReport?: () => void;
   /** Called after the app was installed. */
   onInstalled?: () => void;
 }
 
-export const AppSection: React.FC<Props> = ({ onOpenShortcuts, onInstalled }) => {
+export const AppSection: React.FC<Props> = ({ onOpenShortcuts, onReport, onInstalled }) => {
   const [canInstall, setCanInstall] = useState(() => canInstallPwa());
   const [installed, setInstalled] = useState(() => isPwaInstalled());
   const [update, setUpdate] = useState<'idle' | 'checking' | 'current' | 'updated' | 'unsupported' | 'error'>('idle');
@@ -128,6 +130,13 @@ export const AppSection: React.FC<Props> = ({ onOpenShortcuts, onInstalled }) =>
             <HelpCircle className="w-4 h-4" aria-hidden="true" /> Keyboard shortcuts
           </button>
         </Setting>
+        {onReport && (
+          <Setting title="Report a problem" help="Tell us what went wrong. It goes straight to the Mailloom team.">
+            <button type="button" className={BTN} onClick={onReport}>
+              <Flag className="w-4 h-4" aria-hidden="true" /> Report a problem
+            </button>
+          </Setting>
+        )}
       </Card>
     </div>
   );

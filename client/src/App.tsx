@@ -4,6 +4,8 @@ import { Sidebar } from './components/Sidebar.js';
 import { BrandCurtain, type CurtainKind } from './components/LogoMotion.js';
 import { MobileTabBar, type PhoneTab } from './components/MobileTabBar.js';
 import { ShortcutsSheet } from './components/ShortcutsSheet.js';
+import { FeedbackSheet } from './components/FeedbackSheet.js';
+import { installErrorCapture, recordClientError } from './services/feedback.js';
 import { SettingsPage } from './components/settings/SettingsPage.js';
 import { parseSettingsHash, settingsHash, type SectionId } from './components/settings/sections.js';
 import { useAccountSettings } from './hooks/useAccountSettings.js';
@@ -107,6 +109,8 @@ export const App: React.FC = () => {
   const setFilter = (value: ListFilter) => setFilterState({ folder: selectedFolder, value });
   const [labels, setLabels] = useState<Label[]>([]);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackOn, setFeedbackOn] = useState(false);
   const [menu, setMenu] = useState<'label' | 'snooze' | null>(null);
   const [syncedAt, setSyncedAt] = useState<Date | null>(null);
   // Rows that are leaving (fade and collapse) and rows already gone from the screen but not yet from the server.
@@ -208,6 +212,7 @@ export const App: React.FC = () => {
   useBackLayer(showMobileSidebar, () => setShowMobileSidebar(false));
   useBackLayer(menu !== null, () => setMenu(null));
   useBackLayer(showShortcuts, () => setShowShortcuts(false));
+  useBackLayer(showFeedback, () => setShowFeedback(false));
   // Settings: on a phone it is a full screen (one layer) and an open section is a second layer on top of it,
   // so Back goes section -> list of sections -> where you came from.
   useBackLayer(settingsOpen && !!account, () => {
@@ -266,10 +271,25 @@ export const App: React.FC = () => {
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showToast = (message: string, type: 'success' | 'error' = 'success', retry?: () => void) => {
+    if (type === 'error') recordClientError(message);
     setToast({ message, type, retry });
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), retry ? 12000 : type === 'error' ? 7000 : 3500);
   };
+
+  useEffect(() => installErrorCapture(), []);
+  // Ask the server whether "Report a problem" is on (it is when the Work OS intake is set).
+  useEffect(() => {
+    if (!account) {
+      setFeedbackOn(false);
+      return;
+    }
+    let live = true;
+    void api.getFeedbackEnabled().then((on) => live && setFeedbackOn(on));
+    return () => {
+      live = false;
+    };
+  }, [account?.handle]);
 
   // 1. Initial Authentication Check: ask the server which accounts this browser is signed in to.
   useEffect(() => {
@@ -1868,6 +1888,7 @@ export const App: React.FC = () => {
                 onSwitch: (email) => void handleSwitchAccount(email),
                 onAdd: () => setIsAddingAccount(true),
                 onSettings: () => openSettings(),
+                onFeedback: feedbackOn ? () => setShowFeedback(true) : undefined,
                 onSignOut: () => void handleLogout()
               }}
               onClearSelection={() => setSelectedUids(new Set())}
@@ -1958,6 +1979,7 @@ export const App: React.FC = () => {
                 requestConfirm={setConfirmRequest}
                 notificationPerm={notificationPerm}
                 onOpenShortcuts={() => setShowShortcuts(true)}
+                onReport={feedbackOn ? () => setShowFeedback(true) : undefined}
                 onInstalled={() => {
                   showToast('Mailloom app installed successfully!');
                   setIsInstalled(true);
@@ -1986,6 +2008,10 @@ export const App: React.FC = () => {
           }}
         />
       )}
+
+      <Presence show={showFeedback && feedbackOn}>
+        {showFeedback && feedbackOn && <FeedbackSheet view={headerName} onClose={() => setShowFeedback(false)} />}
+      </Presence>
 
       <Presence show={showShortcuts}>{showShortcuts && <ShortcutsSheet onClose={() => setShowShortcuts(false)} />}</Presence>
 

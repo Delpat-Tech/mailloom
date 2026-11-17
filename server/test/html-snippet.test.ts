@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { FastifyInstance } from 'fastify';
 import { buildTestApp, signIn, resetAccount, buildMime, withImap, GM, type SignedIn } from './helpers.js';
 import { htmlToText, looksLikeCode, makeSnippet } from '../src/utils/mime.js';
+import { resetSnippetCache, snippetStats, SNIPPET_RETRY_MAX_BYTES, SNIPPET_RETRY_MAX_MESSAGES } from '../src/services/imap.js';
 
 const snippetOf = (html: string) => {
   const s = makeSnippet(htmlToText(html));
@@ -82,4 +83,59 @@ test('list API snippet of an HTML mail with a huge style block is the mail text'
   assert.ok(m);
   assert.match(m.snippet, /^Hello Om, your spring update is here\./);
   assert.doesNotMatch(m.snippet, /font-family|cls-|\{/);
+});
+
+test('a 20 KB style block gives the real text via the second (131072-byte) fetch', async () => {
+  const html = newsletter(220);
+  const end = html.lastIndexOf('</style>');
+  assert.ok(end > 16384 && html.length < 131072);
+  // First fetch (16384 bytes) is all CSS: empty. The larger one reaches the copy.
+  assert.equal(snippetOf(html.slice(0, 16384)), '');
+  assert.match(snippetOf(html.slice(0, 131072)), /^Hello Om, your spring update is here\./);
+  const raw = await buildMime({ subject: 'Huge style', html, messageId: '<hugestyle@delpat.test>' });
+  await withImap(GM.tester, async (c) => {
+    await c.append('INBOX', raw);
+  });
+  const res = await app.inject({ method: 'GET', url: '/api/mailboxes/INBOX/messages', headers: t.headers });
+  assert.equal(res.statusCode, 200, res.body);
+  const m = res.json().messages.find((x: any) => x.subject === 'Huge style');
+  assert.ok(m);
+  assert.match(m.snippet, /^Hello Om, your spring update is here\./);
+});
+
+async function putAll(folder: string, n: number, rules: number, tag: string): Promise<void> {
+  await withImap(GM.tester, async (c) => {
+    await c.mailboxCreate(folder).catch(() => {});
+    for (let i = 0; i < n; i++) {
+      const raw = await buildMime({ subject: `${tag} ${i}`, html: newsletter(rules), messageId: `<${tag}-${i}@delpat.test>` });
+      await c.append(folder, raw);
+    }
+  });
+}
+const listFolder = async (folder: string) => {
+  const res = await app.inject({ method: 'GET', url: `/api/mailboxes/${folder}/messages`, headers: t.headers });
+  assert.equal(res.statusCode, 200, res.body);
+  return res.json().messages as Array<{ subject: string; snippet: string }>;
+};
+
+test('the second fetch is capped at 20 messages per list call; the rest keep an empty preview', async () => {
+  resetSnippetCache();
+  await putAll('CapTest', 25, 220, 'cap'); // ~20 KB of CSS each: fixed by the second fetch
+  const msgs = await listFolder('CapTest');
+  assert.equal(msgs.length, 25);
+  assert.equal(msgs.filter((m) => m.snippet.startsWith('Hello Om')).length, SNIPPET_RETRY_MAX_MESSAGES);
+  assert.equal(msgs.filter((m) => m.snippet === '').length, 5);
+  assert.equal(snippetStats.secondPassMessages, SNIPPET_RETRY_MAX_MESSAGES);
+});
+
+test('the second fetch stops at about 1 MB; messages still empty after it are not fetched again', async () => {
+  resetSnippetCache();
+  await putAll('CacheTest', 12, 1800, 'big'); // ~150 KB of CSS each: empty even after 128 KB
+  const first = await listFolder('CacheTest');
+  assert.ok(first.every((m) => m.snippet === ''));
+  assert.equal(snippetStats.secondPassMessages, SNIPPET_RETRY_MAX_BYTES / 131072, '8 messages x 128 KB = 1 MB');
+  await listFolder('CacheTest');
+  assert.equal(snippetStats.secondPassMessages, 12, 'the 8 known-empty are skipped; the other 4 are tried');
+  await listFolder('CacheTest');
+  assert.equal(snippetStats.secondPassMessages, 12, 'nothing is fetched again');
 });
