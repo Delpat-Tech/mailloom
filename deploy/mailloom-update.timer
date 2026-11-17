@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly Mailloom update at 03:00 India time
+
+[Timer]
+# The time zone name in OnCalendar works on systemd 235 and newer (Ubuntu 18.04+, so 20.04 and 22.04 are fine).
+# If a server ever rejects it ("Failed to parse calendar specification"), use the UTC line instead:
+#   OnCalendar=*-*-* 21:30:00 UTC
+OnCalendar=*-*-* 03:00:00 Asia/Kolkata
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

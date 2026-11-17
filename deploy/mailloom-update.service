@@ -1,0 +1,28 @@
+[Unit]
+Description=Update Mailloom to the latest release on main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mailloom-update --auto
+TimeoutStartSec=15min
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Nice=10
+IOSchedulingClass=idle
+UMask=0027
+StateDirectory=mailloom-update
+StateDirectoryMode=0700
+# Hardening. The job needs root (it restarts the service and swaps /opt/www/mailloom), so it is fenced in instead:
+# with ProtectSystem=full only /usr, /boot and /etc are read-only; /opt, /var and /run stay writable.
+# NoNewPrivileges and RestrictSUIDSGID are left off on purpose: sendmail needs postdrop (setgid) to queue the report mail.
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=true
+RestrictRealtime=true

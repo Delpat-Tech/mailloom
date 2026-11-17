@@ -258,6 +258,92 @@ sudo -u mailloom -H pm2 restart mailloom --update-env
 The sessions database is shared by all releases. A new release may add tables; an older one ignores them, so
 rolling back keeps everyone signed in. Delete release folders older than the last three once a month.
 
+## 8b. Automatic nightly updates (systemd server)
+
+The live server runs Mailloom as the systemd unit `mailloom` and updates itself every night at 03:00 India time.
+It installs only a release whose commit is on `main`; anything else is refused and Om gets an email.
+A pre-release or draft is never installed by the timer. If nothing new was released, nothing happens and no email is sent.
+
+**Install (one block; it stops at the first problem).** This is the first step, because the old `mailloom-update` on
+the server has no main-only check. The updater never updates itself: to change `mailloom-update` later, paste this
+block again with a newer commit.
+
+Take `REF` (the 40-character commit) and the four checksums from the release notes of a release (`pnpm release` prints
+them: they are the checksums of the files as committed). Fill in the six values at the top and paste everything.
+Nothing is installed unless `REF` is a full commit, that commit is on `main`, and all four checksums match; any
+failure stops the whole block before anything is installed.
+
+```bash
+sudo bash -euo pipefail <<'EOF'
+REF=<the 40-character commit from the release notes>
+SUM_SH=<sha256 of mailloom-update.sh>
+SUM_MJS=<sha256 of mailloom-update-decide.mjs>
+SUM_SERVICE=<sha256 of mailloom-update.service>
+SUM_TIMER=<sha256 of mailloom-update.timer>
+NOTIFY=om@example.com        # who gets the report emails
+
+[[ "$REF" =~ ^[0-9a-f]{40}$ ]] || { echo "REF must be 40 hex characters"; exit 1; }
+[[ "$NOTIFY" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || { echo "NOTIFY is not an email address"; exit 1; }
+API=https://api.github.com/repos/Delpat-Tech/mailloom
+
+# 1. Is REF on main? Compare against main's own commit, never the word "main" (a tag could be called that).
+MAIN=$(curl -fsS "$API/git/ref/heads/main" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const o=JSON.parse(s).object;if(!o||o.type!=="commit"||!/^[0-9a-f]{40}$/.test(o.sha))process.exit(1);console.log(o.sha)})')
+STATUS=$(curl -fsS "$API/compare/$REF...$MAIN" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).status))')
+case "$STATUS" in ahead|identical) echo "commit is on main ($STATUS)" ;; *) echo "NOT ON MAIN ($STATUS): nothing installed"; exit 1 ;; esac
+
+# 2. Download into a fresh folder and check the checksums.
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; cd "$T"
+RAW=https://raw.githubusercontent.com/Delpat-Tech/mailloom/$REF/deploy
+for f in mailloom-update.sh mailloom-update-decide.mjs mailloom-update.service mailloom-update.timer; do curl -fsSL "$RAW/$f" -o "$f"; done
+printf '%s  mailloom-update.sh\n%s  mailloom-update-decide.mjs\n%s  mailloom-update.service\n%s  mailloom-update.timer\n' "$SUM_SH" "$SUM_MJS" "$SUM_SERVICE" "$SUM_TIMER" > SUMS
+sha256sum -c SUMS
+
+# 3. Install, set the report address, start the timer.
+install -d -m 755 /usr/local/lib/mailloom
+install -m 755 mailloom-update.sh /usr/local/bin/mailloom-update
+install -m 644 mailloom-update-decide.mjs /usr/local/lib/mailloom/update-decide.mjs
+install -m 644 mailloom-update.service mailloom-update.timer /etc/systemd/system/
+{ grep -v '^MAILLOOM_UPDATE_NOTIFY=' /opt/www/mailloom/.env || true; echo "MAILLOOM_UPDATE_NOTIFY=$NOTIFY"; } > env.new
+install -m 640 -o root -g www-data env.new /opt/www/mailloom/.env
+systemctl daemon-reload
+systemctl enable --now mailloom-update.timer
+systemctl list-timers mailloom-update.timer
+
+# 4. Run it once now and look at what it did (a failed update does not stop the block).
+systemctl start mailloom-update.service || true
+journalctl -u mailloom-update -n 30 --no-pager
+EOF
+```
+
+The `systemctl list-timers` line should show the next run at 03:00 (India time). If `systemd-analyze calendar
+"*-*-* 03:00:00 Asia/Kolkata"` complains on an old server, edit the timer and use the UTC line in its comment (21:30 UTC).
+The next update copies `.env` across, so the report address stays.
+
+**Dry run** (reports what it would do; installs nothing, sends no email):
+
+```bash
+sudo mailloom-update --check
+sudo mailloom-update --check v2026.11.18     # a specific tag (a placeholder: use a real one)
+```
+
+**Other commands**
+
+```bash
+sudo mailloom-update                         # update now: same main-only checks, but it may install an older release and ignores the "do not retry" mark
+sudo mailloom-update --allow-prerelease TAG  # a release marked pre-release; its commit must still be on main
+sudo mailloom-update --rollback              # previous version; the nightly run will not install the one you left
+sudo systemctl start mailloom-update.service # run the nightly job now
+journalctl -u mailloom-update -n 50          # what the nightly job did
+```
+
+The nightly run only moves forward (a release must be newer than the one running), and it does not retry a release
+that was rolled back or failed: it mails once and waits for a newer release. Installing a tag by hand clears that. State
+lives in `/var/lib/mailloom-update` (root only). Emails never contain log lines: use `journalctl -u mailloom -n 30`.
+A failed check for a release (GitHub down) is mailed only on the second night in a row, and only for nightly runs; a run by hand just prints the problem.
+
+There is deliberately no switch to install a commit that is not on main. To test an unmerged change, merge it
+to main first (or run it on a test server).
+
 ## 9. Trial checklist (test mailbox, before staff)
 
 Create a test mailbox (for example `mailloom-test@delpat.in`) in iRedAdmin. Tick each item:
