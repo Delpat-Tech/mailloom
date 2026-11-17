@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Check, LogOut, Settings, UserPlus } from 'lucide-react';
+import { Check, Flag, LogOut, Settings, UserPlus } from 'lucide-react';
 import { usePopover } from '../hooks/usePopover.js';
 import { AnchoredPanel } from './AnchoredPanel.js';
 import { Presence } from './Presence.js';
@@ -16,6 +16,8 @@ export interface AccountMenuProps {
   onSwitch: (email: string) => void;
   onAdd: () => void;
   onSettings: () => void;
+  /** Present only when the server has "Report a problem" switched on. */
+  onFeedback?: () => void;
   onSignOut: () => void;
 }
 
@@ -28,6 +30,7 @@ const Menu: React.FC<AccountMenuProps & { anchor: React.RefObject<HTMLElement>; 
   onSwitch,
   onAdd,
   onSettings,
+  onFeedback,
   onSignOut,
   anchor,
   onClose
@@ -86,6 +89,12 @@ const Menu: React.FC<AccountMenuProps & { anchor: React.RefObject<HTMLElement>; 
         <Settings className="w-4 h-4 shrink-0" aria-hidden="true" />
         Settings
       </button>
+      {onFeedback && (
+        <button type="button" role="menuitem" onClick={pick(onFeedback)} className={ITEM}>
+          <Flag className="w-4 h-4 shrink-0" aria-hidden="true" />
+          Report a problem
+        </button>
+      )}
       <button type="button" role="menuitem" onClick={pick(onSignOut)} className={ITEM}>
         <LogOut className="w-4 h-4 shrink-0" aria-hidden="true" />
         Sign out of this device

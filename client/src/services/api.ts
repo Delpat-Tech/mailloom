@@ -464,6 +464,19 @@ export const api = {
     });
   },
 
+  /** Is "Report a problem" switched on for this server? */
+  getFeedbackEnabled: async (): Promise<boolean> => {
+    try {
+      return (await request<{ enabled: boolean }>('/feedback')).enabled === true;
+    } catch {
+      return false;
+    }
+  },
+
+  /** Sends a problem report (stored by the server and passed on to the team). */
+  sendFeedback: (data: { what: string; expected: string; details?: object }): Promise<{ success: boolean }> =>
+    request<{ success: boolean }>('/feedback', { method: 'POST', body: JSON.stringify(data) }),
+
   getAttachmentUrl: (folderPath: string, uid: number, partId: string, options: { inline?: boolean } = {}): string => {
     // Links cannot send headers, so the account goes in the query (the server allows that for GET only).
     // Uses the account active when the message was rendered, not whichever signed in last.

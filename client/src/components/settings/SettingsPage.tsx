@@ -40,6 +40,7 @@ export interface SettingsPageProps {
   requestConfirm: (r: ConfirmRequest) => void;
   notificationPerm: NotificationPermission;
   onOpenShortcuts: () => void;
+  onReport?: () => void;
   onInstalled?: () => void;
 }
 
@@ -177,7 +178,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = (props) => {
       case 'connections':
         return <ConnectionsPanel key={props.account.handle} embedded email={props.account.email} onClose={() => undefined} />;
       case 'app':
-        return <AppSection onOpenShortcuts={props.onOpenShortcuts} onInstalled={props.onInstalled} />;
+        return <AppSection onOpenShortcuts={props.onOpenShortcuts} onReport={props.onReport} onInstalled={props.onInstalled} />;
     }
   };
 
