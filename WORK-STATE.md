@@ -7,13 +7,9 @@ users tester@ and colleague@delpat.test). Never the live mail server.
 ## Now
 - 18 Nov: live v2026.11.18b (6ae86e6) at https://mail.delpat.in/mail/, installed over `ssh mailserver` (ubuntu, sudo; Om set
   it up 18 Nov). Nightly updater installed (timer 03:00 IST, main-only); old script kept in /root/mailloom-update.old-*.
-  Mail server .env has WORKOS_INTAKE_TOKEN/URL and WORKOS_NOTICE_URL. Notices and reports wait on Work OS going live.
+  Work OS intake live (18 Nov): test notice reached #mailloom (204), test report became task #274 (201; Om to close).
 
 ## Next
-1. Work OS intake goes to master (its session); Om okays the Work OS env change to that session; it pipes the token
-   into MAILLOOM_INTAKE_TOKEN and sets MAILLOOM_NOTICE_CHANNEL / MAILLOOM_INTAKE_PROJECT. Then send a test notice and a
-   test problem report from the mail server and confirm both arrive.
-2. Om: give the Work OS bot View Channel + Send Messages in #mailloom.
 3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, icon reinstall, pull-to-refresh) wait on Om.
 4. Server OS: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
 5. Live server: Nginx /etc/nginx/templates/roundcube.tmpl (/mail/ and /api/ locations), systemd mailloom (www-data,
