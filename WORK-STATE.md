@@ -5,17 +5,15 @@ Testing only against local GreenMail (greenmail-a: IMAPS 1993 / IMAP 1143 / SMTP
 users tester@ and colleague@delpat.test). Never the live mail server.
 
 ## Now
-- 18 Nov: live v2026.11.18. Local main f1bc1a6 (not pushed) holds: open-app self-update, preview fix (second 128 KB pass,
-  capped 20 msgs / 1 MB, negative cache), Report a problem (text only, to Work OS intake), nightly server self-updater
-  (main-only, notices via Work OS /api/intake/mailloom/notice). All reviewed; tests 399 + 254 + 34, e2e 121, built-app check OK.
-  Waiting on Om's go to push main and publish the release.
+- 18 Nov: live v2026.11.18b (6ae86e6) at https://mail.delpat.in/mail/, installed over `ssh mailserver` (ubuntu, sudo; Om set
+  it up 18 Nov). Nightly updater installed (timer 03:00 IST, main-only); old script kept in /root/mailloom-update.old-*.
+  Mail server .env has WORKOS_INTAKE_TOKEN/URL and WORKOS_NOTICE_URL. Notices and reports wait on Work OS going live.
 
 ## Next
-1. On Om's go: push main, `pnpm release`, publish the release (full SHA as --target), give Om: `sudo mailloom-update`,
-   the intake env block (WORKOS_INTAKE_URL, WORKOS_INTAKE_TOKEN generated on the server, WORKOS_NOTICE_URL), and the pinned
-   install block (docs/deploy.md 8b) with REF and the four digests from the release output.
-2. Om: give the Work OS bot View Channel + Send Messages in #mailloom; Work OS side sets MAILLOOM_INTAKE_TOKEN (same value)
-   and MAILLOOM_NOTICE_CHANNEL. Tell the Work OS session when the release is live.
+1. Work OS intake goes to master (its session); Om okays the Work OS env change to that session; it pipes the token
+   into MAILLOOM_INTAKE_TOKEN and sets MAILLOOM_NOTICE_CHANNEL / MAILLOOM_INTAKE_PROJECT. Then send a test notice and a
+   test problem report from the mail server and confirm both arrive.
+2. Om: give the Work OS bot View Channel + Send Messages in #mailloom.
 3. Real phone checks (back gesture, keyboard in composer, PDF on iPhone, icon reinstall, pull-to-refresh) wait on Om.
 4. Server OS: "System restart required", 96 package updates (1 security) (waits on Om; not Mailloom).
 5. Live server: Nginx /etc/nginx/templates/roundcube.tmpl (/mail/ and /api/ locations), systemd mailloom (www-data,
